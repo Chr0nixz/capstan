@@ -1,8 +1,8 @@
 #![allow(clippy::pedantic)]
 
 use capstan_core::{CredentialUpdate, VaultManager};
-use capstan_ssh::{SshShell, TrustBroker};
-use capstan_vault::{Host, KdfParameters, SecretText};
+use capstan_ssh::{forwarding::TunnelRuntimeState, SshShell, TrustBroker};
+use capstan_vault::{Host, KdfParameters, SecretText, TunnelConfig, TunnelForward};
 use russh::{
     keys::{Algorithm, HashAlg, PrivateKey},
     server::{self, Auth, Session},
@@ -16,7 +16,11 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{net::TcpListener, time::timeout};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    time::timeout,
+};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -292,6 +296,55 @@ async fn configured_openssh_password_completes_delayed_trust_and_vault_restart_w
     let reopened = VaultManager::new(directory.path().join("vault.capstan"));
     reopened.unlock(master).await.unwrap();
     let (_, shell) = known_connection(&reopened, &host).await.unwrap();
+    let connections = reopened.connection_snapshots().unwrap();
+    let [connection] = connections.as_slice() else {
+        panic!("expected one authenticated SSH connection");
+    };
+    let destination = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let reservation = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bind_address = reservation.local_addr().unwrap();
+    let tunnel = TunnelConfig {
+        id: Uuid::new_v4(),
+        host_id: host.id,
+        auto_start: false,
+        forward: TunnelForward::Local {
+            bind_host: "127.0.0.1".into(),
+            bind_port: bind_address.port(),
+            destination_host: "127.0.0.1".into(),
+            destination_port: destination.local_addr().unwrap().port(),
+        },
+    };
+    reopened
+        .save_tunnel(tunnel.clone(), reopened.revision().unwrap())
+        .await
+        .unwrap();
+    drop(reservation);
+    assert_eq!(
+        reopened
+            .start_tunnel(tunnel.id, connection.connection_id, connection.generation)
+            .await
+            .unwrap()
+            .state,
+        TunnelRuntimeState::Running
+    );
+    timeout(Duration::from_secs(10), async {
+        const PAYLOAD: &[u8] = b"Capstan OpenSSH tunnel probe";
+        let mut client = TcpStream::connect(bind_address).await.unwrap();
+        let (mut server, _) = destination.accept().await.unwrap();
+        let mut received = [0; PAYLOAD.len()];
+        client.write_all(PAYLOAD).await.unwrap();
+        server.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, PAYLOAD);
+        server.write_all(&received).await.unwrap();
+        client.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, PAYLOAD);
+    })
+    .await
+    .expect("OpenSSH local forwarding probe timed out");
+    assert_eq!(
+        reopened.stop_tunnel(tunnel.id).await.unwrap().state,
+        TunnelRuntimeState::Stopped
+    );
     shell.control.close().await.unwrap();
     reopened.disconnect_ssh().await;
 }

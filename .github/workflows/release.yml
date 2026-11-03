@@ -1,0 +1,72 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: ${{ (github.event_name == 'push' && !github.event.deleted) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.ref.outputs.version }}
+      commit: ${{ steps.ref.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          toolchain: 1.96.0
+          cache: false
+
+      - name: Verify release ref and version
+        id: ref
+        run: python3 scripts/release.py preflight "$GITHUB_REF" "$GITHUB_SHA"
+
+  validate:
+    needs: preflight
+    uses: ./.github/workflows/windows.yml
+    with:
+      source-commit: ${{ needs.preflight.outputs.commit }}
+
+  publish:
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'Chr0nixz/capstan' }}
+    needs: [preflight, validate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit }}
+          persist-credentials: false
+
+      - name: Require the validated artifact ID
+        env:
+          ARTIFACT_ID: ${{ needs.validate.outputs.artifact-id }}
+        run: '[[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]'
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          artifact-ids: ${{ needs.validate.outputs.artifact-id }}
+          path: target/ci-packages
+
+      - name: Publish verified draft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
+        run: python3 scripts/release.py publish target/ci-packages "$RELEASE_VERSION" "$RELEASE_COMMIT"

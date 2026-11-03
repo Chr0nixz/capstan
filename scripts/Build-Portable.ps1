@@ -33,7 +33,9 @@ try {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $targetRoot "bundle/portable/capstan-0.1.0-win-$architecture.zip"
+    $version = (Get-Content -LiteralPath (Join-Path $repositoryRoot 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json).version
+    if ($version -cnotmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') { throw 'Expected a stable Tauri package version.' }
+    $OutputPath = Join-Path $targetRoot "bundle/portable/capstan-$version-win-$architecture.zip"
 }
 $output = [System.IO.Path]::GetFullPath($OutputPath)
 if (Test-Path -LiteralPath $output) {

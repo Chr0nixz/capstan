@@ -13,9 +13,17 @@ measurement=${8:-none}
 case "$host_algorithm" in ed25519|rsa) ;; *) exit 2 ;; esac
 case "$measurement" in none|benchmark|sftp|benchmark-sftp) ;; *) exit 2 ;; esac
 
-case "$fixture" in /var/tmp/capstan-m1-ssh-*) ;; *) exit 2 ;; esac
-case "$secrets" in /mnt/*/capstan/target/m1-sshd-*/*) ;; *) exit 2 ;; esac
-case "$account" in cm1[0-9a-f]*) ;; *) exit 2 ;; esac
+token=${account#cm1}
+case "$token" in *[!0-9a-f]*) exit 2 ;; esac
+[ "${#token}" -eq 12 ]
+[ "$account" = "cm1$token" ]
+[ "$fixture" = "/var/tmp/capstan-m1-ssh-$token" ]
+[ ! -L "$fixture" ]
+case "$secrets" in
+    /mnt/*/capstan/target/m1-sshd-*/*) ;;
+    "/tmp/capstan-m1-sshd-$token/secrets") [ "$(realpath -m -- "$secrets")" = "$secrets" ] ;;
+    *) exit 2 ;;
+esac
 case "$port" in *[!0-9]*|'') exit 2 ;; esac
 [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]
 

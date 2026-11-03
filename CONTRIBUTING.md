@@ -52,3 +52,25 @@ push on behalf of a maintainer without an explicit request.
 测试使用一次性账户和现场生成的密钥。日志、报告和 PR 中不得出现密码、私钥、口令、
 真实 Vault 或终端正文。保留补丁依赖的来源与许可证；代码、注释使用英文，用户文字
 提供中英翻译。未经要求不要提交或推送。
+
+## Windows releases / Windows 发布
+
+1. In a PR, align `workspace.package.version` in `Cargo.toml`, the Tauri and
+   UI package versions, and `Cargo.lock`. Update the changelog for the release.
+2. After merging, run **Windows release** from `main` in Actions. Download
+   the Windows x64 artifact and compare both files against `SHA256SUMS.txt`
+   with `Get-FileHash -Algorithm SHA256`. Test ordinary-user installation and
+   portable startup on Windows. The packages are unsigned.
+3. Tag that exact tested commit as `vX.Y.Z` and push the single tag. The workflow
+   validates Windows and OpenSSH again and publishes the verified assets to
+   GitHub Releases. The tag is the maintainer's publication decision.
+4. For a transient failure, rerun the failed jobs. If the Actions artifact has
+   expired, rerun all jobs. The workflow can resume its own draft. If a source
+   fix is needed, merge it and use a new version and tag. Published assets and
+   their tags are kept as issued.
+
+中文：在 PR 中更新 Cargo 工作区、Tauri、UI 版本和 `Cargo.lock`，同步更新日志。合并后
+在 Actions 选择 `main` 运行 **Windows release**，下载产物并核对两个包的 SHA-256，
+手测普通用户安装和便携启动。维护者给已验证提交打 `vX.Y.Z` 并推送该 tag，验证通过后
+流水线自动发布。临时失败可重跑失败的任务，产物过期时重跑全部任务。源码修复通过新版本
+发布。安装包和便携包均未签名。

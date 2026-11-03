@@ -12,7 +12,7 @@ const distribution = sftpMode ? join(repository, "target", "m2-sftp-layout-build
 const target = join(repository, "target");
 const token = randomUUID();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const evidence = join(repository, "docs", "agent", "baselines", sftpMode ? "M2" : "M1", "raw", `${stamp}-${sftpMode ? "sftp" : "terminal"}-${securityMode ? "security" : "layout"}`);
+const evidence = join(target, "layout-checks", `${stamp}-${sftpMode ? "sftp" : "terminal"}-${securityMode ? "security" : "layout"}`);
 const browserCandidates = [
   process.env.CAPSTAN_TEST_BROWSER,
   join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
