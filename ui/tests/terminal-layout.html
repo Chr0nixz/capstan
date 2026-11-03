@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>Capstan terminal layout regression</title>
+  <style>
+    body { margin: 0; }
+    iframe { display: block; border: 0; }
+  </style>
+  <pre id="result" data-report=""></pre>
+  <iframe title="Capstan under test"></iframe>
+  <script type="module">
+    const frame = document.querySelector("iframe");
+    const results = [];
+    let navigation = 0;
+    const settle = () => new Promise(resolve => frame.contentWindow.requestAnimationFrame(() => {
+      frame.contentWindow.requestAnimationFrame(resolve);
+    }));
+    const documentInFrame = () => frame.contentDocument;
+    const box = element => {
+      if (!element) throw new Error("A required layout element is missing.");
+      const rect = element.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
+    };
+    async function load(route, width, height) {
+      frame.style.width = `${width}px`;
+      frame.style.height = `${height}px`;
+      await new Promise((resolve, reject) => {
+        frame.onload = resolve;
+        frame.onerror = reject;
+        const destination = new URL(route, location.href);
+        destination.searchParams.set("layout-run", String(++navigation));
+        frame.src = destination.href;
+      });
+      await documentInFrame().fonts.ready;
+      await settle();
+    }
+    function check(name, benchmark = false) {
+      const doc = documentInFrame();
+      const win = frame.contentWindow;
+      const shellElement = doc.querySelector(".terminal-shell");
+      const shell = box(shellElement);
+      const toolbar = box(doc.querySelector(benchmark ? ".benchmark-toolbar" : ".terminal-tabs"));
+      const hostElement = doc.querySelector(benchmark ? ".benchmark-host" : ".terminal-pane:not([hidden]) .terminal-host");
+      const host = box(hostElement);
+      const style = win.getComputedStyle(shellElement);
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const errors = [];
+      if (Math.abs(shell.top - toolbar.bottom) > 1) errors.push("The terminal does not begin immediately below its toolbar.");
+      if (Math.abs(shell.bottom - win.innerHeight) > 1) errors.push("The terminal does not fill the remaining window height.");
+      if (shell.left < -1 || shell.right > win.innerWidth + 1) errors.push("The terminal overflows the window width.");
+      if (host.width < 80 || host.height < 40) errors.push("The terminal host is unusably small.");
+      let screen = null;
+      if (!benchmark) {
+        if (Math.abs(host.height - (shell.height - padding)) > 1) errors.push("The pane does not fill the terminal shell.");
+        screen = box(doc.querySelector(".terminal-pane:not([hidden]) .xterm-screen"));
+        const hostStyle = win.getComputedStyle(hostElement);
+        const contentHeight = hostElement.clientHeight - parseFloat(hostStyle.paddingTop) - parseFloat(hostStyle.paddingBottom);
+        if (screen.height < contentHeight - 36 || screen.height > contentHeight + 1) errors.push("The xterm grid is not fitted inside its host.");
+        if (screen.top < host.top || screen.bottom > host.bottom + 1) errors.push("Terminal rows are clipped outside their host.");
+        if (doc.querySelectorAll(".terminal-pane:not([hidden])").length !== 1) errors.push("Exactly one terminal pane must be visible.");
+        for (const hidden of doc.querySelectorAll(".terminal-pane[hidden]")) {
+          if (box(hidden).height !== 0) errors.push("A hidden pane is consuming layout space.");
+        }
+      } else if (host.bottom > shell.bottom + 1 || host.top < toolbar.bottom) {
+        errors.push("The benchmark host overflows its shell.");
+      }
+      results.push({ name, passed: errors.length === 0, viewport: { width: win.innerWidth, height: win.innerHeight, scale: win.devicePixelRatio }, shell, host, screen, errors });
+    }
+    try {
+      await load("/", 1600, 1000);
+      for (const [name, width, height] of [
+        ["desktop", 1600, 1000], ["resize", 1024, 768], ["short-window", 800, 360],
+        ["narrow-window", 600, 480], ["minimum-window", 330, 240], ["restore-size", 1200, 800],
+      ]) {
+        frame.style.width = `${width}px`;
+        frame.style.height = `${height}px`;
+        await settle();
+        check(name);
+      }
+      const doc = documentInFrame();
+      doc.querySelector(".new-terminal").click();
+      await settle();
+      check("second-tab");
+      doc.querySelectorAll("button[role=tab]")[0].click();
+      await settle();
+      check("switch-back");
+      doc.querySelectorAll(".terminal-tab-close")[1].click();
+      await settle();
+      check("close-inactive-tab");
+      doc.querySelector(".terminal-pane:not([hidden]) .terminal-pane-root").dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", {
+        key: "f", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+      }));
+      await settle();
+      if (!doc.querySelector(".terminal-search-toolbar")) throw new Error("The terminal search overlay did not open.");
+      check("search-overlay");
+      for (const [name, width, height] of [["shell-selector-desktop", 1200, 800], ["shell-selector-minimum", 330, 240]]) {
+        frame.style.width = `${width}px`; frame.style.height = `${height}px`;
+        const launcher = doc.querySelector(".local-launcher");
+        launcher.open = true;
+        await settle();
+        const panel = box(doc.querySelector(".local-launcher-panel"));
+        const errors = [];
+        if (panel.left < 0 || panel.right > width + 1 || panel.top < 0 || panel.bottom > height + 1) errors.push("Shell selector exceeds the viewport.");
+        results.push({ name, passed: errors.length === 0, panel, errors });
+        launcher.open = false;
+      }
+      await load("/#/m0-benchmark", 1600, 1000);
+      check("benchmark-desktop", true);
+      frame.style.width = "330px";
+      frame.style.height = "240px";
+      await settle();
+      check("benchmark-minimum", true);
+    } catch (error) {
+      results.push({ name: "harness", passed: false, errors: [String(error)] });
+    }
+    const report = { passed: results.length === 14 && results.every(result => result.passed), results };
+    document.querySelector("#result").dataset.report = encodeURIComponent(JSON.stringify(report));
+    document.title = report.passed ? "PASS: Capstan terminal layout" : "FAIL: Capstan terminal layout";
+  </script>
+</html>

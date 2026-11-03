@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.json", "include": ["src", "tests/sftp-workflow.tsx", "vite.sftp.config.ts"] }

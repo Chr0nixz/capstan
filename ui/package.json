@@ -1,0 +1,38 @@
+{
+  "name": "capstan-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:layout": "pnpm build && node ../scripts/check-terminal-layout.mjs",
+    "test:sftp-layout": "tsc --noEmit -p tsconfig.sftp.json && vite build --config vite.sftp.config.ts && node ../scripts/check-terminal-layout.mjs --sftp",
+    "test:security": "tsc --noEmit -p tsconfig.security.json && vite build --config vite.security.config.ts && node ../scripts/check-terminal-layout.mjs --security",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "1.1.15",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/addon-webgl": "0.18.0",
+    "@xterm/xterm": "5.4.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-resizable-panels": "3.0.6",
+    "zustand": "5.0.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.1",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "5.0.4",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.2",
+    "vite": "7.1.5",
+    "vitest": "3.2.4"
+  }
+}

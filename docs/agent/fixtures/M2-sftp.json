@@ -1,0 +1,30 @@
+{
+  "sessionId": "c21bcbe2-f1cd-4a17-8349-b6bbce27a227",
+  "requestRevision": "9007199254740993",
+  "pageSequence": 0,
+  "path": "/home/test/中文 %2f",
+  "entries": [
+    {
+      "id": "202c721c-bd3a-4291-8447-be5aa44b76af",
+      "name": "example.txt",
+      "metadata": {
+        "kind": "file",
+        "size": "18446744073709551615",
+        "modifiedSeconds": "1792192000",
+        "permissions": 33188
+      }
+    },
+    {
+      "id": "ab6cf9a0-3615-4b3e-be92-cdf008f3bc69",
+      "name": "unknown",
+      "metadata": {
+        "kind": "unknown",
+        "size": null,
+        "modifiedSeconds": null,
+        "permissions": null
+      }
+    }
+  ],
+  "hasMore": false,
+  "omittedEntries": 2
+}

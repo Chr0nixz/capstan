@@ -1,0 +1,38 @@
+{
+  "revision": "9007199254740993",
+  "sessions": [
+    {
+      "id": "00000000-0000-4000-8000-000000000031",
+      "name": "notes 中文.txt",
+      "remotePath": "/home/test/notes 中文.txt",
+      "hostId": "00000000-0000-4000-8000-000000000032",
+      "state": "conflict",
+      "dirty": true,
+      "recovered": false,
+      "cleanupRequired": true,
+      "replaceAllowed": true,
+      "error": "editor_conflict",
+      "remoteTemporaries": [
+        {
+          "id": "00000000-0000-4000-8000-000000000034",
+          "path": "/home/test/.capstan-edit-example.partial",
+          "state": "changed"
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000033",
+      "name": "recovered.txt",
+      "remotePath": null,
+      "hostId": null,
+      "state": "residual",
+      "dirty": true,
+      "recovered": true,
+      "cleanupRequired": true,
+      "replaceAllowed": false,
+      "error": null,
+      "remoteTemporaries": []
+    }
+  ],
+  "recoveryIncomplete": false
+}

@@ -1,0 +1,30 @@
+[package]
+name = "capstan-vault"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Bounded encrypted vault and transactional persistence for Capstan"
+
+[dependencies]
+argon2 = "=0.5.3"
+chacha20poly1305 = "=0.10.1"
+fs2 = "=0.4.3"
+hmac = "=0.12.1"
+rand_core = { version = "=0.6.4", features = ["getrandom"] }
+secrecy = "=0.10.3"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+thiserror = "=2.0.21"
+uuid = { version = "=1.27.0", features = ["v4", "serde"] }
+zeroize = { version = "=1.9.0", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[target.'cfg(windows)'.dependencies]
+capstan-native-windows = { path = "../../vendor/capstan-native-windows" }
+
+[lints]
+workspace = true

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "fixed_before_measurement": "2026-10-17",
+  "purpose": "Same-machine, same-release-build M0 local reference and M1 mixed local/OpenSSH comparison. Replaces missing quantitative evidence, not historical human reports.",
+  "invariants": {
+    "generated_bulk_bytes": 104857600,
+    "mixed_rounds": 3,
+    "mixed_tabs": 20,
+    "mixed_local_tabs": 4,
+    "mixed_ssh_transports": 2,
+    "visible_renderers_peak": 1,
+    "application_outstanding_limit_bytes": 1114112,
+    "registered_after": 0,
+    "renderers_after": 0,
+    "ssh_pool_after_disconnect": 0,
+    "minimum_visible_sample_ratio": 0.95,
+    "minimum_focused_sample_ratio": 0.8
+  },
+  "regression_limits": {
+    "local_bulk_minimum_throughput_ratio": 0.8,
+    "local_input_p95_maximum": "max(M0 p95 * 2, M0 p95 + 50 ms)",
+    "mixed_input_p95_maximum": "max(M0 p95 * 3, M0 p95 + 100 ms)",
+    "mixed_peak_working_set_maximum": "M0 peak process-tree working set * 1.75 + 128 MiB",
+    "mixed_peak_handles_maximum": "M0 peak process-tree handles * 2 + 128",
+    "normal_shell_during_slow_ack_p95_ms": 1000
+  },
+  "scope": "Loopback WSL OpenSSH, one visible pane with WebGL, synthetic fixed output. Numerical margins allow SSH transport/authentication and scheduling overhead. Record actual CPU, RTT, negotiated algorithms, DPI and WebView2. No WAN, ARM64 or hardware-matrix claim. Retain failures; never loosen limits after a run."
+}

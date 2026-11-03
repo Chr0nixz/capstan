@@ -1,0 +1,16 @@
+/target/
+/vendor/*/target/
+/vendor/*/.cargo-ok
+/ui/node_modules/
+/ui/dist/
+/src-tauri/gen/
+/docs/agent/baselines/*/raw/
+/extracted/
+/.claude/
+.impeccable/
+/data/
+__pycache__/
+*.cbak
+*.user
+*.userosscache
+*.suo

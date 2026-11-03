@@ -1,0 +1,56 @@
+[package]
+name = "capstan-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Tauri glue for the Capstan M0 terminal slice"
+
+[lib]
+name = "capstan_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "capstan-app"
+path = "src/main.rs"
+
+[features]
+default = []
+tauri-runtime = ["dep:tauri", "dep:tauri-plugin-snap-layout"]
+m0-benchmarks = ["tauri-runtime", "capstan-pty/m0-benchmarks", "capstan-core/benchmarks", "dep:serde_json"]
+custom-protocol = ["tauri-runtime", "tauri/custom-protocol"]
+
+[dependencies]
+capstan-terminal = { path = "../crates/capstan-terminal" }
+capstan-pty = { path = "../crates/capstan-pty" }
+capstan-core = { path = "../crates/capstan-core" }
+capstan-vault = { path = "../crates/capstan-vault" }
+capstan-ssh = { path = "../crates/capstan-ssh" }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.17"
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-snap-layout = { version = "=1.0.9", optional = true }
+serde_json = { version = "=1.0.151", optional = true }
+tokio-util = { version = "=0.7.19", features = ["rt"] }
+uuid = { version = "=1.27.0", features = ["v4", "serde"] }
+secrecy = "=0.10.3"
+zeroize = "=1.9.0"
+sha2 = "=0.10.9"
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(windows)'.dependencies]
+capstan-native-windows = { path = "../vendor/capstan-native-windows" }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+serde_json = "=1.0.151"
+tokio = { version = "=1.53.3", features = ["test-util"] }
+
+[lints]
+workspace = true
+
+[package.metadata.tauri]
+# Keep packaging disabled for M0; no installer or icon is published here.

@@ -1,0 +1,9 @@
+{
+  "app": {
+    "windows": [{
+      "label": "main", "title": "Capstan M0 benchmark", "url": "index.html#/m0-benchmark",
+      "width": 1280, "height": 800, "minWidth": 330, "minHeight": 240,
+      "decorations": false, "transparent": true, "visible": false
+    }]
+  }
+}

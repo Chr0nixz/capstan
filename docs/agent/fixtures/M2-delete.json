@@ -1,0 +1,8 @@
+{
+  "summary": { "token": "00000000-0000-4000-8000-000000000090", "hostId": "00000000-0000-4000-8000-000000000002", "path": "/files/tree", "files": 1, "directories": 1, "symlinks": 1 },
+  "report": { "entries": [
+    { "path": "/files/tree/link", "outcome": "removed", "error": null },
+    { "path": "/files/tree/denied", "outcome": "failed", "error": "permission_denied" },
+    { "path": "/files/tree", "outcome": "retained", "error": "target_conflict" }
+  ] }
+}

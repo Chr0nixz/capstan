@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "viewport": { "width": 1280, "height": 800, "scale": 1.25 },
+  "runs": [{
+    "kind": "bulk", "round": 0, "elapsed_ms": 10,
+    "renderer_peak": 1, "renderers_after": 0, "registered_after": 0,
+    "input_response_ms": [1, 4, 9], "failure": null,
+    "terminals": [{ "id": "session-0", "bytes": 4, "checksum": 3716520713,
+      "frames": 1, "raw_binary": true, "parsed_bytes": 4, "acked_bytes": 4, "max_pending_bytes": 4 }]
+  }]
+}

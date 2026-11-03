@@ -1,0 +1,55 @@
+{
+  "sequence": 1,
+  "payload": [
+    0,
+    255,
+    1,
+    0
+  ],
+  "encoded": [
+    67,
+    83,
+    84,
+    78,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    4,
+    0,
+    0,
+    0,
+    9,
+    155,
+    133,
+    221,
+    0,
+    255,
+    1,
+    0
+  ],
+  "snapshot": {
+    "id": "session-0",
+    "state": "running",
+    "exit_code": null,
+    "error_code": null,
+    "metrics": {
+      "queued_bytes": 0,
+      "in_flight_bytes": 0,
+      "max_outstanding_bytes": 0,
+      "input_bytes": 0,
+      "output_bytes": 0,
+      "frame_count": 0,
+      "max_pending_bytes": 0,
+      "max_in_flight_bytes": 0,
+      "pause_count": 0,
+      "resume_count": 0,
+      "canceled": false,
+      "channel_closed": false
+    }
+  }
+}

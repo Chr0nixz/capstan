@@ -1,0 +1,24 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000001",
+    "hostId": "00000000-0000-4000-8000-000000000002",
+    "name": "中文 file.bin",
+    "remotePath": "/home/test/中文 file.bin",
+    "direction": "upload",
+    "state": "awaiting_conflict",
+    "version": "9007199254740994",
+    "processed": "9007199254740993",
+    "total": "18446744073709551615",
+    "bytesPerSecond": "32768",
+    "remainingSeconds": null,
+    "error": null,
+    "conflict": {
+      "revision": "9007199254740994",
+      "target": { "kind": "file", "size": "18446744073709551615", "modifiedSeconds": "1700000000", "permissions": 33152 },
+      "replaceAllowed": false,
+      "batchEligible": false
+    },
+    "cleanupRequired": false,
+    "batch": null
+  }
+]

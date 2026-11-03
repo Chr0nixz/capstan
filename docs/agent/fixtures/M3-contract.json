@@ -1,0 +1,279 @@
+{
+  "paneLayout": {
+    "tabId": "tab-7",
+    "root": {
+      "kind": "split",
+      "direction": "horizontal",
+      "ratio": 0.62,
+      "first": {
+        "kind": "pane",
+        "paneId": "pane-a",
+        "launch": {
+          "kind": "ssh",
+          "host_id": "11111111-1111-4111-8111-111111111111",
+          "attempt_id": "22222222-2222-4222-8222-222222222222",
+          "theme": "graphite"
+        }
+      },
+      "second": {
+        "kind": "split",
+        "direction": "vertical",
+        "ratio": 0.5,
+        "first": {
+          "kind": "pane",
+          "paneId": "pane-b",
+          "launch": { "kind": "local", "options": { "shell_id": "powershell" } }
+        },
+        "second": {
+          "kind": "pane",
+          "paneId": "pane-c",
+          "launch": { "kind": "local", "options": {} }
+        }
+      }
+    }
+  },
+  "connectionSnapshot": {
+    "connectionId": "33333333-3333-4333-8333-333333333333",
+    "generation": "9007199254740993",
+    "state": "online",
+    "errorCode": null
+  },
+  "connectionTransitions": [
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "failed", "errorCode": "host_key_changed" },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "disconnected", "errorCode": "canceled" },
+      "accepted": true
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "online", "errorCode": null },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "7", "state": "disconnected", "errorCode": "connection_lost" },
+      "accepted": false
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "reconnecting", "errorCode": "connection_lost" },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "connecting", "errorCode": null },
+      "accepted": true
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "online", "errorCode": null },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "online", "errorCode": null },
+      "accepted": false
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "reconnecting", "errorCode": "connection_lost" },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "online", "errorCode": null },
+      "accepted": false
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "reconnecting", "errorCode": "connection_lost" },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "authenticating", "errorCode": null },
+      "accepted": false
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "reconnecting", "errorCode": "connection_lost" },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "reconnecting", "errorCode": "connection_lost" },
+      "accepted": true
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "connecting", "errorCode": null },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "authenticating", "errorCode": null },
+      "accepted": true
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "authenticating", "errorCode": null },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "online", "errorCode": null },
+      "accepted": true
+    },
+    {
+      "current": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "9", "state": "connecting", "errorCode": null },
+      "next": { "connectionId": "33333333-3333-4333-8333-333333333333", "generation": "8", "state": "online", "errorCode": null },
+      "accepted": false
+    }
+  ],
+  "eventNames": {
+    "connectionStateChanged": "connection-state-changed",
+    "tunnelStateChanged": "tunnel-state-changed"
+  },
+  "broadcastInputs": [
+    { "name": "single line", "input": "one", "confirmation": false, "armedConfirmation": false },
+    { "name": "LF", "input": "one\ntwo", "confirmation": true, "armedConfirmation": true },
+    { "name": "CRLF", "input": "one\r\ntwo", "confirmation": true, "armedConfirmation": true },
+    { "name": "CR", "input": "one\rtwo", "confirmation": true, "armedConfirmation": true },
+    { "name": "trailing CR", "input": "one\r", "confirmation": true, "armedConfirmation": false },
+    { "name": "lone Enter", "input": "\r", "confirmation": true, "armedConfirmation": false },
+    { "name": "trailing CRLF", "input": "one\r\n", "confirmation": true, "armedConfirmation": false },
+    { "name": "two trailing CR", "input": "one\r\r", "confirmation": true, "armedConfirmation": true },
+    { "name": "bracketed CR", "input": "\u001b[200~one\rtwo\u001b[201~", "confirmation": true, "armedConfirmation": true },
+    { "name": "bracketed LF", "input": "\u001b[200~one\ntwo\u001b[201~", "confirmation": true, "armedConfirmation": true },
+    { "name": "bracketed CRLF", "input": "\u001b[200~one\r\ntwo\u001b[201~", "confirmation": true, "armedConfirmation": true },
+    { "name": "bracketed trailing LF", "input": "\u001b[200~one\n\u001b[201~", "confirmation": true, "armedConfirmation": true },
+    { "name": "bracketed single line", "input": "\u001b[200~one\u001b[201~", "confirmation": false, "armedConfirmation": false }
+  ],
+  "connectionSnapshotCases": [
+    { "name": "nil identity", "patch": { "connectionId": "00000000-0000-0000-0000-000000000000" }, "accepted": false },
+    { "name": "zero generation", "patch": { "generation": "0" }, "accepted": false },
+    { "name": "u64 maximum", "patch": { "generation": "18446744073709551615" }, "accepted": true },
+    { "name": "u64 overflow", "patch": { "generation": "18446744073709551616" }, "accepted": false },
+    { "name": "array state", "patch": { "state": ["online"] }, "accepted": false },
+    { "name": "object state", "patch": { "state": {} }, "accepted": false },
+    { "name": "null state", "patch": { "state": null }, "accepted": false },
+    { "name": "numeric state", "patch": { "state": 1 }, "accepted": false },
+    { "name": "array error", "patch": { "errorCode": ["connection_lost"] }, "accepted": false }
+  ],
+  "tunnelSnapshotCases": [
+    { "name": "array state", "patch": { "state": ["running"] }, "accepted": false },
+    { "name": "object state", "patch": { "state": {} }, "accepted": false },
+    { "name": "null state", "patch": { "state": null }, "accepted": false },
+    { "name": "numeric state", "patch": { "state": 1 }, "accepted": false },
+    { "name": "array error", "patch": { "error_code": ["connection_lost"] }, "accepted": false },
+    { "name": "client limit error", "patch": { "error_code": "client_limit" }, "accepted": true },
+    { "name": "unknown error", "patch": { "error_code": "client_limit_reached" }, "accepted": false },
+    { "name": "u32 zero", "patch": { "active_connections": 0 }, "accepted": true },
+    { "name": "u32 maximum", "patch": { "active_connections": 4294967295 }, "accepted": true },
+    { "name": "u32 overflow", "patch": { "active_connections": 4294967296 }, "accepted": false },
+    { "name": "negative count", "patch": { "active_connections": -1 }, "accepted": false },
+    { "name": "fractional count", "patch": { "active_connections": 0.5 }, "accepted": false },
+    { "name": "numeric bytes", "patch": { "bytes_sent": 1 }, "accepted": false },
+    { "name": "u64 overflow", "patch": { "bytes_received": "18446744073709551616" }, "accepted": false }
+  ],
+  "tunnelHostCases": [
+    { "host": "localhost", "accepted": true },
+    { "host": "Dev_Web_1.LOCAL.", "accepted": true },
+    { "host": " host.example.test ", "accepted": true },
+    { "host": "\u0085host.example.test\u0085", "accepted": true },
+    { "host": "127.0.0.1", "accepted": true },
+    { "host": "::1", "accepted": true },
+    { "host": "[2001:db8::1]", "accepted": true },
+    { "host": "fe80::1%ethernet_2", "accepted": true },
+    { "host": "[FE80:0::1%0012]", "accepted": true },
+    { "host": "fe80::1%4294967295", "accepted": true },
+    { "host": "::ffff:192.0.2.1", "accepted": true },
+    { "host": "1:2:3:4:5:6:7:8", "accepted": true },
+    { "host": "", "accepted": false },
+    { "host": "bad/host", "accepted": false },
+    { "host": "bad host", "accepted": false },
+    { "host": "host;command", "accepted": false },
+    { "host": "_bad", "accepted": false },
+    { "host": "bad_", "accepted": false },
+    { "host": "-bad", "accepted": false },
+    { "host": "bad-", "accepted": false },
+    { "host": "host..example", "accepted": false },
+    { "host": "[localhost]", "accepted": false },
+    { "host": "[::1]:22", "accepted": false },
+    { "host": "1::2::3", "accepted": false },
+    { "host": "1:2:3:4:5:6:7", "accepted": false },
+    { "host": "1:2:3:4:5:6:7::8", "accepted": false },
+    { "host": "::ffff:192.000.2.1", "accepted": false },
+    { "host": "127.0.0.1%2", "accepted": false },
+    { "host": "fe80::1%", "accepted": false },
+    { "host": "fe80::1%4294967296", "accepted": false },
+    { "host": "fe80::1%a/b", "accepted": false },
+    { "host": "\ufeffhost.example.test", "accepted": false },
+    { "host": "中文.example", "accepted": false }
+  ],
+  "snippetTextCases": [
+    { "name": "reported CJK name", "field": "name", "text": "中", "repeat": 100, "suffix": "", "accepted": false },
+    { "name": "reported CJK template", "field": "template", "text": "中", "repeat": 3000, "suffix": "", "accepted": false },
+    { "name": "reported CJK group", "field": "group_name", "text": "中", "repeat": 50, "suffix": "", "accepted": false },
+    { "name": "CJK name at limit", "field": "name", "text": "中", "repeat": 85, "suffix": "a", "accepted": true },
+    { "name": "CJK name over limit", "field": "name", "text": "中", "repeat": 85, "suffix": "ab", "accepted": false },
+    { "name": "emoji name at limit", "field": "name", "text": "😀", "repeat": 64, "suffix": "", "accepted": true },
+    { "name": "emoji name over limit", "field": "name", "text": "😀", "repeat": 64, "suffix": "a", "accepted": false },
+    { "name": "CJK group at limit", "field": "group_name", "text": "中", "repeat": 42, "suffix": "ab", "accepted": true },
+    { "name": "CJK group over limit", "field": "group_name", "text": "中", "repeat": 43, "suffix": "", "accepted": false },
+    { "name": "emoji group at limit", "field": "group_name", "text": "😀", "repeat": 32, "suffix": "", "accepted": true },
+    { "name": "emoji group over limit", "field": "group_name", "text": "😀", "repeat": 33, "suffix": "", "accepted": false },
+    { "name": "CJK template at limit", "field": "template", "text": "中", "repeat": 2730, "suffix": "ab", "accepted": true },
+    { "name": "CJK template over limit", "field": "template", "text": "中", "repeat": 2731, "suffix": "", "accepted": false },
+    { "name": "emoji template at limit", "field": "template", "text": "😀", "repeat": 2048, "suffix": "", "accepted": true },
+    { "name": "emoji template over limit", "field": "template", "text": "😀", "repeat": 2048, "suffix": "a", "accepted": false },
+    { "name": "Rust whitespace template", "field": "template", "text": "\u0085", "repeat": 1, "suffix": "", "accepted": false },
+    { "name": "BOM is content", "field": "template", "text": "\ufeff", "repeat": 1, "suffix": "", "accepted": true },
+    { "name": "NUL template", "field": "template", "text": "bad\u0000text", "repeat": 1, "suffix": "", "accepted": false }
+  ],
+  "commandInvalidPanels": [["forwarding"], {}, null, 1],
+  "tunnels": [
+    {
+      "id": "44444444-4444-4444-8444-444444444441",
+      "host_id": "11111111-1111-4111-8111-111111111111",
+      "auto_start": true,
+      "forward": {
+        "kind": "local",
+        "bind_host": "127.0.0.1",
+        "bind_port": 8080,
+        "destination_host": "127.0.0.1",
+        "destination_port": 80
+      }
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444442",
+      "host_id": "11111111-1111-4111-8111-111111111111",
+      "auto_start": false,
+      "forward": {
+        "kind": "remote",
+        "remote_bind_host": "127.0.0.1",
+        "remote_bind_port": 9000,
+        "local_destination_host": "localhost",
+        "local_destination_port": 3000
+      }
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444443",
+      "host_id": "11111111-1111-4111-8111-111111111111",
+      "auto_start": false,
+      "forward": {
+        "kind": "socks5",
+        "bind_host": "127.0.0.1",
+        "bind_port": 1080
+      }
+    }
+  ],
+  "tunnelRuntimeSnapshot": {
+    "id": "44444444-4444-4444-8444-444444444441",
+    "state": "running",
+    "error_code": null,
+    "active_connections": 2,
+    "bytes_sent": "9007199254740993",
+    "bytes_received": "18446744073709551615"
+  },
+  "snippetGroups": [
+    { "id": "55555555-5555-4555-8555-555555555555", "name": "Operations" }
+  ],
+  "snippets": [
+    {
+      "id": "66666666-6666-4666-8666-666666666666",
+      "group_id": "55555555-5555-4555-8555-555555555555",
+      "name": "List pods",
+      "template": "kubectl get pods -n {{namespace:default}}",
+      "auto_enter": true
+    }
+  ],
+  "commandActions": [
+    {
+      "id": "connect_host",
+      "labelKey": "connectHost",
+      "keywordKeys": ["host", "connect"],
+      "hostId": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "run_snippet",
+      "labelKey": "runSnippet",
+      "keywordKeys": ["snippet", "command"],
+      "snippetId": "66666666-6666-4666-8666-666666666666",
+      "connectionId": "33333333-3333-4333-8333-333333333333"
+    },
+    { "id": "set_theme", "labelKey": "changeTheme", "keywordKeys": ["theme"], "theme": "light" },
+    { "id": "toggle_panel", "labelKey": "showForwarding", "keywordKeys": ["tunnel"], "panel": "forwarding" },
+    { "id": "open_settings", "labelKey": "openSettings", "keywordKeys": ["preferences"] },
+    { "id": "workspace", "labelKey": "splitRightAction", "keywordKeys": ["split", "pane"], "command": "split_right" }
+  ],
+  "legacyVaultPayload": {
+    "schema": 1,
+    "revision": 4,
+    "hosts": [],
+    "groups": [],
+    "credentials": [],
+    "trust": [],
+    "preferences": { "auto_lock_minutes": 30, "disconnect_on_lock": false }
+  }
+}

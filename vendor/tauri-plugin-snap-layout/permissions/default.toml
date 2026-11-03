@@ -1,0 +1,3 @@
+[default]
+description = "Only the main window may manage its maximize-button hitbox"
+permissions = ["allow-update-snap-bounds", "allow-detach-snap-bounds"]

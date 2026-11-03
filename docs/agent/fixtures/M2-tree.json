@@ -1,0 +1,10 @@
+{
+  "token": "00000000-0000-4000-8000-000000000006",
+  "revision": "9007199254740995",
+  "name": "folder",
+  "files": 2,
+  "conflicts": [
+    { "entry": 1, "source": "folder/A", "relative": "folder/A", "directory": false, "kind": "name_collision" },
+    { "entry": 2, "source": "folder/a", "relative": "folder/a", "directory": false, "kind": "name_collision" }
+  ]
+}

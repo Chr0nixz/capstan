@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+exclude = ["vendor/portable-pty", "vendor/tauri-plugin-snap-layout", "vendor/capstan-native-windows", "vendor/ssh-key"]
+members = [
+    "crates/capstan-terminal",
+    "crates/capstan-pty",
+    "crates/capstan-vault",
+    "crates/capstan-ssh",
+    "crates/capstan-core",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.96"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"
+
+[patch.crates-io]
+portable-pty = { path = "vendor/portable-pty" }
+tauri-plugin-snap-layout = { path = "vendor/tauri-plugin-snap-layout" }
+russh = { path = "vendor/russh" }
+russh-sftp = { path = "vendor/russh-sftp" }
+
+ssh-key = { path = "vendor/ssh-key" }

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-detach-snap-bounds"
+description = "Enables the detach_snap_bounds command without any pre-configured scope."
+commands.allow = ["detach_snap_bounds"]
+
+[[permission]]
+identifier = "deny-detach-snap-bounds"
+description = "Denies the detach_snap_bounds command without any pre-configured scope."
+commands.deny = ["detach_snap_bounds"]
