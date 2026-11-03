@@ -50,6 +50,7 @@ pub(super) type PreparedFolder = Vec<(TransferContext, Local, Arc<Member>)>;
 pub(super) async fn prepare(items: Vec<FolderItem>) -> Result<PreparedFolder, SftpError> {
     prepare_inner(items, false).await
 }
+#[cfg(windows)]
 pub(super) async fn prepare_tree(items: Vec<FolderItem>) -> Result<PreparedFolder, SftpError> {
     prepare_inner(items, true).await
 }

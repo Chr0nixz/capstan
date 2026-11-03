@@ -1,5 +1,6 @@
 //! Narrow, already-authorized local I/O. Implementations never accept WebView paths.
 use crate::sftp::SftpError;
+#[cfg(windows)]
 use std::io;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +54,7 @@ pub trait LocalDestination: Send + Sync {
     fn commit(&self, expected: Option<LocalVersion>) -> Result<(), SftpError>;
     fn discard(&self) -> Result<(), SftpError>;
 }
+#[cfg(windows)]
 pub(crate) fn local_error(error: io::Error) -> SftpError {
     match error.kind() {
         io::ErrorKind::PermissionDenied => SftpError::PermissionDenied,

@@ -470,6 +470,7 @@ impl SftpService {
         })
     }
 
+    #[cfg(windows)]
     pub(crate) fn export_binding(
         &self,
         window: &str,
@@ -485,6 +486,7 @@ impl SftpService {
             .authorize(session, &view.binding, Instant::now())?;
         Ok(view.binding.clone())
     }
+    #[cfg(windows)]
     pub(crate) fn tree_client(
         &self,
         window: &str,
@@ -603,6 +605,7 @@ impl SftpService {
 
     /// The editor supplies its retained Rust-owned target and baseline. No
     /// desktop command accepts these paths from the WebView as authority.
+    #[cfg(windows)]
     pub(crate) fn editor_retry_context(
         &self,
         window: &str,
