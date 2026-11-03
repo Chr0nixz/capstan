@@ -62,9 +62,6 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm -C ui install --frozen-lockfile
 
-      - name: Build frontend for Tauri custom-protocol checks
-        run: pnpm -C ui build
-
       - name: Release pipeline tests
         run: python -m unittest discover -s scripts -p test_release.py
 
@@ -85,6 +82,10 @@ jobs:
 
       - name: Tauri runtime tests
         run: cargo test --locked -p capstan-app --features tauri-runtime
+
+      # The runtime build generates the ACL schema imported by the frontend tests.
+      - name: Build frontend for Tauri custom-protocol checks
+        run: pnpm -C ui build
 
       - name: Synthetic measurement contracts
         run: cargo test --locked --workspace --all-features
