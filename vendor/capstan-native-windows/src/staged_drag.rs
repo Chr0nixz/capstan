@@ -261,7 +261,7 @@ mod tests {
         let mut medium = STGMEDIUM::default();
         // SAFETY: live IDataObject, correct GetData vtable prefix and writable
         // medium. The HGLOBAL is only inspected until ReleaseStgMedium below.
-        unsafe {
+        let actual = unsafe {
             let table = *drag.object.cast::<*const DataVtable>();
             check(((*table).get_data)(drag.object, &format, &mut medium)).unwrap();
             assert_eq!(medium.tymed, TYMED_HGLOBAL as u32);
@@ -285,7 +285,15 @@ mod tests {
                 )));
             }
             ReleaseStgMedium(&mut medium);
-            assert_eq!(actual, expected);
+            actual
+        };
+        // Explorer can expand a short parent path in the CF_HDROP payload.
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(actual.file_name(), expected.file_name());
+            assert_eq!(
+                actual.canonicalize().unwrap(),
+                expected.canonicalize().unwrap()
+            );
         }
         assert!(
             root.path().exists(),
