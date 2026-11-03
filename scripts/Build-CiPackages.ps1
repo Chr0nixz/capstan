@@ -9,7 +9,8 @@ try {
     $version = python $releaseTools version
     if ($LASTEXITCODE -ne 0) { throw 'Release version verification failed.' }
 
-    pnpm tauri build --bundles nsis --features tauri-runtime,custom-protocol -- --locked
+    $tauriArguments = @('build', '--bundles', 'nsis', '--features', 'tauri-runtime,custom-protocol', '--', '--locked')
+    & (Join-Path $PSScriptRoot 'Invoke-Tauri.ps1') @tauriArguments
     if ($LASTEXITCODE -ne 0) { throw 'NSIS build failed.' }
 
     $executable = Get-Item -LiteralPath 'target/release/capstan-app.exe'
