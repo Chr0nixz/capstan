@@ -222,7 +222,7 @@ features = ["prebuilt-nasm"]
 optional = true
 
 [dependencies.crypto-bigint]
-version = "=0.7.6"
+version = "=0.7.9"
 features = ["alloc", "zeroize"]
 optional = true
 

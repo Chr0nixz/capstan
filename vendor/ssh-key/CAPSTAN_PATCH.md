@@ -19,9 +19,13 @@ Zeroizing. AWS-LC validates all supplied components, including the original
 CRT values for PKCS#1/PKCS#8 input. Unsupported sizes and inconsistent material
 return the existing redacted Crypto error.
 
-The local manifest pins crypto-bigint 0.7.6 for RUSTSEC-2026-0387. This
-patch update retains the existing RSA backend and key-import boundaries;
-the complete resolved dependency graph remains subject to the release audit.
+The local manifest pins crypto-bigint 0.7.9, the lowest non-yanked release
+with the RUSTSEC-2026-0387 fix (patched in 0.7.6). Upstream yanked 0.7.6–0.7.8
+for a breaking `NonZero<T>` `Mul` bound, fixed in 0.7.9. The 0.7.9 update keeps
+the constant-time fixes and adds `invert_odd_mod` and `mul_mod_special`
+correctness fixes. This patch update retains the existing RSA backend and
+key-import boundaries; the complete resolved dependency graph remains subject
+to the release audit.
 
 Generated keys support 2048/3072/4096/8192 bits. Private imports require a public
 modulus of 2048–8192 bits. New signatures use SHA-256/SHA-512; legacy SHA-1
