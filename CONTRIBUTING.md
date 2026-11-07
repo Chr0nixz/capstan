@@ -26,7 +26,11 @@ cargo deny check all
 powershell -NoProfile -File scripts/Check-Licenses.ps1
 ```
 
-An offline run validates cached dependencies; it does not update the advisory
+On a fresh clone, run `cargo test --workspace` and the Tauri runtime test once
+without `--offline` so Cargo can fetch the locked dependencies; later
+`--offline` runs validate the warm cache. The Tauri runtime test also generates
+`src-tauri/gen/schemas`, which the frontend type check and unit tests import, so
+run it before the `pnpm` checks. Offline runs do not update the advisory
 database. Run `cargo deny` with network access for a release check. CI is defined
 in [.github/workflows/windows.yml](.github/workflows/windows.yml); a checked-in
 workflow is not evidence of a successful remote run.
@@ -48,10 +52,12 @@ push on behalf of a maintainer without an explicit request.
 二进制终端通道、ACK/背压、凭据边界、主机换钥阻断和最小权限。修改方案需先由维护者
 确认，不能把缺失的环境或跳过的测试记为通过。
 
-按 README 安装工具，交付前执行上方检查。离线测试不代表漏洞库已更新；真实服务器
-测试使用一次性账户和现场生成的密钥。日志、报告和 PR 中不得出现密码、私钥、口令、
-真实 Vault 或终端正文。保留补丁依赖的来源与许可证；代码、注释使用英文，用户文字
-提供中英翻译。未经要求不要提交或推送。
+按 README 安装工具，交付前执行上方检查。首次克隆时先去掉 `--offline` 运行一次
+`cargo test --workspace` 和 Tauri 运行时测试以下载锁定依赖；Tauri 运行时测试会生成
+`src-tauri/gen/schemas`，前端类型检查和单测依赖它，应在 `pnpm` 检查前运行。离线测试
+不代表漏洞库已更新；真实服务器测试使用一次性账户和现场生成的密钥。日志、报告和 PR
+中不得出现密码、私钥、口令、真实 Vault 或终端正文。保留补丁依赖的来源与许可证；
+代码、注释使用英文，用户文字提供中英翻译。未经要求不要提交或推送。
 
 ## Windows releases / Windows 发布
 
