@@ -45,6 +45,35 @@ The locked-vault UI can explicitly search for recovery files after unlocking fai
 
 An exported `.cbak` is a separately sealed envelope with `CBSTBAK1` magic and an independent password. It does not copy the main file or share its DEK. Import first decrypts and validates the complete backup, then builds a conflict preview. Merge remaps colliding IDs and references. It reuses a snippet group with the same name and skips identical snippets and identical forwards on the same host, so importing a backup twice adds no copies of them. Overwrite is an explicit replacement and preserves the current valid Vault as a recovery backup. Host-key conflicts block commit rather than silently widening trust. A wrong password or canceled preview leaves the current Vault unchanged.
 
+## Optional Windows Hello sidecar
+
+M4-4 adds `vault-hello.cwh` in the data directory without changing the Vault envelope. It is optional and device-bound; deleting it only removes Hello unlock. It is never included in `.cbak` exports or Vault backup rotation, and neither its name nor its temporary-file prefix matches the Vault recovery scan.
+
+Hello uses RSA-2048 PKCS#1 decryption in Microsoft Passport KSP. A fresh, nonexportable, decrypt-only key is named `<user SID>//Capstan/Vault/Capstan.Hello.<uuid-v4>`; the sidecar stores only the last component. The KSP must enforce mandatory authentication. Each unseal requests a new gesture and first verifies that silent private-key use is refused; unsupported policies fail with `hello_unavailable`. There is no software-key or DPAPI fallback. The Windows API is [NCryptDecrypt](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptdecrypt); the Passport cache policy remains subject to the real-device acceptance test.
+
+Version 1 is a bounded binary file (at most 1,024 bytes), with little-endian integers:
+
+| Order | Length | Field |
+| --- | ---: | --- |
+| 1 | 8 | Magic `CPHELLO1` |
+| 2 | 2 | Version `1` |
+| 3 | 16 | Vault file identifier (Vault header bytes 12–27) |
+| 4 | 2 + 50 | UTF-8 key-name length and `Capstan.Hello.<uuid-v4>` |
+| 5 | 2 + 256 | Protected-key length and RSA-encrypted random 32-byte wrapping key |
+| 6 | 24 + 48 | Random nonce and XChaCha20-Poly1305-wrapped DEK |
+| 7 | 1 | KEK slot count, 1 or 2 |
+| 8 | 104 per slot | 32-byte KDF binding, 24-byte random nonce, 48-byte encrypted KEK |
+
+The DEK AAD is the complete prefix through the RSA ciphertext, binding magic, version, Vault ID and key name. Each KEK is encrypted under the DEK. Its AAD is that prefix, the nonce and ciphertext of the wrapped DEK, the domain label `Capstan Hello KEK v1\0`, and SHA-256 of Vault header bytes 28–59 (KDF metadata and salt). All slots must authenticate. Unlock also authenticates the current password-wrapped DEK and decrypts and validates the Vault payload before publishing an unlocked, writable Vault. Wrapping keys, DEKs, KEKs and decrypted buffers use `Zeroizing`.
+
+The maintainer approved encrypted KEK slots during M4-4: the existing password wrapper authenticates the payload hash, so a DEK alone cannot make password-readable edits. Before changing the master password, the store atomically stages slots for both the old and new KEK, then atomically replaces the Vault. Either file state after an interruption has a matching slot; repeated changes retain at most two slots. A failed sidecar write prevents the Vault replacement. The DEK and payload ciphertext do not change, and Hello stays enrolled.
+
+Enabling requires an unlocked Vault, reauthentication of the current master password, and successful Hello decryption before atomic sidecar publication. Disabling removes the authenticated enrollment's native key and sidecar. Cancellation and temporary unavailability retain the sidecar. A mismatch, missing key or authentication failure never changes the Vault; invalid enrollment is reported and its sidecar removed only after successful master-password unlock. If every KEK slot still authenticates under the unlocked DEK but none matches the current file (for example after restoring an older backup), cleanup also deletes that enrollment's native key. Damaged or foreign metadata never authorizes deleting a native key. A crash or native deletion failure can leave an orphaned app key; it is not used without its matching sidecar. Moving portable data to another user/device falls back to the master password.
+
+Authenticated recovery checks the enrollment against the restored Vault using the same cleanup as master-password unlock. This removes an incompatible sidecar before publishing the unlocked state, so restoring a backup older than the retained KEK slots does not block the next password change. Cleanup failures leave the authenticated Vault usable and report the enrollment as invalid or needing cleanup.
+
+Public errors are `hello_unavailable`, `hello_canceled`, `hello_key_missing`, `hello_mismatch` and `hello_data`. No keys, protected-key blobs, file contents or local paths cross the WebView boundary. Automatic locking, disconnect-on-lock and master-password recovery keep their existing workflows.
+
 ## Errors and limits
 
 Stable user-facing error codes include `vault_format`, `vault_version`, `vault_kdf_policy`, `vault_authentication`, `vault_data`, `vault_conflict`, `vault_recovery_expired`, `vault_recovery_limit` and `vault_io`. Error messages do not include passwords, decrypted data or file contents. The implementation has unit tests for header bounds, tampering, wrong passwords, schema-zero migration, nonce freshness, rewrapping, backup rotation and injected failures before/after atomic replacement. KDF defaults have not been calibrated on the maintainer's target device, and the 16 MiB limit is a parser bound rather than a tested maximum Vault capacity.

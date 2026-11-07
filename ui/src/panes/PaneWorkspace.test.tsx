@@ -19,6 +19,7 @@ vi.mock("../terminal/session", () => ({
     const session = {
       write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), focus: vi.fn(), flushInput: vi.fn(() => []), stopInput: vi.fn(), resumeInput: vi.fn(),
       search: vi.fn(), clearSearch: vi.fn(), settleOutput: vi.fn(async () => undefined), dispose: vi.fn(), rendererMounted: true, disposed: false,
+      hasSelection: vi.fn(() => false), mouseReporting: vi.fn(() => false), copySelection: vi.fn(), pasteFromClipboard: vi.fn(), clearScreen: vi.fn(),
     };
     mocks.sessions.push({ host, options, session });
     return session;

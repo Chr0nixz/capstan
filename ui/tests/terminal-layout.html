@@ -87,6 +87,32 @@
       doc.querySelectorAll(".terminal-tab-close")[1].click();
       await settle();
       check("close-inactive-tab");
+      for (const [name, width, height] of [["terminal-menu-desktop", 1200, 800], ["terminal-menu-minimum", 330, 240]]) {
+        frame.style.width = `${width}px`; frame.style.height = `${height}px`;
+        await settle();
+        const win = frame.contentWindow;
+        const textarea = doc.querySelector(".terminal-pane:not([hidden]) .xterm-helper-textarea");
+        textarea.focus();
+        if (width === 330) {
+          textarea.dispatchEvent(new win.MouseEvent("contextmenu", {
+            button: 2, clientX: width - 1, clientY: height - 1, bubbles: true, cancelable: true,
+          }));
+        } else {
+          textarea.dispatchEvent(new win.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+        }
+        await settle();
+        const menu = doc.querySelector(".terminal-menu:popover-open");
+        const errors = [];
+        const panel = box(menu);
+        if (panel.left < 0 || panel.right > width + 1 || panel.top < 0 || panel.bottom > height + 1) errors.push("Terminal menu exceeds the viewport.");
+        if (!menu.contains(doc.activeElement)) errors.push("Terminal menu did not take focus.");
+        doc.activeElement.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await settle();
+        if (menu.matches(":popover-open") || doc.activeElement !== textarea) errors.push("Terminal menu did not return focus to xterm.");
+        results.push({ name, passed: errors.length === 0, panel, errors });
+      }
+      frame.style.width = "1200px"; frame.style.height = "800px";
+      await settle();
       doc.querySelector(".terminal-pane:not([hidden]) .terminal-pane-root").dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", {
         key: "f", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
       }));
@@ -113,7 +139,7 @@
     } catch (error) {
       results.push({ name: "harness", passed: false, errors: [String(error)] });
     }
-    const report = { passed: results.length === 14 && results.every(result => result.passed), results };
+    const report = { passed: results.length === 16 && results.every(result => result.passed), results };
     document.querySelector("#result").dataset.report = encodeURIComponent(JSON.stringify(report));
     document.title = report.passed ? "PASS: Capstan terminal layout" : "FAIL: Capstan terminal layout";
   </script>

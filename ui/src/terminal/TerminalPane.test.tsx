@@ -8,7 +8,8 @@ import { TerminalPane } from "./TerminalPane";
 import { useWorkspace } from "../workspace";
 
 const mocks = vi.hoisted(() => ({
-  session: { write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), focus: vi.fn(), stopInput: vi.fn(), search: vi.fn(() => ({ index: 0, count: 1, match: null, invalidExpression: false })), clearSearch: vi.fn(), dispose: vi.fn() },
+  session: { write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), focus: vi.fn(), stopInput: vi.fn(), search: vi.fn(() => ({ index: 0, count: 1, match: null, invalidExpression: false })), clearSearch: vi.fn(), dispose: vi.fn(),
+    hasSelection: vi.fn(() => false), mouseReporting: vi.fn(() => false), copySelection: vi.fn(), pasteFromClipboard: vi.fn(), clearScreen: vi.fn() },
   controller: { ended: false, sendInput: vi.fn(), acknowledge: vi.fn(), resize: vi.fn(), dispose: vi.fn(async () => undefined) },
   create: vi.fn(),
   options: undefined as TerminalSessionOptions | undefined,
@@ -30,6 +31,45 @@ describe("terminal view ownership", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     vi.clearAllMocks();
     mocks.controller.ended = false;
+  });
+
+  it("leaves reported right clicks to xterm and opens the local menu for Shift or keyboard", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<TerminalPane tabId={tabId} launch={launch} labels={copy.en} visible />); });
+    const host = container.querySelector<HTMLDivElement>(".terminal-host")!;
+    const menu = container.querySelector<HTMLDivElement>(".terminal-menu")!;
+    const toggle = (newState: string): void => { menu.dispatchEvent(Object.assign(new Event("toggle"), { newState })); };
+    let open = false;
+    menu.showPopover = vi.fn(() => { open = true; toggle("open"); });
+    menu.hidePopover = vi.fn(() => { open = false; toggle("closed"); });
+    menu.matches = vi.fn((selector) => selector === ":popover-open" && open);
+    const mouse = (shiftKey = false): MouseEvent => new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, shiftKey });
+    mocks.session.mouseReporting.mockReturnValue(true);
+    await act(async () => { host.dispatchEvent(mouse()); });
+    expect(menu.showPopover).not.toHaveBeenCalled();
+    await act(async () => { host.dispatchEvent(mouse(true)); });
+    expect(menu.showPopover).toHaveBeenCalledOnce();
+    const [copyItem, paste, clear] = [...menu.querySelectorAll("button")];
+    expect(copyItem.disabled).toBe(true);
+    expect(document.activeElement).toBe(paste);
+    await act(async () => { paste.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    expect(document.activeElement).toBe(clear);
+    const focuses = mocks.session.focus.mock.calls.length;
+    await act(async () => { clear.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(open).toBe(false);
+    expect(mocks.session.focus.mock.calls.length).toBeGreaterThan(focuses);
+    mocks.session.hasSelection.mockReturnValue(true);
+    await act(async () => { host.dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(copyItem);
+    await act(async () => { copyItem.click(); });
+    expect(mocks.session.copySelection).toHaveBeenCalledOnce();
+    mocks.session.mouseReporting.mockReturnValue(false);
+    await act(async () => { host.dispatchEvent(mouse()); clear.click(); });
+    expect(mocks.session.clearScreen).toHaveBeenCalledOnce();
+    await act(async () => root.unmount());
+    container.remove();
   });
 
   it("does not restart the backend when labels or visibility change", async () => {

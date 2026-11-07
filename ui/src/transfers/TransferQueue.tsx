@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { invokeTauri, isTauriAvailable, listenTauriEvent } from "../terminal/bridge";
 import { sftpCopy } from "../sftp/copy";
 import { editorCopy } from "../editors/copy";
+import { copy } from "../i18n";
 import { sftpError } from "../sftp/controller";
 import type { SftpErrorCode } from "../sftp/contracts";
 import type { TerminalTheme } from "../terminal/contracts";
@@ -45,6 +46,8 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
   const attentionSeen = useRef(new Set<string>());
   // Finished rows the user cleared from view; the backend keeps its own records.
   const [cleared, setCleared] = useState<ReadonlySet<string>>(() => new Set());
+  const [acknowledged, setAcknowledged] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [acknowledging, setAcknowledging] = useState<string | null>(null);
   const selected = state.tasks.find((task) => task.id === selectedId);
   const consentKey = selected?.conflict && selected.batch ? `${selected.id}:${selected.conflict.revision}:${selected.batch.id}` : null;
   const batchAvailable = !!selected?.conflict?.batchEligible && !!selected.batch;
@@ -132,8 +135,22 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
   // Work that needs a decision (conflicts, failures, recovered partials) opens
   // the queue and turns its badge red. Plain progress stays in the one-line
   // summary so the terminal keeps its height.
+  const canAcknowledge = (task: (typeof state.tasks)[number]): boolean =>
+    (task.state === "failed" || task.state === "interrupted") && acknowledged.get(task.id) !== task.version;
+  const acknowledge = async (task: (typeof state.tasks)[number]): Promise<void> => {
+    setAcknowledging(task.id);
+    setRetryError(null);
+    try {
+      await invokeTauri("acknowledge_transfer_failure", { id: task.id, version: task.version });
+      setAcknowledged((previous) => new Map([
+        ...[...previous].filter(([id, version]) => state.tasks.some((entry) => entry.id === id && entry.version === version)),
+        [task.id, task.version],
+      ]));
+    } catch (cause) { setRetryError(sftpError(cause)); }
+    finally { setAcknowledging(null); }
+  };
   const attention = [
-    ...state.tasks.filter((task) => task.conflict || task.cleanupRequired || task.state === "failed" || task.state === "interrupted").map((task) => task.id),
+    ...state.tasks.filter((task) => task.conflict || task.cleanupRequired || canAcknowledge(task)).map((task) => task.id),
     ...state.recovery.map((item) => `recovery:${item.id}`),
   ];
   const attentionKey = attention.join(",");
@@ -245,6 +262,8 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
               <button type="button" disabled={state.pending.includes(task.id)} onClick={() => void controller.cancel(task.id)}>{labels.cancel}</button>
             </>}
             {((task.state === "failed" && !task.cleanupRequired) || task.state === "interrupted") && !state.recovery.some((item) => item.id === task.id && (item.state === "cleanup_required" || item.state === "manual_inspection")) && <button type="button" disabled={state.pending.includes(task.id)} onClick={() => void retryTask(task)}>{labels.retry}</button>}
+            {canAcknowledge(task) && <button type="button" className="ghost-button" disabled={acknowledging !== null || state.pending.includes(task.id)}
+              onClick={() => void acknowledge(task)}>{copy[locale].acknowledgeTransferFailure}</button>}
           </div>
         </article>)}
       </div>}

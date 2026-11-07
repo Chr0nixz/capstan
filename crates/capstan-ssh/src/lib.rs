@@ -2,6 +2,7 @@
 #![deny(unsafe_code)]
 #![allow(clippy::pedantic)]
 pub mod connection_state;
+pub mod exec;
 pub mod forwarding;
 #[path = "forwarding/runtime.rs"]
 pub mod forwarding_runtime;
@@ -568,6 +569,8 @@ pub struct PasswordConnection {
     connection_id: Uuid,
     connection_generation: u64,
     shell_tasks: TaskTracker,
+    exec_gate: Arc<tokio::sync::Mutex<()>>,
+    status_channel: Arc<exec::StatusChannelCoordinator>,
     agent_forwarding: bool,
     agent_forwarding_ready: tokio::sync::Mutex<bool>,
     agent_tasks: TaskTracker,
@@ -660,9 +663,8 @@ impl PasswordConnection {
             biased;
             () = self.cancel.cancelled() => return Err(SshError::Canceled),
             () = self.transport_closed.cancelled() => return Err(SshError::Connection),
-            result = tokio::time::timeout(Duration::from_secs(15), async {
-                self.handle.lock().await.channel_open_session().await
-            }) => result.map_err(|_| SshError::Timeout)?.map_err(|_| SshError::Connection)?,
+            result = tokio::time::timeout(Duration::from_secs(15), self.open_user_session()) =>
+                result.map_err(|_| SshError::Timeout)?.map_err(|_| SshError::Connection)?,
         };
         let mut pending = Vec::new();
         let setup = async {
@@ -821,6 +823,10 @@ impl PasswordConnection {
             () = self.cancel.cancelled() => {}
             () = self.transport_closed.cancelled() => {}
         }
+    }
+    /// Observes loss of the transport without retaining the connection.
+    pub fn transport_close_token(&self) -> CancellationToken {
+        self.transport_closed.child_token()
     }
     /// Drain every owned subsystem, including canceled data assignments.
     pub async fn wait_sftp_pending(&self) {
@@ -1259,6 +1265,8 @@ async fn connect_with_authentication(
         connection_generation: NEXT_CONNECTION_GENERATION
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         shell_tasks: TaskTracker::new(),
+        exec_gate: Arc::new(tokio::sync::Mutex::new(())),
+        status_channel: Arc::new(exec::StatusChannelCoordinator::default()),
         agent_forwarding: agent_forwarding.is_some(),
         agent_forwarding_ready: tokio::sync::Mutex::new(false),
         agent_tasks,

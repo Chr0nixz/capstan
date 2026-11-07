@@ -635,13 +635,24 @@ pub fn pick_file(
     parent: isize,
     save: bool,
 ) -> io::Result<Option<PathBuf>> {
+    pick_file_with_pattern(title, filter, "*.*", parent, save)
+}
+
+/// Accepts a static common-dialog pattern, such as "*.json;*.itermcolors".
+pub fn pick_file_with_pattern(
+    title: &str,
+    filter: &str,
+    pattern: &str,
+    parent: isize,
+    save: bool,
+) -> io::Result<Option<PathBuf>> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::UI::Controls::Dialogs::{
         CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_FILEMUSTEXIST,
         OFN_NOCHANGEDIR, OFN_NODEREFERENCELINKS, OFN_PATHMUSTEXIST, OPENFILENAMEW,
     };
     let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let filter: Vec<u16> = format!("{filter}\0*.*\0\0").encode_utf16().collect();
+    let filter: Vec<u16> = format!("{filter}\0{pattern}\0\0").encode_utf16().collect();
     let mut file = vec![0_u16; 32768];
     let mut dialog = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,

@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum VaultError {
+    #[error(transparent)]
+    Hello(#[from] crate::hello::HelloError),
     #[error("vault is locked")]
     Locked,
     #[error("vault already exists")]
@@ -37,6 +39,7 @@ pub enum VaultError {
 impl VaultError {
     pub fn code(&self) -> &'static str {
         match self {
+            Self::Hello(error) => error.code(),
             Self::Locked => "vault_locked",
             Self::AlreadyExists => "vault_exists",
             Self::NotFound => "vault_not_found",

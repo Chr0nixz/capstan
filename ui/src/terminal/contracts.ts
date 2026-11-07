@@ -3,6 +3,8 @@ import type { Report, Scenario, SourceSample } from "../benchmark/contracts";
 import type { ExactU64 } from "../sftp/contracts";
 import type { Snippet, SnippetGroup } from "../snippets/contracts";
 import type { ConnectionId, ConnectionSnapshot, ExactGeneration } from "../connections/contracts";
+import type { CustomThemeId, DesktopPreference, DesktopPreferences, TerminalTheme, TerminalThemeDefinition, ThemePreview } from "../themes/contracts";
+import type { UpdateStatus } from "../update/contracts";
 
 export type TerminalSessionId = string & { readonly terminalSession: unique symbol };
 export type TabId = string & { readonly tab: unique symbol };
@@ -10,7 +12,7 @@ export type HostId = string & { readonly host: unique symbol };
 export type CredentialId = string & { readonly credential: unique symbol };
 export type GroupId = string & { readonly group: unique symbol };
 export type AgentProvider = "open_ssh" | "pageant";
-export type TerminalTheme = "graphite" | "light";
+export type { TerminalTheme } from "../themes/contracts";
 export type AgentIdentityView = { algorithm: string; fingerprint: string };
 export type BackupImportMode = "merge" | "overwrite";
 export type BackupPreview = {
@@ -24,11 +26,17 @@ export type BackupPreview = {
   duplicateHosts: { existingName: string; incomingName: string; target: string; port: number }[];
   trustConflicts: { target: string; port: number; existingFingerprint: string; incomingFingerprint: string }[];
 };
-export type LocalTerminalOptions = { shell_id?: string; working_directory?: string };
+export type LocalTerminalOptions = { shell_id?: string; working_directory?: string; launch_request_id?: string };
 export type LocalShellProfile = { id: string; name: string; is_wsl: boolean };
 export type TerminalLaunch =
   | { kind: "local"; options: LocalTerminalOptions }
   | { kind: "ssh"; host_id: HostId; attempt_id: string; theme: TerminalTheme; reconnect?: { connectionId: ConnectionId; expectedGeneration: ExactGeneration } };
+export type LaunchRequestView = { requestId: string; kind: "focus" | "local" | "host" | "ssh"; display: string };
+export type LaunchDetails =
+  | { kind: "focus" }
+  | { kind: "local" }
+  | { kind: "host"; hostId: HostId }
+  | { kind: "ssh"; target: { username: string | null; host: string; port: number } };
 export type HostView = {
   id: HostId; name: string; address: string; port: number; username: string; credential_id: CredentialId;
   group_id: GroupId | null; tags: string[]; favorite: boolean; revision: number;
@@ -82,7 +90,35 @@ export type CommandError = { code: string };
 export type WindowCommand = "minimize_window" | "toggle_maximize_window" | "close_window";
 export type SnapBounds = { x: number; y: number; width: number; height: number; scale: number };
 
+export type HelloStatus = { available: boolean; enabled: boolean; invalidated: boolean };
+
 export type Commands = {
+  vault_hello_status: { args: undefined; result: HelloStatus };
+  enable_vault_hello: { args: { locale: string }; result: void };
+  disable_vault_hello: { args: undefined; result: void };
+  unlock_vault_hello: { args: undefined; result: void };
+  load_desktop_preferences: { args: { locale: string }; result: DesktopPreferences };
+  save_desktop_preference: { args: { preference: DesktopPreference; value: boolean }; result: DesktopPreferences };
+  save_quake_preferences: { args: { enabled: boolean; hotkey: string | null; heightPercent: number }; result: DesktopPreferences };
+  quake_status: { args: undefined; result: { enabled: boolean; errorCode: string | null } };
+  update_status: { args: undefined; result: UpdateStatus };
+  check_update: { args: undefined; result: UpdateStatus };
+  cancel_update: { args: undefined; result: undefined };
+  save_update_preference: { args: { enabled: boolean }; result: undefined };
+  update_activity: { args: undefined; result: boolean };
+  install_update: { args: { id: string; confirmed: boolean; confirmActivity: boolean }; result: undefined };
+  list_launch_requests: { args: undefined; result: LaunchRequestView[] };
+  inspect_launch_request: { args: { requestId: string }; result: LaunchDetails };
+  match_launch_hosts: { args: { requestId: string }; result: string[] };
+  dismiss_launch_request: { args: { requestId: string }; result: void };
+  clear_recent_hosts: { args: undefined; result: void };
+  list_terminal_themes: { args: undefined; result: TerminalThemeDefinition[] };
+  preview_terminal_themes: { args: { locale: string }; result: ThemePreview | null };
+  save_terminal_theme_preview: { args: { token: string }; result: TerminalThemeDefinition[] };
+  discard_terminal_theme_preview: { args: { token: string }; result: undefined };
+  rename_terminal_theme: { args: { id: CustomThemeId; name: string }; result: TerminalThemeDefinition[] };
+  delete_terminal_theme: { args: { id: CustomThemeId }; result: TerminalThemeDefinition[] };
+  acknowledge_transfer_failure: { args: { id: string; version: string }; result: undefined };
   connection_snapshots: { args: undefined; result: ConnectionSnapshot[] };
   reconnect_connection: { args: { connectionId: ConnectionId; expectedGeneration: ExactGeneration; attemptId: string }; result: ConnectionSnapshot };
   disconnect_connection: { args: { connectionId: ConnectionId; expectedGeneration: ExactGeneration }; result: ConnectionSnapshot };

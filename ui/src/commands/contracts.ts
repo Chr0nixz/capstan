@@ -1,6 +1,7 @@
 import type { ConnectionId } from "../connections/contracts";
 import type { SnippetId } from "../snippets/contracts";
 import type { HostId, TerminalTheme } from "../terminal/contracts";
+import { isTerminalTheme } from "../themes/contracts";
 
 type ActionMetadata = { labelKey: string; keywordKeys: string[] };
 /** Workspace operations the palette can trigger; each maps to an existing shortcut or toolbar key. */
@@ -57,7 +58,7 @@ export function decodeCommandAction(value: unknown): CommandAction {
   }
   if (candidate.id === "set_theme") {
     const action = record(value, ["id", "labelKey", "keywordKeys", "theme"]);
-    if (action.theme !== "graphite" && action.theme !== "light") return invalid();
+    if (!isTerminalTheme(action.theme)) return invalid();
     return { ...metadata(action), id: "set_theme", theme: action.theme };
   }
   if (candidate.id === "toggle_panel") {

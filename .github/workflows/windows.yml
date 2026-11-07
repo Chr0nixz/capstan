@@ -140,6 +140,10 @@ jobs:
         shell: powershell
         run: ./scripts/Build-CiPackages.ps1
 
+      - name: NSIS update failure recovery
+        shell: powershell
+        run: ./scripts/Test-M4Update.ps1 -IsolatedHarness -EvidenceDirectory target/ci-m4-update
+
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         id: packages
         with:

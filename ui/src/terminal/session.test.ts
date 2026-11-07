@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createTerminalSession, type Disposable, type TerminalLike } from "./session";
+import { createTerminalSession, terminalPalette, type Disposable, type TerminalLike } from "./session";
 import { InputQueue } from "./inputQueue";
+import fixture from "../../../docs/agent/fixtures/M4-contract.json";
+import { isTerminalTheme, type TerminalThemeDefinition } from "../themes/contracts";
 
 const defaultTerminalMock = vi.hoisted(() => ({
   options: undefined as Record<string, unknown> | undefined,
@@ -80,6 +82,83 @@ function fakeTerminal(): TerminalLike & {
 }
 
 describe("terminal session lifecycle", () => {
+  it("maps a custom palette and falls back after its definition is removed", () => {
+    const theme = fixture.terminalTheme as TerminalThemeDefinition;
+    expect(isTerminalTheme(theme.id)).toBe(true);
+    expect(terminalPalette(theme.id, [theme])).toMatchObject({ background: theme.background, foreground: theme.foreground,
+      cursor: theme.cursor, selectionBackground: theme.selectionBackground, black: theme.ansi[0], brightWhite: theme.ansi[15] });
+    expect(terminalPalette(theme.id)).toEqual(terminalPalette("graphite"));
+  });
+
+  it("copies selections only after opt-in and clears through local output without acknowledging remote bytes", async () => {
+    const terminal = fakeTerminal();
+    let selectionChanged: (() => void) | undefined;
+    let enabled = false;
+    terminal.getSelection = () => "selected";
+    terminal.onSelectionChange = (listener) => { selectionChanged = listener; return { dispose: vi.fn() }; };
+    const writeSelectionClipboard = vi.fn(async () => undefined);
+    const readClipboard = vi.fn(async () => "paste");
+    const sendInput = vi.fn(), ackOutput = vi.fn();
+    const session = createTerminalSession(document.createElement("div"), true, { terminal, sendInput, ackOutput,
+      writeSelectionClipboard, readClipboard, copyOnSelect: () => enabled, rendererFactory: () => ({ dispose: vi.fn() }) });
+    selectionChanged?.();
+    expect(writeSelectionClipboard).not.toHaveBeenCalled();
+    enabled = true;
+    selectionChanged?.();
+    expect(writeSelectionClipboard).toHaveBeenCalledWith("selected");
+    session.clearScreen();
+    expect(terminal.write).toHaveBeenCalledWith(new TextEncoder().encode("\x1b[2J\x1b[3J\x1b[H"), undefined);
+    expect(sendInput).not.toHaveBeenCalled();
+    expect(ackOutput).not.toHaveBeenCalled();
+    expect(readClipboard).not.toHaveBeenCalled();
+    await session.copySelection();
+    expect(writeSelectionClipboard).toHaveBeenCalledTimes(2);
+    session.dispose();
+  });
+
+  it("gates menu paste through multiline confirmation and drops results after focus or shell changes", async () => {
+    const terminal = fakeTerminal();
+    document.body.append(terminal.textarea!);
+    terminal.textarea!.focus();
+    const confirmMultilinePaste = vi.fn(() => false);
+    const readClipboard = vi.fn(async () => "first\nsecond");
+    const session = createTerminalSession(document.createElement("div"), true, { terminal, confirmMultilinePaste, readClipboard,
+      rendererFactory: () => ({ dispose: vi.fn() }) });
+    await session.pasteFromClipboard();
+    expect(confirmMultilinePaste).toHaveBeenCalledWith(2);
+    expect(terminal.paste).not.toHaveBeenCalled();
+    confirmMultilinePaste.mockReturnValue(true);
+    await session.pasteFromClipboard();
+    expect(terminal.paste).toHaveBeenCalledWith("first\nsecond");
+    const pending = session.pasteFromClipboard();
+    terminal.textarea!.blur();
+    await pending;
+    expect(terminal.paste).toHaveBeenCalledTimes(1);
+    terminal.textarea!.focus();
+    const pendingReconnect = session.pasteFromClipboard();
+    session.stopInput();
+    session.resumeInput();
+    await pendingReconnect;
+    expect(terminal.paste).toHaveBeenCalledTimes(1);
+    session.dispose();
+    terminal.textarea!.remove();
+  });
+
+  it("keeps legacy xterm mouse reports binary and scoped to the source pane", () => {
+    const terminal = fakeTerminal();
+    let report: ((data: string) => void) | undefined;
+    terminal.onBinary = (listener) => { report = listener; return { dispose: vi.fn() }; };
+    const sendInput = vi.fn(), sendProtocolInput = vi.fn();
+    const session = createTerminalSession(document.createElement("div"), true, { terminal, sendInput, sendProtocolInput,
+      rendererFactory: () => ({ dispose: vi.fn() }) });
+    report?.("\x1b[M\xa3");
+    expect(sendProtocolInput).toHaveBeenCalledWith(new Uint8Array([27, 91, 77, 163]));
+    expect(sendInput).not.toHaveBeenCalled();
+    session.setVisible(false);
+    report?.("\x1b[M\xa3");
+    expect(sendProtocolInput).toHaveBeenCalledTimes(1);
+    session.dispose();
+  });
   it("drops queued old input and ignores a late rejected write after resuming a new shell", async () => {
     const terminal = fakeTerminal();
     let rejectOld!: (error: unknown) => void;
@@ -130,6 +209,22 @@ describe("terminal session lifecycle", () => {
     expect(onInputError).toHaveBeenCalledExactlyOnceWith({ code: "terminal_input_origin_unknown" });
     expect(queue.isClosed).toBe(true);
     session.dispose();
+  });
+
+  it("fails closed if xterm mouse provenance is unavailable in a managed pane", () => {
+    const terminal = fakeTerminal();
+    terminal.modes = { mouseTrackingMode: "vt200" };
+    const coreService = { triggerDataEvent: (data: string, _user = false): void => { terminal.dataListener?.(data); } };
+    const coreMouseService = Object.freeze({ triggerMouseEvent: () => true });
+    Object.assign(terminal, { _core: { coreService, coreMouseService } });
+    const sendInput = vi.fn(), sendProtocolInput = vi.fn(), onInputError = vi.fn();
+    const session = createTerminalSession(document.createElement("div"), false, { terminal, sendInput, sendProtocolInput, onInputError });
+    try {
+      coreService.triggerDataEvent("\x1b[<2;1;1M", true);
+      expect(sendInput).not.toHaveBeenCalled();
+      expect(sendProtocolInput).not.toHaveBeenCalled();
+      expect(onInputError).toHaveBeenCalledExactlyOnceWith({ code: "terminal_input_origin_unknown" });
+    } finally { session.dispose(); }
   });
 
   it("closes input once after a protocol write fails and never replays it", async () => {

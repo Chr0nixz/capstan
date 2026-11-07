@@ -1,6 +1,11 @@
 param([string]$OutputDirectory = (Join-Path $PSScriptRoot '../target/ci-packages'))
 
 $ErrorActionPreference = 'Stop'
+# Validation builds never receive an updater private key. Signing is a separate,
+# Environment-protected job over the exact package that passed these checks.
+if ($env:TAURI_SIGNING_PRIVATE_KEY -or $env:TAURI_SIGNING_PRIVATE_KEY_PATH) {
+    throw 'Package validation must not receive an updater signing private key.'
+}
 $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $releaseTools = Join-Path $PSScriptRoot 'release.py'
 

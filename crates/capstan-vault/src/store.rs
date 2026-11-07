@@ -98,6 +98,157 @@ impl Vault {
     pub fn is_unlocked(&self) -> bool {
         self.state.lock().is_ok_and(|state| state.opened.is_some())
     }
+    pub fn hello_status(
+        path: &Path,
+        provider: &dyn crate::hello::HelloProvider,
+    ) -> crate::hello::HelloStatus {
+        crate::hello::HelloStatus {
+            available: provider.available(),
+            enabled: crate::hello::sidecar_path(path).exists(),
+            invalidated: false,
+        }
+    }
+
+    pub fn enable_hello(
+        &self,
+        password: &SecretText,
+        provider: &dyn crate::hello::HelloProvider,
+    ) -> Result<()> {
+        self.enable_hello_with_hook(password, provider, |_| Ok(()))
+    }
+
+    fn enable_hello_with_hook(
+        &self,
+        password: &SecretText,
+        provider: &dyn crate::hello::HelloProvider,
+        mut hook: impl FnMut(AtomicWriteStage) -> Result<()>,
+    ) -> Result<()> {
+        use crate::hello::{sidecar_path, Sidecar};
+        let state = self.state.lock().map_err(|_| VaultError::Io)?;
+        let current = state.opened.as_ref().ok_or(VaultError::Locked)?;
+        let _guard = file_lock(&self.path)?;
+        let bytes = read_limited(&self.path)?;
+        if state.digest != Some(sha256(&bytes)) {
+            return Err(VaultError::Conflict);
+        }
+        // Reverify the actual current file, never a retained password or cached consent.
+        let verified = envelope::open(bytes, password, EnvelopeKind::Vault)?;
+        let path = sidecar_path(&self.path);
+        let old = Sidecar::read(&path)
+            .ok()
+            .filter(|sidecar| sidecar.validate(current).is_ok());
+        let enrolled = Sidecar::enroll(&verified, provider)?;
+        let mut published = false;
+        let write = atomic_write_with_hook(&path, &enrolled.encode(), true, |stage| {
+            if stage == AtomicWriteStage::TargetReplaced {
+                published = true;
+            }
+            hook(stage)
+        });
+        if let Err(error) = write {
+            // Once replacement happened, the new sidecar owns this key even when
+            // a later durability step failed. Never strand an already published sidecar.
+            if !published {
+                let _ = provider.delete(&enrolled.name);
+            }
+            return Err(error);
+        }
+        if let Some(old) = old {
+            let _ = provider.delete(&old.name);
+        }
+        Ok(())
+    }
+
+    pub fn unlock_with_hello(
+        path: impl Into<PathBuf>,
+        provider: &dyn crate::hello::HelloProvider,
+    ) -> Result<Self> {
+        let path = validate_path(path.into())?;
+        let _guard = file_lock(&path)?;
+        let bytes = read_limited(&path).map_err(|_| crate::hello::HelloError::Data)?;
+        let sidecar = crate::hello::Sidecar::read(&crate::hello::sidecar_path(&path))?;
+        let opened = sidecar.open(bytes, provider)?;
+        let digest = sha256(&opened.bytes);
+        Ok(Self {
+            path,
+            state: Mutex::new(State {
+                opened: Some(opened),
+                digest: Some(digest),
+            }),
+        })
+    }
+
+    /// Called only after successful password authentication. Transient/canceled Hello errors
+    /// retain the enrollment; invalid sidecars never select a native key for deletion.
+    pub fn cleanup_invalid_hello(
+        &self,
+        provider: &dyn crate::hello::HelloProvider,
+    ) -> Result<bool> {
+        let state = self.state.lock().map_err(|_| VaultError::Io)?;
+        let current = state.opened.as_ref().ok_or(VaultError::Locked)?;
+        let _guard = file_lock(&self.path)?;
+        let path = crate::hello::sidecar_path(&self.path);
+        if !path.try_exists()? {
+            return Ok(false);
+        }
+        if state.digest != Some(sha256(&read_limited(&self.path)?)) {
+            return Err(VaultError::Conflict);
+        }
+        let sidecar = crate::hello::Sidecar::read(&path);
+        let checked = sidecar
+            .as_ref()
+            .map_err(|error| *error)
+            .and_then(|sidecar| {
+                sidecar.validate(current)?;
+                if !provider.exists(&sidecar.name)? {
+                    return Err(crate::hello::HelloError::KeyMissing);
+                }
+                Ok(())
+            });
+        let Err(error) = checked else {
+            return Ok(false);
+        };
+        if !error.invalidates() {
+            return Ok(false);
+        }
+        // A stale enrollment of this Vault owns its key; damaged or foreign metadata never does.
+        let owned = sidecar
+            .ok()
+            .filter(|sidecar| {
+                error != crate::hello::HelloError::KeyMissing && sidecar.authenticated_by(current)
+            })
+            .map(|sidecar| sidecar.name);
+        fs::remove_file(path)?;
+        if let Some(name) = owned {
+            // Best effort, as when disabling: an orphan is unusable without its sidecar.
+            let _ = provider.delete(&name);
+        }
+        Ok(true)
+    }
+
+    pub fn disable_hello(&self, provider: &dyn crate::hello::HelloProvider) -> Result<()> {
+        let state = self.state.lock().map_err(|_| VaultError::Io)?;
+        let current = state.opened.as_ref().ok_or(VaultError::Locked)?;
+        let _guard = file_lock(&self.path)?;
+        let path = crate::hello::sidecar_path(&self.path);
+        if !path.try_exists()? {
+            return Ok(());
+        }
+        if state.digest != Some(sha256(&read_limited(&self.path)?)) {
+            return Err(VaultError::Conflict);
+        }
+        let name = crate::hello::Sidecar::read(&path)
+            .ok()
+            .filter(|sidecar| sidecar.validate(current).is_ok())
+            .map(|sidecar| sidecar.name);
+        fs::remove_file(path)?;
+        if let Some(name) = name {
+            // The sidecar is the only reference to this app-scoped key. A provider
+            // outage may leave an unusable orphan, but must not prevent fallback.
+            let _ = provider.delete(&name);
+        }
+        Ok(())
+    }
     pub fn lock(&self) -> Result<()> {
         let mut state = self.state.lock().map_err(|_| VaultError::Io)?;
         state.opened.take();
@@ -181,10 +332,23 @@ impl Vault {
         let previous = candidate.bytes.clone();
         envelope::rewrap(&mut candidate, password, parameters)?;
         archive_previous(&self.path, &candidate, &previous)?;
+        self.stage_hello_password_change(current, &candidate)?;
         atomic_write(&self.path, &candidate.bytes, true)?;
         let _ = prune_backups(&self.path, &candidate);
         state.digest = Some(sha256(&candidate.bytes));
         state.opened = Some(candidate);
+        Ok(())
+    }
+
+    fn stage_hello_password_change(&self, current: &Opened, next: &Opened) -> Result<()> {
+        let path = crate::hello::sidecar_path(&self.path);
+        if path.try_exists()? {
+            let mut sidecar = crate::hello::Sidecar::read(&path)?;
+            sidecar.stage_password_change(current, next)?;
+            // Both old and new KEKs are authenticated under the unchanged DEK. A crash
+            // before or after the main-file replacement therefore leaves Hello usable.
+            atomic_write(&path, &sidecar.encode(), true)?;
+        }
         Ok(())
     }
 
@@ -633,6 +797,107 @@ fn sync_directory(_: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{Credential, CredentialMaterial, Host};
+
+    #[test]
+    fn hello_sidecar_atomic_write_interruptions_preserve_a_usable_enrollment() {
+        for stage in [
+            AtomicWriteStage::TemporaryCreated,
+            AtomicWriteStage::BytesWritten,
+            AtomicWriteStage::Flushed,
+            AtomicWriteStage::Synced,
+            AtomicWriteStage::BeforeReplace,
+            AtomicWriteStage::TargetReplaced,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("vault.capstan");
+            let provider = crate::hello::tests::FakeProvider::default();
+            let vault = Vault::initialize(&path, &password(), fast()).unwrap();
+            vault.enable_hello(&password(), &provider).unwrap();
+            let original_vault = fs::read(&path).unwrap();
+            let sidecar = crate::hello::sidecar_path(&path);
+            let original_sidecar = fs::read(&sidecar).unwrap();
+            assert!(vault
+                .enable_hello_with_hook(&password(), &provider, |at| {
+                    if at == stage {
+                        Err(VaultError::Io)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err());
+            assert_eq!(fs::read(&path).unwrap(), original_vault);
+            if stage != AtomicWriteStage::TargetReplaced {
+                assert_eq!(fs::read(&sidecar).unwrap(), original_sidecar);
+            }
+            assert!(
+                Vault::unlock_with_hello(&path, &provider).is_ok(),
+                "{stage:?}"
+            );
+            assert!(Vault::unlock(&path, &password()).is_ok());
+            assert!(!fs::read_dir(directory.path()).unwrap().any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".pending")));
+        }
+    }
+
+    #[test]
+    fn stale_vault_instance_cannot_disable_hello_after_password_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.capstan");
+        let provider = crate::hello::tests::FakeProvider::default();
+        let enrolled = Vault::initialize(&path, &password(), fast()).unwrap();
+        enrolled.enable_hello(&password(), &provider).unwrap();
+
+        let stale = Vault::unlock(&path, &password()).unwrap();
+        let current = Vault::unlock(&path, &password()).unwrap();
+        let replacement = SecretText::new("replacement master password".to_owned());
+        current
+            .change_master_password(0, &replacement, fast())
+            .unwrap();
+
+        assert!(matches!(
+            stale.disable_hello(&provider),
+            Err(VaultError::Conflict)
+        ));
+        assert!(crate::hello::sidecar_path(&path).exists());
+        assert!(Vault::unlock_with_hello(&path, &provider).is_ok());
+        assert!(Vault::unlock(&path, &replacement).is_ok());
+        assert!(Vault::unlock(&path, &password()).is_err());
+    }
+
+    #[test]
+    fn stale_enrollment_cleanup_deletes_only_an_authenticated_native_key() {
+        use crate::hello::HelloProvider;
+        for tampered in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("vault.capstan");
+            let provider = crate::hello::tests::FakeProvider::default();
+            let vault = Vault::initialize(&path, &password(), fast()).unwrap();
+            let restored = fs::read(&path).unwrap();
+            vault.enable_hello(&password(), &provider).unwrap();
+            for next in ["second master password", "third master password"] {
+                vault
+                    .change_master_password(0, &SecretText::new(next.to_owned()), fast())
+                    .unwrap();
+            }
+            let sidecar = crate::hello::sidecar_path(&path);
+            let name = crate::hello::Sidecar::read(&sidecar).unwrap().name;
+            if tampered {
+                let mut bytes = fs::read(&sidecar).unwrap();
+                *bytes.last_mut().unwrap() ^= 1;
+                fs::write(&sidecar, bytes).unwrap();
+            }
+            // Restoring a file older than both retained KEK slots invalidates Hello.
+            fs::write(&path, &restored).unwrap();
+            let unlocked = Vault::unlock(&path, &password()).unwrap();
+            assert!(unlocked.cleanup_invalid_hello(&provider).unwrap());
+            assert!(!sidecar.exists());
+            assert_eq!(provider.exists(&name).unwrap(), tampered, "{tampered}");
+            assert_eq!(fs::read(&path).unwrap(), restored);
+        }
+    }
 
     fn password() -> SecretText {
         SecretText::new("test master password".to_owned())

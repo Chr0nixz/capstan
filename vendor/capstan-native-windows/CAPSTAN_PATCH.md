@@ -1,5 +1,17 @@
 # Capstan native Windows boundary
 
+## M4-2 theme picker and system notifications (2026-11-04)
+
+The file picker accepts an explicit extension filter for theme import. The
+existing transfer picker retains its all-files filter. Paths remain in Rust.
+
+The Toast adapter reads the NSIS Start menu shortcut via `IShellLinkW` and
+`IPropertyStore`, compares the canonical target and AppUserModelID, and sends
+plain text via WinRT. It reads the shortcut without resolving or changing it.
+The adapter test creates an isolated shortcut and verifies its identity and
+target. A separate test checks that text is escaped by the WinRT XML DOM.
+The feature uses the pinned `windows` crate already in the workspace lockfile.
+
 ## M2 product export and recovered destination (2026-10-19)
 
 `export` owns protected user/SYSTEM staging with bounded basename-only D/F/P
@@ -139,6 +151,43 @@ Held ancestor/source handles can block external rename or edits until the
 grant/task is released. Blocking disk I/O does not establish the proposed
 five-second cancellation SLA. The checks do not eliminate all external
 filesystem TOCTOU or guarantee parent-directory durability after rename.
+
+## M4 launch integration (2026-11-04)
+
+`jump_list` builds COM shell links with a title and literal argv, publishes at most
+six local tasks and ten recent host IDs, and respects destinations removed in
+Windows. Only display names are supplied for hosts. The installed shortcut,
+process and list share `dev.capstan.app`; portable builds skip publication.
+The module verifies the named-pipe server's token user SID before granting it
+the launching process's foreground right. It does not register protocol handlers
+or grant frontend filesystem access.
+
+The M4-3 review follow-up stores Quake's normal geometry through
+`GetWindowPlacement` and restores it through `SetWindowPlacement`, following the
+[WINDOWPLACEMENT coordinate contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement).
+The opaque snapshot retains workspace coordinates and the normal/maximized restore state,
+including a minimized window that should restore maximized. It never feeds an
+outer size to a client-size API. Native tests assert actual client/outer geometry
+through three restore cycles from all four normal/minimized/maximized states.
+Invalid handles fail without changing a window. No dependencies were added.
+
+## M4 Windows Hello (2026-11-04)
+
+`hello` is the sole NCrypt boundary for optional Vault enrollment. It uses only
+Microsoft Passport KSP with a fresh user-scoped RSA-2048 decrypt-only key, disables
+export, checks mandatory authentication and key policy, and requests a new gesture
+for each private-key operation. A silent decryption probe must refuse access before
+interactive decryption is attempted. There is no software/DPAPI fallback. HWND and
+the product name are the only UI context; no Vault data or host metadata is passed.
+Secret output uses `Zeroizing`; NCrypt handles and SID allocations have explicit
+ownership. Native key names must match the app's bounded UUID namespace.
+
+The existing `windows-sys` dependency supplies NCrypt; no dependencies were added.
+Automated tests cover namespace rejection, error mapping and rejection of silent
+private-key success. The ignored `real_passport_key_requires_consent_and_roundtrips`
+probe creates a runtime-random test key, requests two independent Hello decryptions,
+and deletes that key even after a failed assertion. It needs an enrolled device and
+user consent; compile/unit success does not establish real Hello compatibility.
 
 ## M2 staged drag probe (2026-10-17)
 

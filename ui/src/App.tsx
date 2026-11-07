@@ -7,7 +7,7 @@ import { paneLeaves } from "./panes/tree";
 import { LocalShellLauncher } from "./terminal/LocalShellLauncher";
 import { Titlebar } from "./window/Titlebar";
 import { invokeTauri, isTauriAvailable, listenTauriEvent } from "./terminal/bridge";
-import type { AgentIdentityView, AgentProvider, BackupImportMode, BackupPreview, CredentialId, CredentialView, GroupId, GroupView, HostId, HostView, LocalShellProfile, TabId, TerminalSessionId, TrustedHostKeyView, TrustChallenge, VaultPreferences, VaultRecoveryCandidate, VaultStatus } from "./terminal/contracts";
+import type { AgentIdentityView, AgentProvider, BackupImportMode, BackupPreview, CredentialId, CredentialView, GroupId, GroupView, HostId, HostView, LaunchRequestView, LocalShellProfile, TabId, TerminalSessionId, TrustedHostKeyView, TrustChallenge, VaultPreferences, VaultRecoveryCandidate, VaultStatus } from "./terminal/contracts";
 import { matchesHostSearch } from "./hosts/search";
 import { SftpPanel } from "./sftp/SftpPanel";
 import { TransferQueue } from "./transfers/TransferQueue";
@@ -31,6 +31,17 @@ import type { PaletteAction } from "./commands/registry";
 import { paneInputs } from "./panes/input";
 import { routeInput } from "./panes/contracts";
 import type { ExactU64 } from "./sftp/contracts";
+import { ServerStatusBar } from "./status/ServerStatusBar";
+import { useServerStatus } from "./status/useServerStatus";
+import { terminalThemeId } from "./themes/contracts";
+import { useDesktopPreferences, useTerminalThemes } from "./themes/store";
+import { ThemeSettings } from "./themes/ThemeSettings";
+import { UpdateCenter, UpdateSettings } from "./update/UpdateSettings";
+import { LaunchRequests } from "./launch/LaunchRequests";
+import { useWindowVisibility } from "./window/useWindowVisibility";
+import { HostChoiceDialog } from "./launch/HostChoiceDialog";
+import { sshAuthority } from "./launch/authority";
+import type { HelloStatus } from "./terminal/contracts";
 
 type Locale = keyof typeof copy;
 const initialVault: VaultStatus = { exists: false, unlocked: false, revision: null, epoch: 0 };
@@ -42,7 +53,7 @@ const emptyHostForm = () => ({
 });
 type SftpSessionBinding = { terminal: TerminalSessionId; hostId: HostId; session: SftpSessionId };
 type Sheet = "host" | "settings" | "snippets" | "tunnels" | null;
-const settingsTabs = ["security", "keys", "credentials", "groups", "shortcuts"] as const;
+const settingsTabs = ["security", "keys", "credentials", "groups", "desktop", "shortcuts"] as const;
 type SettingsTab = typeof settingsTabs[number];
 type HostField = "name" | "address" | "port" | "username" | "credentialId";
 // Below this workspace width the remote-files panel starts folded and stacks under the terminal.
@@ -59,10 +70,29 @@ function errorCode(error: unknown): string | undefined {
 export function App(): ReactElement {
   const locale: Locale = navigator.language.startsWith("zh") ? "zh-CN" : "en";
   const labels = copy[locale];
+  const themes = useTerminalThemes((state) => state.themes);
+  useEffect(() => {
+    if (!isTauriAvailable()) return;
+    let active = true;
+    void invokeTauri("list_terminal_themes").then((themes) => {
+      if (active && Array.isArray(themes)) useTerminalThemes.setState({ themes, loadError: false });
+    }).catch(() => { if (active) useTerminalThemes.setState({ loadError: true }); });
+    void invokeTauri("load_desktop_preferences", { locale }).then((preferences) => {
+      if (active && typeof preferences?.copyOnSelect === "boolean" && typeof preferences.systemNotifications === "boolean"
+        && typeof preferences.jumpListRecentHosts === "boolean" && typeof preferences.quakeEnabled === "boolean"
+        && (preferences.quakeHotkey === null || typeof preferences.quakeHotkey === "string")
+        && Number.isInteger(preferences.quakeHeightPercent)) {
+        useDesktopPreferences.setState({ preferences, ready: true, loadError: false });
+      }
+    }).catch(() => { if (active) useDesktopPreferences.setState({ ready: false, loadError: true }); });
+    return () => { active = false; };
+  }, [locale]);
   const tabs = useWorkspace((state) => state.tabs);
   const activeTab = useWorkspace((state) => state.activeTab);
   const activeEntry = tabs.find((tab) => tab.id === activeTab);
   const activeLaunch = activeEntry?.launch;
+  const statusTerminal = activeLaunch?.kind === "ssh" && activeEntry ? activeEntry.paneStates[activeEntry.focusedPaneId]?.session?.id : undefined;
+  const serverStatus = useServerStatus(statusTerminal);
   const addTerminal = useWorkspace((state) => state.addTerminal);
   const addSshTerminal = useWorkspace((state) => state.addSshTerminal);
   const openSshHost = useWorkspace((state) => state.openSshHost);
@@ -90,6 +120,9 @@ export function App(): ReactElement {
   useEffect(() => { if (isTauriAvailable()) void panelPreferences.initialize(); }, []);
   useEffect(() => panelPreferences.prune(tabs.map((tab) => tab.id)), [tabs]);
   const [vault, setVault] = useState<VaultStatus>(initialVault);
+  const [hello, setHello] = useState<HelloStatus | null>(null);
+  const [vaultBusy, setVaultBusy] = useState(false);
+  const masterUnlockRef = useRef<HTMLButtonElement>(null);
   const [preferences, setPreferences] = useState<VaultPreferences>(initialPreferences);
   const [hosts, setHosts] = useState<HostView[]>([]);
   const [credentials, setCredentials] = useState<CredentialView[]>([]);
@@ -136,6 +169,26 @@ export function App(): ReactElement {
   const backupDialogRef = useRef<HTMLDialogElement>(null);
   const lastActivityReport = useRef(0);
   const [form, setForm] = useState(emptyHostForm);
+  const [pendingSshSaveRequestId, setPendingSshSaveRequestId] = useState<string | null>(null);
+  const [pendingHostChoice, setPendingHostChoice] = useState<{
+    requestId: string; display: string; hosts: HostView[];
+  } | null>(null);
+  const handledLaunchRequests = useRef(new Set<string>());
+  const launchContinuations = useRef(new Map<string, () => void>());
+  const focusAfterShow = useCallback(() => setFocusRequest((value) => value + 1), []);
+  const showCwdFallback = useCallback(() => setNotice(labels.launchCwdFallback), [labels.launchCwdFallback]);
+  const windowVisible = useWindowVisibility(focusAfterShow, showCwdFallback);
+  useEffect(() => {
+    if (vault.unlocked) return;
+    const ids = [pendingSshSaveRequestId, pendingHostChoice?.requestId].filter((id): id is string => id !== null && id !== undefined);
+    for (const requestId of ids) {
+      void invokeTauri("dismiss_launch_request", { requestId }).catch(() => undefined);
+      launchContinuations.current.get(requestId)?.();
+      launchContinuations.current.delete(requestId);
+    }
+    setPendingSshSaveRequestId(null);
+    setPendingHostChoice(null);
+  }, [vault.unlocked, pendingSshSaveRequestId, pendingHostChoice]);
   const [sftpSessions, setSftpSessions] = useState<Record<string, SftpSessionBinding>>({});
   const [snippetGroups, setSnippetGroups] = useState<SnippetGroup[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
@@ -158,7 +211,7 @@ export function App(): ReactElement {
       return;
     }
     const host = hosts.find((candidate) => candidate.id === hostId);
-    if (host) addSshTerminal(host.id, host.name, host.theme === "light" ? "light" : "graphite");
+    if (host) addSshTerminal(host.id, host.name, terminalThemeId(host.theme));
   }, [addSshTerminal, hosts, setActiveTab, tabs]);
 
   const refreshVault = useCallback(async (): Promise<void> => {
@@ -166,6 +219,11 @@ export function App(): ReactElement {
     try {
       const status = await invokeTauri("vault_status");
       setVault(status);
+      const helloStatus = await invokeTauri("vault_hello_status").catch(() => null);
+      if (helloStatus && typeof helloStatus.available === "boolean" && typeof helloStatus.enabled === "boolean" && typeof helloStatus.invalidated === "boolean") {
+        setHello(helloStatus);
+        if (status.unlocked && helloStatus.invalidated) setNotice(labels.hello.invalidated);
+      }
       if (status.unlocked) {
         setRecoveryCandidates([]);
         const [nextHosts, nextCredentials, nextGroups, nextTrustedHostKeys, nextPreferences, nextSnippetGroups, nextSnippets] = await Promise.all([
@@ -210,7 +268,7 @@ export function App(): ReactElement {
       const code = errorCode(cause);
       setError(code === "vault_format" || code === "vault_authentication" ? labels.invalidVault : labels.vaultRefreshFailed);
     }
-  }, [labels.invalidVault, labels.vaultRefreshFailed]);
+  }, [labels.invalidVault, labels.vaultRefreshFailed, labels.hello.invalidated]);
 
   useEffect(() => { void refreshVault(); }, [refreshVault]);
   useEffect(() => {
@@ -398,6 +456,10 @@ export function App(): ReactElement {
     (target ?? element).focus();
   }, [sheet]);
   const openSheet = (kind: Exclude<Sheet, null>): void => {
+    if (sheet === "host" && kind !== "host" && pendingSshSaveRequestId) {
+      void dismissLaunchRequest(pendingSshSaveRequestId);
+      setPendingSshSaveRequestId(null);
+    }
     if (!sheet) sheetReturnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSheet(kind);
   };
@@ -518,21 +580,124 @@ export function App(): ReactElement {
     }
   };
   const addHost = (prefill?: { name: string; address: string; port: string; username: string }): void => {
+    if (!prefill && pendingSshSaveRequestId) {
+      void dismissLaunchRequest(pendingSshSaveRequestId);
+      setPendingSshSaveRequestId(null);
+    }
     setEditingHost(null);
     setFieldErrors(new Set());
     setForm({ ...emptyHostForm(), ...prefill });
     openSheet("host");
   };
   const cancelHostEdit = (): void => {
+    const launchRequestId = pendingSshSaveRequestId;
+    setPendingSshSaveRequestId(null);
+    if (launchRequestId) void dismissLaunchRequest(launchRequestId);
     setEditingHost(null);
     setFieldErrors(new Set());
     setForm(emptyHostForm());
     closeSheet();
   };
   const openHost = (host: HostView, newTab = false): void => {
-    openSshHost(host.id, host.name, host.theme === "light" ? "light" : "graphite", newTab);
+    openSshHost(host.id, host.name, terminalThemeId(host.theme), newTab);
     setSidebarOpen(false);
     setFocusRequest((request) => request + 1);
+  };
+  const dismissLaunchRequest = async (requestId: string): Promise<void> => {
+    try { await invokeTauri("dismiss_launch_request", { requestId }); } catch { /* Expired requests are already gone. */ }
+    launchContinuations.current.get(requestId)?.();
+    launchContinuations.current.delete(requestId);
+  };
+  const unlockHostsForLaunch = async (): Promise<HostView[]> => {
+    const status = await invokeTauri("vault_status");
+    if (!status.unlocked) {
+      if (status.exists) await invokeTauri("unlock_vault", { locale });
+      else await invokeTauri("initialize_vault", { locale });
+    }
+    await refreshVault();
+    const currentHosts = await invokeTauri("list_hosts");
+    setHosts(currentHosts);
+    return currentHosts;
+  };
+  const processLaunchRequest = async (request: LaunchRequestView): Promise<void> => {
+    if (handledLaunchRequests.current.has(request.requestId)) return;
+    handledLaunchRequests.current.add(request.requestId);
+    try {
+      const details = await invokeTauri("inspect_launch_request", { requestId: request.requestId });
+      if (request.kind === "focus" || details.kind === "focus") {
+        await dismissLaunchRequest(request.requestId);
+        return;
+      }
+      if (request.kind === "local" && details.kind === "local") {
+        addTerminal({ launch_request_id: request.requestId }, request.display || labels.localShell);
+        return;
+      }
+      if (request.kind === "ssh" && details.kind === "ssh") {
+        const target = details.target;
+        const authority = sshAuthority(target.username, target.host, target.port);
+        if (!await confirm({
+          title: labels.sshLinkTitle,
+          body: labels.sshLinkConfirm(target.username ?? labels.sshUserUnspecified, target.host, target.port),
+          confirm: labels.sshLinkContinue, cancel: labels.cancelEdit, tone: "primary",
+        })) {
+          await dismissLaunchRequest(request.requestId);
+          return;
+        }
+        const currentHosts = await unlockHostsForLaunch();
+        const matchingIds = new Set(await invokeTauri("match_launch_hosts", { requestId: request.requestId }));
+        const matches = currentHosts.filter((host) => matchingIds.has(host.id));
+        if (matches.length === 1) {
+          openHost(matches[0]);
+          await dismissLaunchRequest(request.requestId);
+        } else if (matches.length > 1) {
+          await new Promise<void>((resolve) => {
+            launchContinuations.current.set(request.requestId, resolve);
+            setPendingHostChoice({ requestId: request.requestId, display: authority, hosts: matches });
+          });
+        } else {
+          await new Promise<void>((resolve) => {
+            launchContinuations.current.set(request.requestId, resolve);
+            setPendingSshSaveRequestId(request.requestId);
+            addHost({
+              name: target.host, address: target.host, port: String(target.port), username: target.username ?? "",
+            });
+          });
+        }
+        return;
+      }
+      if (request.kind === "host" && details.kind === "host") {
+        const currentHosts = await unlockHostsForLaunch();
+        const host = currentHosts.find((candidate) => candidate.id === details.hostId);
+        if (host) {
+          if (await confirm({ title: labels.sshLinkTitle,
+            body: labels.sshLinkConfirm(host.username, host.address, host.port),
+            confirm: labels.sshLinkContinue, cancel: labels.cancelEdit, tone: "primary" })) openHost(host);
+        } else setNotice(labels.launchHostMissing);
+        await dismissLaunchRequest(request.requestId);
+        return;
+      }
+      await dismissLaunchRequest(request.requestId);
+    } catch (cause) {
+      await dismissLaunchRequest(request.requestId);
+      const code = errorCode(cause);
+      if (code !== "canceled") setError(labels.launchRequestFailed);
+      else setNotice(labels.launchUnlockCanceled);
+    } finally {
+      handledLaunchRequests.current.delete(request.requestId);
+    }
+  };
+  const cancelLaunchHostChoice = (): void => {
+    const requestId = pendingHostChoice?.requestId;
+    setPendingHostChoice(null);
+    if (requestId) void dismissLaunchRequest(requestId);
+  };
+  const chooseLaunchHost = (hostId: HostId): void => {
+    const pending = pendingHostChoice;
+    if (!pending) return;
+    const host = pending.hosts.find((candidate) => candidate.id === hostId);
+    setPendingHostChoice(null);
+    if (host) openHost(host);
+    void dismissLaunchRequest(pending.requestId);
   };
   const withFocus = (action: () => void) => (): void => {
     action();
@@ -561,6 +726,11 @@ export function App(): ReactElement {
   const showError = (cause: unknown): void => {
     const code = errorCode(cause);
     if (code === "host_key_changed") setError(labels.hostKeyChanged);
+    else if (code === "hello_unavailable") setError(labels.hello.unavailable);
+    else if (code === "hello_canceled") setError(labels.hello.canceled);
+    else if (code === "hello_key_missing") setError(labels.hello.keyMissing);
+    else if (code === "hello_mismatch") setError(labels.hello.mismatch);
+    else if (code === "hello_data") setError(labels.hello.data);
     else if (code === "ssh_authentication") setError(labels.authenticationFailed);
     else if (code === "canceled") setError(labels.operationCanceled);
     else if (code === "invalid_input") setError(labels.invalidInput);
@@ -581,6 +751,7 @@ export function App(): ReactElement {
 
   const runVaultAction = async (action: "initialize_vault" | "unlock_vault"): Promise<void> => {
     setError(null);
+    setVaultBusy(true);
     try {
       await invokeTauri(action, { locale });
       setRecoveryCandidates([]);
@@ -590,7 +761,25 @@ export function App(): ReactElement {
       if (code === "vault_authentication" || code === "vault_format" || code === "vault_kdf_policy") setError(labels.invalidVault);
       else if (code === "canceled") setError(labels.operationCanceled);
       else showError(cause);
-    }
+    } finally { setVaultBusy(false); }
+  };
+  const runHelloAction = async (action: "enable_vault_hello" | "disable_vault_hello" | "unlock_vault_hello"): Promise<void> => {
+    if (vaultBusy) return;
+    setError(null);
+    setNotice(null);
+    setVaultBusy(true);
+    try {
+      if (action === "enable_vault_hello") await invokeTauri(action, { locale });
+      else await invokeTauri(action);
+      await refreshVault();
+      if (action === "enable_vault_hello") setNotice(labels.hello.saved);
+      else if (action === "disable_vault_hello") setNotice(labels.hello.removed);
+    } catch (cause) {
+      if (errorCode(cause) === "vault_authentication") setError(labels.invalidVault);
+      else if (errorCode(cause) === "vault_io") setError(labels.hello.storage);
+      else showError(cause);
+      if (action === "unlock_vault_hello") requestAnimationFrame(() => masterUnlockRef.current?.focus());
+    } finally { setVaultBusy(false); }
   };
   const findRecoveryCandidates = async (): Promise<void> => {
     setError(null);
@@ -759,13 +948,24 @@ export function App(): ReactElement {
     setError(null);
     try {
       await invokeTauri("save_host", { host, expectedRevision: vault.revision ?? 0 });
+      const launchRequestId = pendingSshSaveRequestId;
+      setPendingSshSaveRequestId(null);
       setEditingHost(null);
       setForm(emptyHostForm());
       closeSheet();
       await refreshVault();
+      if (launchRequestId) {
+        openHost(host);
+        await dismissLaunchRequest(launchRequestId);
+        setNotice(labels.sshLinkHostSaved);
+      }
     } catch (cause) { showError(cause); }
   };
   const editHost = (host: HostView): void => {
+    if (pendingSshSaveRequestId) {
+      void dismissLaunchRequest(pendingSshSaveRequestId);
+      setPendingSshSaveRequestId(null);
+    }
     setEditingHost(host);
     setFieldErrors(new Set());
     setForm({
@@ -1006,7 +1206,7 @@ export function App(): ReactElement {
   };
   const trustedHostNames = (target: string, port: number): string[] => hosts.filter((host) => host.address === target && host.port === port).map((host) => host.name);
   const settingsLabel: Record<SettingsTab, string> = {
-    security: labels.settingsSecurity, keys: labels.settingsHostKeys, credentials: labels.settingsCredentials, groups: labels.settingsGroups, shortcuts: labels.settingsShortcuts,
+    security: labels.settingsSecurity, keys: labels.settingsHostKeys, credentials: labels.settingsCredentials, groups: labels.settingsGroups, desktop: labels.settingsDesktop, shortcuts: labels.settingsShortcuts,
   };
   const messages = error || notice ? <div className="message-stack">
     {error && <p className="inline-error" role="alert"><AlertIcon size={14} /><span>{error}</span>
@@ -1080,12 +1280,12 @@ export function App(): ReactElement {
       label: labels.newShellAction(profile.name),
       keywords: [labels.newTerminal, labels.paletteSections.shells, profile.name, ...(profile.is_wsl ? ["wsl", "linux"] : [])],
     })),
-    ...(["graphite", "light"] as const).map((theme) => ({
-      key: `theme:${theme}`,
-      action: { id: "set_theme", labelKey: "changeTheme", keywordKeys: ["theme", "appearance"], theme } as CommandAction,
-      label: labels.themeAction(theme === "light" ? labels.themeLight : labels.themeGraphite),
+    ...([{ id: "graphite", name: labels.themeGraphite }, { id: "light", name: labels.themeLight }, ...themes] as const).map(({ id, name }) => ({
+      key: `theme:${id}`,
+      action: { id: "set_theme", labelKey: "changeTheme", keywordKeys: ["theme", "appearance"], theme: id } as CommandAction,
+      label: labels.themeAction(name),
       detail: labels.changeThemeScope,
-      keywords: [labels.changeTheme, theme],
+      keywords: [labels.changeTheme, name, id],
     })),
     ...(vault.unlocked ? [{
       key: "panel:snippets",
@@ -1149,7 +1349,7 @@ export function App(): ReactElement {
       for (const tab of workspace.tabs) for (const pane of paneLeaves(tab.root)) {
         workspace.setPaneTheme(tab.id, pane.paneId, action.theme);
       }
-      setNotice(labels.themeChanged(action.theme === "light" ? labels.themeLight : labels.themeGraphite));
+      setNotice(labels.themeChanged(action.theme === "light" ? labels.themeLight : themes.find(({ id }) => id === action.theme)?.name ?? labels.themeGraphite));
       requestAnimationFrame(() => setFocusRequest((request) => request + 1));
     } else if (action.id === "toggle_panel" && action.panel === "snippets") {
       openSheet("snippets");
@@ -1191,6 +1391,12 @@ export function App(): ReactElement {
 
   return (
     <main className="application" aria-label={labels.title}>
+      <LaunchRequests onRequest={processLaunchRequest} />
+      <UpdateCenter locale={locale} />
+      <HostChoiceDialog open={pendingHostChoice !== null} target={pendingHostChoice?.display ?? ""}
+        hosts={pendingHostChoice?.hosts ?? []} title={labels.sshChooseHostTitle}
+        body={labels.sshChooseHostBody(pendingHostChoice?.hosts.length ?? 0)} cancel={labels.cancelEdit}
+        onChoose={chooseLaunchHost} onCancel={cancelLaunchHostChoice} />
       <Titlebar labels={labels} context={titleContext} mono={!!activeHost} badge={activeHost && productionHosts.has(activeHost.id) ? labels.production : undefined} />
       <div className={"app-layout" + (sidebarCollapsed ? " sidebar-hidden" : "")}>
         {narrow && sidebarOpen && <div className="sidebar-scrim" aria-hidden="true" onClick={() => setSidebarOpen(false)} />}
@@ -1263,11 +1469,14 @@ export function App(): ReactElement {
               {isTauriAvailable() ? (
                 <div className="vault-actions">
                   {vault.exists
-                    ? <button className="primary-action" type="button" onClick={() => { void runVaultAction("unlock_vault"); }}>{labels.unlockVault}</button>
-                    : <button className="primary-action" type="button" onClick={() => { void runVaultAction("initialize_vault"); }}>{labels.initializeVault}</button>}
-                  {vault.exists && <button className="ghost-button" type="button" onClick={() => { void findRecoveryCandidates(); }}>{labels.findRecoveryFiles}</button>}
+                    ? <button ref={masterUnlockRef} className="primary-action" type="button" disabled={vaultBusy} onClick={() => { void runVaultAction("unlock_vault"); }}>{labels.unlockVault}</button>
+                    : <button className="primary-action" type="button" disabled={vaultBusy} onClick={() => { void runVaultAction("initialize_vault"); }}>{labels.initializeVault}</button>}
+                  {vault.exists && hello?.enabled && <button type="button" disabled={vaultBusy || !hello.available} onClick={() => { void runHelloAction("unlock_vault_hello"); }}>{labels.hello.unlock}</button>}
+                  {vault.exists && <button className="ghost-button" type="button" disabled={vaultBusy} onClick={() => { void findRecoveryCandidates(); }}>{labels.findRecoveryFiles}</button>}
                 </div>
               ) : <p className="quiet-copy">{labels.vaultUnavailable}</p>}
+              {vaultBusy && <p className="quiet-copy" role="status">{labels.hello.busy}</p>}
+              {hello?.enabled && !hello.available && <p className="quiet-copy">{labels.hello.unavailable}</p>}
               {recoveryCandidates.length > 0 && <section className="recovery-candidates" aria-label={labels.recoveryCandidatesTitle}>
                 <p className="quiet-copy">{labels.recoverySelectHint}</p>
                 <ul>
@@ -1408,6 +1617,9 @@ export function App(): ReactElement {
                   </label>
                   <label>{labels.terminalTheme}<select value={form.theme} onChange={(event) => setForm({ ...form, theme: event.currentTarget.value })}>
                     <option value="graphite">{labels.themeGraphite}</option><option value="light">{labels.themeLight}</option>
+                    {themes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+                    {form.theme !== "graphite" && form.theme !== "light" && !themes.some(({ id }) => id === form.theme)
+                      && <option value={form.theme}>{labels.missingTheme}</option>}
                   </select></label>
                 </div>
                 <label>{labels.hostTags}<input value={form.tags} onChange={(event) => setForm({ ...form, tags: event.currentTarget.value })} /></label>
@@ -1436,15 +1648,26 @@ export function App(): ReactElement {
             <h2 id="sheet-title"><SettingsIcon size={14} />{labels.settings}</h2>
             <button className="icon-button" type="button" aria-label={labels.closePanel} title={labels.closePanel} onClick={closeSheet}><CloseIcon /></button>
           </header>
-          <div className="segmented" role="tablist" aria-label={labels.settings}>
+          <div className="segmented settings-tabs" role="tablist" aria-label={labels.settings}>
             {settingsTabs.map((tab) => <button key={tab} id={`settings-tab-${tab}`} type="button" role="tab" aria-selected={settingsTab === tab}
               aria-controls="settings-panel" tabIndex={settingsTab === tab ? 0 : -1} onClick={() => setSettingsTab(tab)}
               onKeyDown={(event) => settingsTabKeyDown(event, tab)}>{settingsLabel[tab]}</button>)}
           </div>
           {messages}
           <div className="sheet-body" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${settingsTab}`}>
+            {settingsTab === "desktop" && <><ThemeSettings locale={locale} /><UpdateSettings locale={locale} /></>}
             {settingsTab === "security" && <section className="settings-section vault-settings">
               <h3>{labels.vaultSettings}</h3>
+              <div className="settings-group" aria-busy={vaultBusy}>
+                <h4>{labels.hello.title}</h4>
+                <p className="quiet-copy">{labels.hello.hint}</p>
+                {(vaultBusy || !hello || !hello.available || hello.enabled) && <p className="quiet-copy" role="status">{vaultBusy ? labels.hello.busy : !hello ? labels.hello.checking : !hello.available ? labels.hello.unavailable : labels.hello.enabled}</p>}
+                <div className="settings-actions">
+                  {hello?.enabled
+                    ? <button type="button" disabled={vaultBusy} onClick={() => { void runHelloAction("disable_vault_hello"); }}>{labels.hello.disable}</button>
+                    : <button type="button" disabled={vaultBusy || !hello?.available} onClick={() => { void runHelloAction("enable_vault_hello"); }}>{labels.hello.enable}</button>}
+                </div>
+              </div>
               <div className="settings-group">
                 <label>{labels.autoLockTimeout}<input
                   type="number" min="1" max="1440" inputMode="numeric"
@@ -1630,8 +1853,8 @@ export function App(): ReactElement {
               return (
               <div id={tab.id + "-panel"} className={`terminal-pane${launch.kind === "ssh" && paneSession ? ` terminal-pane-sftp-${sftpLayout.dock}${sftpLayout.collapsed ? " is-collapsed" : ""}` : ""}`} style={launch.kind === "ssh" && paneSession ? { "--sftp-size": `${sftpLayout.size}%` } as CSSProperties : undefined} role="tabpanel" aria-labelledby={tab.id + "-tab"} key={tab.id} hidden={tab.id !== activeTab}>
                 <div className="terminal-pane-terminal">
-                  <PaneWorkspace tab={tab} visible={tab.id === activeTab} focusRequest={focusRequest} labels={labels} name={tabName} productionHosts={productionHosts}
-                    restartTheme={sshHost ? (sshHost.theme === "light" ? "light" : "graphite") : undefined} onRequestFocus={() => setFocusRequest((value) => value + 1)} />
+                  <PaneWorkspace tab={tab} visible={windowVisible && tab.id === activeTab} focusRequest={focusRequest} labels={labels} name={tabName} productionHosts={productionHosts}
+                    restartTheme={sshHost ? terminalThemeId(sshHost.theme) : undefined} onRequestFocus={() => setFocusRequest((value) => value + 1)} />
                 </div>
                 {launch.kind === "ssh" && paneSession && <SftpPanel key={paneSession.id} terminal={paneSession.id} locale={locale} hostLabel={sftpHostLabel} theme={sftpTheme} visible={tab.id === activeTab}
                   production={production} ended={status === "ended" || status === "failed"} onLeave={() => setFocusRequest((value) => value + 1)}
@@ -1660,6 +1883,11 @@ export function App(): ReactElement {
           <TransferQueue locale={locale} theme={activePaneTheme} hosts={Object.fromEntries(hosts.map((host) => [host.id, host.name]))} production={productionHosts} sessions={Object.values(sftpSessions)} onRetrySessionRequested={focusTransferHost} />
         </section>
       </div>
+      {activeLaunch?.kind === "ssh" && <div inert={sheet !== null || (narrow && sidebarOpen)}>
+        <ServerStatusBar key={statusTerminal ?? activeLaunch.attempt_id} host={activeHost?.name ?? activeEntry?.label ?? labels.serverStatus.sshHost}
+          snapshot={serverStatus} ended={activeEntry !== undefined && ["failed", "ended"].includes(paneStatus(activeEntry, activeEntry.focusedPaneId))}
+          labels={labels.serverStatus} />
+      </div>}
       <dialog ref={dialogRef} className="trust-dialog" data-alert={challenge?.keyChanged ? "true" : undefined} aria-labelledby="trust-title" onCancel={(event) => { event.preventDefault(); void respondToChallenge(false); }}>
         {challenge && <>
           <h2 id="trust-title"><span className="dialog-mark" aria-hidden="true">{challenge.keyChanged ? <AlertIcon size={18} /> : <ShieldIcon size={18} />}</span>{challenge.keyChanged ? labels.hostKeyChangedTitle : labels.hostKeyTitle}{challengeProduction && <span className="prod-chip">{labels.production}</span>}</h2>

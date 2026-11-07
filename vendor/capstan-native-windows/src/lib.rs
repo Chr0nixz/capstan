@@ -1,4 +1,4 @@
-//! Small Windows-only FFI boundary for atomic replacement.
+//! Narrow Windows FFI boundary for desktop integration and protected file operations.
 #![allow(unsafe_code)]
 
 use std::{io, path::Path};
@@ -10,11 +10,68 @@ pub mod editor;
 #[cfg(windows)]
 pub mod export;
 #[cfg(windows)]
+pub mod hello;
+#[cfg(windows)]
+pub mod jump_list;
+#[cfg(windows)]
 pub mod staged_drag;
+#[cfg(windows)]
+pub mod toast;
 #[cfg(windows)]
 pub mod transfer;
 #[cfg(windows)]
 pub mod transfer_recovery;
+
+/// Opaque normal placement; its coordinates must stay in the Windows workspace coordinate system.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct WindowPlacement(windows_sys::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT);
+
+/// Capture the restore rectangle even while the window is minimized or maximized.
+#[cfg(windows)]
+pub fn capture_window_placement(window: isize) -> io::Result<WindowPlacement> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowPlacement, IsIconic, SW_SHOWMAXIMIZED, SW_SHOWNORMAL, WINDOWPLACEMENT,
+        WPF_RESTORETOMAXIMIZED,
+    };
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: Windows validates the borrowed HWND; the output points to an initialized stack value.
+    if unsafe { GetWindowPlacement(window as _, &mut placement) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let rectangle = placement.rcNormalPosition;
+    if rectangle.right <= rectangle.left || rectangle.bottom <= rectangle.top {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "window has no normal placement",
+        ));
+    }
+    // SAFETY: IsIconic only inspects the same borrowed HWND and retains no pointer.
+    let maximized = placement.showCmd == SW_SHOWMAXIMIZED as u32
+        || (unsafe { IsIconic(window as _) } != 0 && placement.flags & WPF_RESTORETOMAXIMIZED != 0);
+    // Quake brings minimized windows back into use, preserving their normal/maximized restore state.
+    placement.showCmd = if maximized {
+        SW_SHOWMAXIMIZED as u32
+    } else {
+        SW_SHOWNORMAL as u32
+    };
+    placement.flags = 0;
+    Ok(WindowPlacement(placement))
+}
+
+/// Restore using the matching API, without treating an outer rectangle as a client size.
+#[cfg(windows)]
+pub fn restore_window_placement(window: isize, saved: WindowPlacement) -> io::Result<()> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowPlacement;
+    // SAFETY: the initialized placement remains alive for this synchronous call; Windows checks HWND.
+    if unsafe { SetWindowPlacement(window as _, &saved.0) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
 
 pub struct PromptedSecret {
     pub username: String,
@@ -360,4 +417,157 @@ pub fn atomic_replace(source: &Path, target: &Path, replace: bool) -> io::Result
         ));
     }
     std::fs::rename(source, target)
+}
+
+#[cfg(all(test, windows))]
+mod window_placement_tests {
+    use super::{capture_window_placement, restore_window_placement};
+    use std::ptr;
+    use windows_sys::Win32::{
+        Foundation::{HINSTANCE, HWND, RECT},
+        System::LibraryLoader::GetModuleHandleW,
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowRect, IsIconic,
+            IsZoomed, RegisterClassW, SetWindowPos, ShowWindow, UnregisterClassW, SWP_NOACTIVATE,
+            SWP_NOZORDER, SW_HIDE, SW_RESTORE, SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, WNDCLASSW,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+            WS_THICKFRAME,
+        },
+    };
+
+    struct TestWindow {
+        handle: HWND,
+        instance: HINSTANCE,
+        class: Vec<u16>,
+    }
+
+    impl TestWindow {
+        fn new() -> Self {
+            let class: Vec<u16> = "Capstan isolated placement regression\0"
+                .encode_utf16()
+                .collect();
+            // SAFETY: module lookup takes no borrowed pointers.
+            let instance = unsafe { GetModuleHandleW(ptr::null()) };
+            let definition = WNDCLASSW {
+                lpfnWndProc: Some(DefWindowProcW),
+                hInstance: instance,
+                lpszClassName: class.as_ptr(),
+                ..Default::default()
+            };
+            // SAFETY: the class name stays allocated until after the window and class are destroyed.
+            assert_ne!(unsafe { RegisterClassW(&definition) }, 0);
+            // SAFETY: all strings live through creation; no application callback data is supplied.
+            let handle = unsafe {
+                CreateWindowExW(
+                    WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    class.as_ptr(),
+                    class.as_ptr(),
+                    WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX,
+                    180,
+                    160,
+                    818,
+                    610,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    instance,
+                    ptr::null(),
+                )
+            };
+            assert!(!handle.is_null());
+            Self {
+                handle,
+                instance,
+                class,
+            }
+        }
+
+        fn geometry(&self) -> ([i32; 4], [i32; 2]) {
+            let mut outer = RECT::default();
+            let mut client = RECT::default();
+            // SAFETY: this test owns a live window on the calling thread and stack output buffers.
+            unsafe {
+                assert_ne!(GetWindowRect(self.handle, &mut outer), 0);
+                assert_ne!(GetClientRect(self.handle, &mut client), 0);
+            }
+            (
+                [outer.left, outer.top, outer.right, outer.bottom],
+                [client.right - client.left, client.bottom - client.top],
+            )
+        }
+    }
+
+    impl Drop for TestWindow {
+        fn drop(&mut self) {
+            // SAFETY: the window and class are test-owned and destroyed on their creation thread.
+            unsafe {
+                DestroyWindow(self.handle);
+                UnregisterClassW(self.class.as_ptr(), self.instance);
+            }
+        }
+    }
+
+    #[test]
+    fn real_window_restores_normal_geometry_from_normal_minimized_and_maximized_states() {
+        let window = TestWindow::new();
+        let handle = window.handle as isize;
+        let baseline = capture_window_placement(handle).unwrap();
+        let geometry = window.geometry();
+        assert!(geometry.0[2] - geometry.0[0] > geometry.1[0]);
+        assert!(geometry.0[3] - geometry.0[1] > geometry.1[1]);
+        for (maximized, minimized) in [(false, false), (false, true), (true, false), (true, true)] {
+            for _ in 0..3 {
+                restore_window_placement(handle, baseline).unwrap();
+                // SAFETY: this test owns the window; NOACTIVATE prevents taking the user's focus.
+                unsafe {
+                    if maximized {
+                        ShowWindow(window.handle, SW_SHOWMAXIMIZED);
+                    }
+                    if minimized {
+                        ShowWindow(window.handle, SW_SHOWMINNOACTIVE);
+                    }
+                    assert_eq!(IsIconic(window.handle) != 0, minimized);
+                }
+                let saved = capture_window_placement(handle).unwrap();
+                // SAFETY: mutate only the isolated test window to simulate Quake geometry/hiding.
+                unsafe {
+                    ShowWindow(window.handle, SW_RESTORE);
+                    assert_ne!(
+                        SetWindowPos(
+                            window.handle,
+                            ptr::null_mut(),
+                            60,
+                            80,
+                            1000,
+                            500,
+                            SWP_NOZORDER | SWP_NOACTIVATE
+                        ),
+                        0
+                    );
+                    ShowWindow(window.handle, SW_HIDE);
+                }
+                restore_window_placement(handle, saved).unwrap();
+                // SAFETY: these getters inspect the test's live window without retaining pointers.
+                unsafe {
+                    assert_eq!(IsIconic(window.handle), 0);
+                    assert_eq!(IsZoomed(window.handle) != 0, maximized);
+                }
+                // Returning from an originally maximized window must still recover its normal size.
+                // SAFETY: SW_RESTORE targets only the isolated test window.
+                unsafe { ShowWindow(window.handle, SW_RESTORE) };
+                assert_eq!(
+                    window.geometry(),
+                    geometry,
+                    "maximized={maximized}, minimized={minimized}"
+                );
+                // SAFETY: hide the test-owned window between scenarios.
+                unsafe { ShowWindow(window.handle, SW_HIDE) };
+            }
+        }
+        assert!(restore_window_placement(0, baseline).is_err());
+    }
+
+    #[test]
+    fn invalid_window_has_no_capturable_placement() {
+        assert!(capture_window_placement(0).is_err());
+    }
 }

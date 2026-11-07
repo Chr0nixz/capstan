@@ -93,6 +93,19 @@ describe("global transfer entry", () => {
     expect(container.querySelector(".transfer-row")).toBeNull();
     expect(container.textContent).toContain("No transfers yet.");
   });
+
+  it("acknowledges only the displayed failure revision and leaves its retry available", async () => {
+    const failed = { ...fixture[0], conflict: null, state: "failed", error: "permission_denied" };
+    mocks.invoke.mockImplementation(async (command: string) => command === "transfer_snapshot" ? [failed] : command === "transfer_recovery_snapshot" ? { entries: [], incomplete: false } : undefined);
+    await act(async () => root.unmount()); root = createRoot(container);
+    await act(async () => { root.render(<TransferQueue locale="en" hosts={{}} />); });
+    const action = button("Acknowledge failure");
+    expect(action).toBeDefined();
+    await act(async () => action?.click());
+    expect(mocks.invoke).toHaveBeenCalledWith("acknowledge_transfer_failure", { id: failed.id, version: failed.version });
+    expect(button("Acknowledge failure")).toBeUndefined();
+    expect(button("Retry")).toBeDefined();
+  });
   it.each(["en", "zh-CN"] as const)("keeps unverifiable old records for manual inspection without unsafe actions in %s", async (locale) => {
     const recovery = { entries: [
       { id: fixture[0].id, hostId: fixture[0].hostId, name: "old-download.bin", remotePath: "/drop/old-download.bin", direction: "download", total: "10", partialSize: "4", localPartial: true, state: "manual_inspection", updatedSeconds: "1" },

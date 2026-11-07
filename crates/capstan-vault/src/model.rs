@@ -364,6 +364,17 @@ pub fn normalize_target(address: &str) -> Result<String> {
 fn bounded(value: &str, maximum: usize, required: bool) -> bool {
     (!required || !value.trim().is_empty()) && value.len() <= maximum && !value.contains('\0')
 }
+
+/// A missing custom definition is valid in a host record (for example after a backup import).
+#[must_use]
+pub fn valid_custom_theme_id(id: &str) -> bool {
+    id.strip_prefix("custom:").is_some_and(|value| {
+        value.len() == 36
+            && Uuid::parse_str(value)
+                .is_ok_and(|id| !id.is_nil() && id.hyphenated().to_string() == value)
+    })
+}
+
 impl Host {
     pub fn validate(&self) -> Result<()> {
         normalize_target(&self.address)?;
@@ -375,7 +386,8 @@ impl Host {
             || self.tags.len() > 32
             || self.tags.iter().any(|tag| !bounded(tag, 64, true))
             || self.encoding != "utf-8"
-            || !matches!(self.theme.as_str(), "graphite" | "light")
+            || !(matches!(self.theme.as_str(), "graphite" | "light")
+                || valid_custom_theme_id(&self.theme))
             || self.working_directory.as_deref().is_some_and(|value| {
                 !bounded(value, 4096, true) || value.chars().any(char::is_control)
             })
@@ -554,6 +566,21 @@ mod record_tests {
     use super::*;
 
     #[test]
+    fn custom_theme_ids_are_bounded_and_canonical() {
+        assert!(valid_custom_theme_id(
+            "custom:11111111-1111-4111-8111-111111111111"
+        ));
+        for invalid in [
+            "custom:../file",
+            "custom:00000000-0000-0000-0000-000000000000",
+            "custom:11111111111141118111111111111111",
+            "graphite",
+        ] {
+            assert!(!valid_custom_theme_id(invalid));
+        }
+    }
+
+    #[test]
     fn production_flags_default_to_false_for_older_records() {
         let host: Host = serde_json::from_value(serde_json::json!({
             "id": "6f1d2c9a-1b5e-4c7d-9a10-000000000001",
@@ -574,6 +601,14 @@ mod record_tests {
         }))
         .unwrap();
         assert!(!host.production);
+        let mut themed_host = host.clone();
+        themed_host.theme = "custom:11111111-1111-4111-8111-111111111111".into();
+        themed_host.validate().unwrap();
+        let reopened: Host =
+            serde_json::from_value(serde_json::to_value(&themed_host).unwrap()).unwrap();
+        assert_eq!(reopened.theme, themed_host.theme);
+        themed_host.theme = "custom:invalid".into();
+        assert!(themed_host.validate().is_err());
         let group: Group = serde_json::from_value(serde_json::json!({
             "id": "6f1d2c9a-1b5e-4c7d-9a10-0000000000bb",
             "name": "Platform",

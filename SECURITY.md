@@ -28,6 +28,12 @@ Never attach passwords, private keys, passphrases, real Vault/backup files or
 terminal transcripts. Unsigned candidate artifacts are for controlled testing;
 verify their SHA-256 against the recorded build result.
 
+In-app updates require an embedded trusted public key, an artifact signature and
+a matching signed version. Missing keys disable updates; release metadata cannot
+replace the trusted key. Production signing secrets belong only to the protected
+`release` GitHub Environment. Authenticode signing is separate and is not provided.
+See [update security and recovery](docs/UPDATES.md).
+
 ## 中文
 
 项目仍在开发，支持范围和完整验收状态见 board 与兼容矩阵。密码和私钥仅在 Rust
@@ -41,3 +47,7 @@ verify their SHA-256 against the recorded build result.
 本检出目录尚未列出专用私密漏洞报告渠道，请通过已有可信私密渠道联系维护者后再
 披露细节。公开 issue、日志和报告中不要发送真实凭据、Vault/备份或终端正文；复现
 使用一次性材料。未签名候选包用于受控测试，并应核对构建记录中的 SHA-256。
+
+应用内更新须通过内置公钥验签，且签名绑定的版本必须与清单一致；缺公钥时不可用，
+更新清单不能替换信任公钥。生产签名私钥只放在受保护的 `release` GitHub Environment。
+更新包签名不等同于 Authenticode。轮换与恢复见 [更新说明](docs/UPDATES.md)。

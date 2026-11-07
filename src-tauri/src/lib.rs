@@ -9,7 +9,15 @@ pub mod benchmark;
 mod connection_commands;
 pub mod data_directory;
 #[cfg(feature = "tauri-runtime")]
+mod desktop_commands;
+#[cfg(feature = "tauri-runtime")]
 mod forwarding_commands;
+#[cfg(feature = "tauri-runtime")]
+mod launch_commands;
+#[cfg(all(windows, feature = "tauri-runtime"))]
+pub use launch_commands::prepare_instance;
+#[cfg(feature = "tauri-runtime")]
+mod quake;
 #[cfg(all(windows, feature = "tauri-runtime"))]
 mod remote_edit_commands;
 #[cfg(feature = "tauri-runtime")]
@@ -19,7 +27,13 @@ mod sftp_commands;
 #[cfg(feature = "tauri-runtime")]
 mod snippet_commands;
 #[cfg(feature = "tauri-runtime")]
+mod status_commands;
+#[cfg(feature = "tauri-runtime")]
+mod theme_commands;
+#[cfg(feature = "tauri-runtime")]
 mod transfer_commands;
+#[cfg(feature = "tauri-runtime")]
+mod update_commands;
 
 #[derive(Debug, serde::Serialize)]
 pub struct CommandError {
@@ -156,8 +170,7 @@ pub mod tauri_channel {
         VaultRecoveryCandidateView, VaultStatus,
     };
     use capstan_pty::{
-        local_shell_profiles, open_local_terminal, ConPtyConfig, ConPtySelection,
-        LocalShellProfile, LocalTerminalOptions,
+        local_shell_profiles, open_local_terminal, ConPtyConfig, ConPtySelection, LocalShellProfile,
     };
     use capstan_ssh::TrustBroker;
     use capstan_terminal::{
@@ -293,6 +306,9 @@ pub mod tauri_channel {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(id, Some(owner));
+        }
+        pub(super) fn owner(&self, id: &TerminalSessionId) -> Option<Uuid> {
+            self.0.lock().ok()?.get(id).copied().flatten()
         }
         fn remove(&self, id: &TerminalSessionId) -> Option<Uuid> {
             self.0
@@ -530,11 +546,19 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub async fn start_local_terminal(
+        window: tauri::WebviewWindow,
         manager: State<'_, Arc<TerminalService>>,
-        options: LocalTerminalOptions,
+        requests: State<'_, crate::launch_commands::LaunchRequests>,
+        options: crate::launch_commands::LocalStartOptions,
         on_output: Channel<InvokeResponseBody>,
         on_status: Channel<TerminalSnapshot>,
     ) -> std::result::Result<StartedTerminal, CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
+        let launch = options.resolve(&requests)?;
+        let options = launch.options;
+        let cwd_fallback = launch.cwd_fallback;
         let executable = std::env::current_exe().map_err(|_| CommandError::new("runtime_path"))?;
         let (id, runtime) = manager
             .open(
@@ -545,6 +569,9 @@ pub mod tauri_channel {
                 Arc::new(TauriBinaryChannel(on_output)),
             )
             .await?;
+        if cwd_fallback {
+            let _ = window.emit("launch-cwd-fallback", ());
+        }
         let session = manager.get(&id)?;
         forward_status(session, on_status);
         Ok(StartedTerminal {
@@ -664,6 +691,14 @@ pub mod tauri_channel {
             return Err(CommandError::new(error.to_string()));
         }
         let sftp_lifetime = sftp.inner().clone();
+        let recent_app = window.app_handle().clone();
+        tauri::async_runtime::spawn(async move {
+            crate::launch_commands::update_recent_host(
+                &recent_app,
+                capstan_core::launch::recent::HistoryChange::Connected(host_id),
+            )
+            .await;
+        });
         let terminal_id = id.0.clone();
         let mut terminal_status = terminals.get(&id)?.subscribe();
         tauri::async_runtime::spawn(async move {
@@ -830,6 +865,7 @@ pub mod tauri_channel {
             .await?;
         attempts.allow_new();
         activity.record();
+        crate::launch_commands::refresh_jump_list(window.app_handle()).await;
         Ok(())
     }
 
@@ -841,12 +877,95 @@ pub mod tauri_channel {
         attempts: State<'_, SshAttempts>,
         locale: String,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         let (title, message) = native_prompt_copy(&locale, true, None);
         vault
             .unlock(prompt_native_secret(&window, title, message).await?)
             .await?;
         attempts.allow_new();
         activity.record();
+        crate::launch_commands::refresh_jump_list(window.app_handle()).await;
+        Ok(())
+    }
+
+    fn hello_source(label: &str) -> std::result::Result<(), CommandError> {
+        if label == "main" {
+            Ok(())
+        } else {
+            Err(CommandError::new("window_source"))
+        }
+    }
+
+    fn hello_provider(
+        window: &tauri::WebviewWindow<tauri::Wry>,
+    ) -> std::result::Result<Arc<dyn capstan_vault::hello::HelloProvider>, CommandError> {
+        hello_source(window.label())?;
+        #[cfg(windows)]
+        let parent = window
+            .hwnd()
+            .map_err(|_| CommandError::new("hello_unavailable"))?
+            .0 as isize;
+        #[cfg(not(windows))]
+        let parent = 0;
+        Ok(Arc::new(capstan_vault::hello::PlatformHello { parent }))
+    }
+
+    #[tauri::command]
+    pub async fn vault_hello_status(
+        window: tauri::WebviewWindow<tauri::Wry>,
+        vault: State<'_, Arc<VaultManager>>,
+    ) -> std::result::Result<capstan_vault::hello::HelloStatus, CommandError> {
+        hello_source(window.label())?;
+        vault.hello_status().await.map_err(Into::into)
+    }
+
+    #[tauri::command]
+    pub async fn enable_vault_hello(
+        window: tauri::WebviewWindow<tauri::Wry>,
+        vault: State<'_, Arc<VaultManager>>,
+        activity: State<'_, UserActivity>,
+        locale: String,
+    ) -> std::result::Result<(), CommandError> {
+        let provider = hello_provider(&window)?;
+        if !vault.status().unlocked {
+            return Err(CommandError::new("vault_locked"));
+        }
+        let (title, message) = native_prompt_copy(&locale, true, None);
+        vault
+            .enable_hello(
+                prompt_native_secret(&window, title, message).await?,
+                provider,
+            )
+            .await?;
+        activity.record();
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn disable_vault_hello(
+        window: tauri::WebviewWindow<tauri::Wry>,
+        vault: State<'_, Arc<VaultManager>>,
+        activity: State<'_, UserActivity>,
+    ) -> std::result::Result<(), CommandError> {
+        hello_source(window.label())?;
+        vault.disable_hello().await?;
+        activity.record();
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub async fn unlock_vault_hello(
+        window: tauri::WebviewWindow<tauri::Wry>,
+        vault: State<'_, Arc<VaultManager>>,
+        activity: State<'_, UserActivity>,
+        attempts: State<'_, SshAttempts>,
+    ) -> std::result::Result<(), CommandError> {
+        vault.unlock_hello(hello_provider(&window)?).await?;
+        attempts.allow_new();
+        activity.record();
+        crate::launch_commands::refresh_jump_list(window.app_handle()).await;
         Ok(())
     }
 
@@ -878,6 +997,11 @@ pub mod tauri_channel {
             .await?;
         attempts.allow_new();
         activity.record();
+        crate::launch_commands::update_recent_host(
+            window.app_handle(),
+            capstan_core::launch::recent::HistoryChange::Clear,
+        )
+        .await;
         Ok(())
     }
 
@@ -1444,7 +1568,9 @@ pub mod tauri_channel {
     }
 
     #[tauri::command]
+    #[allow(clippy::too_many_arguments)] // Tauri injects the native window and workflow services separately.
     pub async fn import_vault_backup(
+        window: tauri::WebviewWindow,
         vault: State<'_, Arc<VaultManager>>,
         activity: State<'_, UserActivity>,
         sessions: State<'_, BackupImportSessions>,
@@ -1453,6 +1579,9 @@ pub mod tauri_channel {
         expected_revision: u64,
         expected_epoch: u64,
     ) -> std::result::Result<u64, CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         let pending = sessions.take(token, expected_revision, expected_epoch)?;
         let revision = vault
             .import_backup(
@@ -1465,6 +1594,15 @@ pub mod tauri_channel {
             .await
             .map_err(CommandError::from)?;
         activity.record();
+        if mode == capstan_core::BackupImportMode::Overwrite {
+            crate::launch_commands::update_recent_host(
+                window.app_handle(),
+                capstan_core::launch::recent::HistoryChange::Clear,
+            )
+            .await;
+        } else {
+            crate::launch_commands::refresh_jump_list(window.app_handle()).await;
+        }
         Ok(revision)
     }
 
@@ -1494,26 +1632,42 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub async fn save_host(
+        window: tauri::WebviewWindow,
         vault: State<'_, Arc<VaultManager>>,
         host: Host,
         expected_revision: u64,
     ) -> std::result::Result<u64, CommandError> {
-        vault
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
+        let revision = vault
             .save_host(host, expected_revision)
             .await
-            .map_err(Into::into)
+            .map_err(CommandError::from)?;
+        crate::launch_commands::refresh_jump_list(window.app_handle()).await;
+        Ok(revision)
     }
 
     #[tauri::command]
     pub async fn delete_host(
+        window: tauri::WebviewWindow,
         vault: State<'_, Arc<VaultManager>>,
         id: Uuid,
         expected_revision: u64,
     ) -> std::result::Result<u64, CommandError> {
-        vault
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
+        let revision = vault
             .delete_host(id, expected_revision)
             .await
-            .map_err(Into::into)
+            .map_err(CommandError::from)?;
+        crate::launch_commands::update_recent_host(
+            window.app_handle(),
+            capstan_core::launch::recent::HistoryChange::Remove(id),
+        )
+        .await;
+        Ok(revision)
     }
 
     #[tauri::command]
@@ -1656,11 +1810,74 @@ pub mod tauri_channel {
             .map_err(|_| CommandError::new("window_operation"))
     }
 
+    pub(crate) async fn prepare_update_exit(
+        window: &tauri::WebviewWindow,
+    ) -> std::result::Result<(), CommandError> {
+        let settings = window
+            .state::<Arc<capstan_core::settings::Settings>>()
+            .inner()
+            .clone();
+        let transfers = window
+            .state::<Arc<capstan_core::transfer::TransferService>>()
+            .inner()
+            .clone();
+        let sftp = window
+            .state::<Arc<capstan_core::sftp::SftpService>>()
+            .inner()
+            .clone();
+        #[cfg(windows)]
+        let editors = window
+            .state::<Arc<capstan_core::remote_edit::RemoteEditorService>>()
+            .inner()
+            .clone();
+        #[cfg(windows)]
+        {
+            if editors.has_open(window.label()) {
+                return Err(CommandError::new("update_busy"));
+            }
+            editors
+                .prepare_exit(window.label())
+                .map_err(|_| CommandError::new("update_busy"))?;
+        }
+        if let Err(error) = capstan_core::application::prepare_file_workflow_exit(
+            &settings,
+            &transfers,
+            &sftp,
+            window.label(),
+        )
+        .await
+        {
+            #[cfg(windows)]
+            editors.abort_exit();
+            return Err(CommandError::new(error.to_string()));
+        }
+        window.state::<BackupImportSessions>().clear();
+        let attempts = window.state::<SshAttempts>().inner().clone();
+        let broker = window.state::<Arc<TrustBroker>>().inner().clone();
+        attempts.block_and_cancel_all(&broker).await;
+        crate::forwarding_commands::shutdown(&window.as_ref().window()).await;
+        crate::connection_commands::shutdown(&window.as_ref().window()).await;
+        window.state::<Arc<TerminalService>>().close_all().await;
+        // If launching NSIS fails, new sessions must remain usable.
+        attempts.allow_new();
+        Ok(())
+    }
+
     pub fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
         #[cfg(feature = "m0-benchmarks")]
         let builder = builder.manage(crate::benchmark::BenchmarkState::default());
         builder
+            .manage(crate::launch_commands::LaunchRequests::default())
+            .manage(crate::quake::QuakeController::default())
+            .plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(|app, shortcut, event| {
+                        crate::quake::handle_shortcut(app, shortcut, event);
+                    })
+                    .build(),
+            )
             .plugin(tauri_plugin_snap_layout::init())
+            .plugin(tauri_plugin_updater::Builder::new().build())
             .manage(Arc::new(TerminalService::default()))
             .manage(SshSessions::default())
             .manage(Arc::new(capstan_core::sftp::SftpService::default()))
@@ -1702,6 +1919,17 @@ pub mod tauri_channel {
                     data_directory.clone(),
                 ));
                 app.manage(settings.clone());
+                crate::update_commands::install(
+                    app.handle(),
+                    &data_directory,
+                    data_directory != roaming_data_directory,
+                );
+                crate::quake::install(app.handle(), settings.clone());
+                app.manage(Arc::new(capstan_core::themes::ThemeCatalog::new(
+                    &data_directory,
+                )));
+                app.manage(crate::theme_commands::ThemePicker::default());
+                app.manage(Arc::new(crate::desktop_commands::DesktopState::default()));
                 #[cfg(windows)]
                 app.state::<Arc<capstan_core::transfer::TransferService>>()
                     .configure_export_directory(
@@ -1718,6 +1946,11 @@ pub mod tauri_channel {
                     data_directory.join("vault.capstan"),
                 )));
                 app.manage(SshAttempts::default());
+                crate::launch_commands::install_jump_list(
+                    app.handle(),
+                    &executable,
+                    data_directory != roaming_data_directory,
+                );
                 let auto_lock_backup_imports = app.state::<BackupImportSessions>().inner().clone();
                 let auto_lock_vault = app.state::<Arc<VaultManager>>().inner().clone();
                 let auto_lock_activity = app.state::<UserActivity>().inner().clone();
@@ -1790,14 +2023,41 @@ pub mod tauri_channel {
                             .effect(tauri::window::Effect::Mica)
                             .build(),
                     );
+                    let vault = app.state::<Arc<VaultManager>>().inner().clone();
+                    vault.set_server_status_window_visible(
+                        window.is_visible().unwrap_or(false)
+                            && !window.is_minimized().unwrap_or(true),
+                    );
+                    crate::desktop_commands::install(
+                        &window,
+                        &executable,
+                        data_directory != roaming_data_directory,
+                    );
+                    crate::status_commands::install(window, vault);
                 }
+                crate::launch_commands::receive_initial(app.handle());
+                #[cfg(windows)]
+                crate::launch_commands::install_instance(app.handle());
                 Ok(())
             })
             .invoke_handler(tauri::generate_handler![
+                crate::update_commands::update_status,
+                crate::update_commands::check_update,
+                crate::update_commands::cancel_update,
+                crate::update_commands::save_update_preference,
+                crate::update_commands::update_activity,
+                crate::update_commands::install_update,
                 runtime_summary_command,
+                crate::status_commands::server_status_binding,
+                crate::status_commands::select_server_status_connection,
+                crate::status_commands::retry_server_status,
                 vault_status,
                 initialize_vault,
                 unlock_vault,
+                vault_hello_status,
+                enable_vault_hello,
+                disable_vault_hello,
+                unlock_vault_hello,
                 list_vault_recovery_candidates,
                 restore_vault_recovery_candidate,
                 lock_vault,
@@ -1847,6 +2107,22 @@ pub mod tauri_channel {
                 crate::sftp_commands::attach_sftp,
                 crate::settings_commands::load_sftp_panel_preferences,
                 crate::settings_commands::save_sftp_panel_preferences,
+                crate::settings_commands::load_desktop_preferences,
+                crate::settings_commands::save_desktop_preference,
+                crate::theme_commands::list_terminal_themes,
+                crate::theme_commands::preview_terminal_themes,
+                crate::theme_commands::save_terminal_theme_preview,
+                crate::theme_commands::discard_terminal_theme_preview,
+                crate::theme_commands::rename_terminal_theme,
+                crate::theme_commands::delete_terminal_theme,
+                crate::launch_commands::list_launch_requests,
+                crate::launch_commands::inspect_launch_request,
+                crate::launch_commands::match_launch_hosts,
+                crate::launch_commands::dismiss_launch_request,
+                crate::launch_commands::clear_recent_hosts,
+                crate::quake::quake_status,
+                crate::quake::save_quake_preferences,
+                crate::desktop_commands::acknowledge_transfer_failure,
                 crate::sftp_commands::detach_sftp,
                 crate::sftp_commands::update_remote_cwd,
                 crate::sftp_commands::configure_remote_cwd_aliases,
@@ -1977,6 +2253,12 @@ pub mod tauri_channel {
                 }
             })
             .on_window_event(|window, event| {
+                if matches!(
+                    event,
+                    WindowEvent::Resized(_) | WindowEvent::Focused(_) | WindowEvent::Moved(_)
+                ) {
+                    crate::status_commands::sync_visibility(window);
+                }
                 if window.label() == "main" && matches!(event, WindowEvent::Focused(true)) {
                     let vault = window.state::<Arc<VaultManager>>().inner().clone();
                     let activity = window.state::<UserActivity>().inner().clone();
@@ -2019,6 +2301,9 @@ pub mod tauri_channel {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     if window.label() == "main" {
                         api.prevent_close();
+                        if crate::update_commands::closing(window.app_handle()) {
+                            return;
+                        }
                         #[cfg(windows)]
                         {
                             let editors = window
@@ -2119,6 +2404,26 @@ pub mod tauri_channel {
         use super::*;
         use capstan_terminal::{BackendControl, BackendParts, FrameSink};
         use std::io::Cursor;
+
+        #[test]
+        fn hello_commands_accept_only_the_main_window_and_preserve_public_error_codes() {
+            assert!(hello_source("main").is_ok());
+            for label in ["", "other", "main-child", "Main"] {
+                assert_eq!(hello_source(label).unwrap_err().code, "window_source");
+            }
+            for error in [
+                capstan_vault::hello::HelloError::Unavailable,
+                capstan_vault::hello::HelloError::Canceled,
+                capstan_vault::hello::HelloError::KeyMissing,
+                capstan_vault::hello::HelloError::Mismatch,
+                capstan_vault::hello::HelloError::Data,
+            ] {
+                assert_eq!(
+                    CommandError::from(capstan_core::CoreError::from(error)).code,
+                    error.code()
+                );
+            }
+        }
 
         struct QuietSink;
         impl FrameSink for QuietSink {

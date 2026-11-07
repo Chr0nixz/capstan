@@ -87,7 +87,7 @@ async function connect(endpoint) {
   };
 }
 
-async function launch(scale, route, screenshot, viewport) {
+async function launch(scale, route, screenshot, viewport, media = [], updateScene = false) {
   const profile = join(target, `m1-layout-browser-${token}-${scale}-${screenshot ? "image" : "tests"}`);
   await mkdir(profile, { recursive: true });
   let child;
@@ -115,12 +115,30 @@ async function launch(scale, route, screenshot, viewport) {
       });
     });
     connection = await connect(endpoint);
-    const { targetId } = await connection.send("Target.createTarget", { url: `${origin}${route}` });
+    const { targetId } = await connection.send("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await connection.send("Target.attachToTarget", { targetId, flatten: true });
+    await connection.send("Page.enable", {}, sessionId);
     if (viewport) {
       await connection.send("Emulation.setDeviceMetricsOverride", { width: viewport[0], height: viewport[1], deviceScaleFactor: scale, mobile: false }, sessionId);
-      await connection.send("Page.navigate", { url: `${origin}${route}` }, sessionId);
     }
+    if (media.length) await connection.send("Emulation.setEmulatedMedia", { features: media }, sessionId);
+    if (updateScene) {
+      const contract = JSON.parse(await readFile(join(repository, "docs/agent/fixtures/M4-contract.json"), "utf8"));
+      const responses = {
+        vault_status: { exists: true, unlocked: true, revision: 0, epoch: 0 },
+        vault_hello_status: { available: false, enabled: false, invalidated: false },
+        vault_preferences: { auto_lock_minutes: 30, disconnect_on_lock: false },
+        load_desktop_preferences: contract.settingsDefaults,
+        update_status: { ...contract.updateStatus, available: true, phase: "available", release: { id: "11111111-1111-4111-8111-111111111111", version: "1.2.3", notes: "Capstan 1.2.3\n\nUpdate verification and recovery. 更新校验与恢复。\n<script>This remains plain text.</script>" } },
+        quake_status: { enabled: false, errorCode: null },
+        remote_edit_snapshot: { revision: "0", sessions: [], recoveryIncomplete: false },
+        window_visibility: { visible: true },
+        load_sftp_panel_preferences: { layout: { dock: "right", size: 36, collapsed: true }, session: "11111111-1111-4111-8111-111111111111", sequence: "0" },
+        start_local_terminal: { kind: "local", id: "update-preview", runtime: { kind: "system" } },
+      };
+      await connection.send("Page.addScriptToEvaluateOnNewDocument", { source: `window.__TAURI__ = { event: {listen: async () => () => {}}, core: { Channel: class {onmessage = null;}, invoke: async (command) => {const responses = ${JSON.stringify(responses)}; return responses[command] ?? (command.startsWith('list_') || command.endsWith('_snapshots') || command === 'transfer_snapshot' ? [] : null);}}};` }, sessionId);
+    }
+    await connection.send("Page.navigate", { url: `${origin}${route}` }, sessionId);
     const expression = screenshot && !sftpMode
       ? '!!document.querySelector(".terminal-pane:not([hidden]) .xterm-screen")'
       : 'document.getElementById("result")?.dataset.report';
@@ -132,6 +150,33 @@ async function launch(scale, route, screenshot, viewport) {
     }
     if (!value) throw new Error("The browser did not finish the layout checks.");
     if (screenshot) {
+      if (updateScene) {
+        const noticeDeadline = Date.now() + 5000;
+        while (!(await connection.send("Runtime.evaluate", { expression: `!!document.querySelector('.update-notice button')`, returnByValue: true }, sessionId)).result?.value) {
+          if (Date.now() > noticeDeadline) throw new Error("The update preview fixture did not initialize.");
+          await new Promise(resolveTick => setTimeout(resolveTick, 50));
+        }
+        await connection.send("Runtime.evaluate", { expression: `document.querySelector('.update-notice button').click()` }, sessionId);
+        await new Promise(resolveFrame => setTimeout(resolveFrame, 200));
+        const inspected = await connection.send("Runtime.evaluate", { expression: `(() => {
+          const dialog = document.querySelector('.update-dialog');
+          const bounds = dialog.getBoundingClientRect();
+          const focused = document.activeElement;
+          const focus = getComputedStyle(focused);
+          const errors = [];
+          if (!dialog.contains(focused) || focused.classList.contains('primary-action')) errors.push('Initial focus must be on the safe action.');
+          if (bounds.left < 0 || bounds.right > innerWidth || bounds.top < 0 || bounds.bottom > innerHeight) errors.push('Update dialog exceeds the viewport.');
+          if (dialog.querySelector('.update-notes script')) errors.push('Release notes must remain text.');
+          if (matchMedia('(prefers-reduced-motion: reduce)').matches && document.getAnimations().some(animation => animation.playState === 'running')) errors.push('Motion continues under reduced-motion.');
+          if (matchMedia('(forced-colors: active)').matches && focus.outlineStyle === 'none') errors.push('Keyboard focus is not visible in forced colors.');
+          return {passed: errors.length === 0, results: [{name: 'update-dialog-accessibility', passed: errors.length === 0, errors}]};
+        })()`, returnByValue: true }, sessionId);
+        if (inspected.exceptionDetails || !inspected.result?.value) throw new Error(`Update preview check failed: ${JSON.stringify(inspected.exceptionDetails)}`);
+        const result = inspected.result.value;
+        const preview = await connection.send("Page.captureScreenshot", { format: "png" }, sessionId);
+        await writeFile(screenshot, Buffer.from(preview.data, "base64"));
+        return result;
+      }
       await new Promise(resolveFrame => setTimeout(resolveFrame, 100));
       const { data } = await connection.send("Page.captureScreenshot", { format: "png" }, sessionId);
       await writeFile(screenshot, Buffer.from(data, "base64"));
@@ -196,13 +241,22 @@ try {
       ["editor-cleanup-light-zh", 800, 600, "?editor=1&editor-cleanup=1&theme=light&locale=zh-CN"],
       ["editor-retain", 800, 600, "?editor=1&editor-end-dialog=1"],
       ["editor-corrupt-retain-zh", 800, 600, "?editor=1&editor-corrupt=1&editor-end-dialog=1&theme=light&locale=zh-CN"],
+      ["forced-colors-reduced-motion", 1000, 700, "?dock=bottom&theme=light&locale=zh-CN"],
     ]) {
-      const result = await launch(1, `/tests/sftp-workflow.html${search}`, join(evidence, `${name}.png`), [width, height]);
+      const media = name.startsWith("forced-colors") ? [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] : [];
+      const result = await launch(1, `/tests/sftp-workflow.html${search}`, join(evidence, `${name}.png`), [width, height], media);
       report.scales.push({ scale: 1, scene: name, ...result });
     }
   } else for (const scale of securityMode ? [1] : [1, 1.25]) {
     const result = await launch(scale, securityMode ? "/tests/terminal-security.html" : "/__layout_test__");
     report.scales.push({ scale, ...result });
+  }
+  if (!securityMode && !sftpMode) {
+    const media = [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }];
+    report.scales.push({ scale: 1, scene: "forced-colors-reduced-motion", ...await launch(1, "/__layout_test__", undefined, undefined, media) });
+    for (const [scene, width, height, features] of [["update-dialog", 1280, 800, []], ["update-dialog-accessible", 800, 600, media]]) {
+      report.scales.push({ scale: 1, scene, ...await launch(1, "/", join(evidence, `${scene}.png`), [width, height], features, true) });
+    }
   }
   report.passed = report.scales.every(result => result.passed);
   if (report.passed && !securityMode && !sftpMode) await launch(1, "/", join(evidence, "browser-preview.png"));

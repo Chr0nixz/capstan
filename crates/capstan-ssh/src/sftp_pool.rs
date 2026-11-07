@@ -230,12 +230,10 @@ impl ConnectionLease<PasswordConnection> {
         cancel: &CancellationToken,
     ) -> Result<Arc<sftp::SftpClient>, sftp::ClientError> {
         let connection = self.connection();
-        // The transport mutex covers channel creation only, never handshake,
-        // file I/O, admission waits or cancellation cleanup.
         let mut channel = tokio::select! {
             biased;
             () = cancel.cancelled() => return Err(sftp::ClientError::Canceled),
-            channel = async { connection.handle.lock().await.channel_open_session().await } => channel.map_err(|error| match error {
+            channel = connection.open_user_session() => channel.map_err(|error| match error {
                 russh::Error::ChannelOpenFailure(_) => sftp::ClientError::Unavailable,
                 _ => sftp::ClientError::ConnectionLost,
             })?,

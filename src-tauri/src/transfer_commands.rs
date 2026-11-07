@@ -1,5 +1,5 @@
 //! Picker/owner validation and forwarding; file bodies stay in native/core I/O.
-use crate::CommandError;
+use crate::{desktop_commands::DesktopState, CommandError};
 use capstan_core::{
     sftp::{ExactU64, RemoteEntryId, RemotePath, SftpService, SftpSessionId},
     transfer::{
@@ -9,7 +9,7 @@ use capstan_core::{
 };
 use capstan_terminal::TerminalSessionId;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Manager, State};
 use uuid::Uuid;
 fn source(window: &tauri::WebviewWindow) -> Result<&str, CommandError> {
     if window.label() == "main" {
@@ -72,10 +72,17 @@ pub async fn enqueue_native_drop(
     parent: RemotePath,
     token: Uuid,
 ) -> Result<capstan_core::transfer::NativeDropResult, CommandError> {
-    transfers
-        .enqueue_native_drop(&sftp, source(&window)?, &terminal.0, session, parent, token)
+    let label = source(&window)?;
+    let desktop = window.state::<Arc<DesktopState>>();
+    let _scanning = desktop.begin_scan();
+    let result = transfers
+        .enqueue_native_drop(&sftp, label, &terminal.0, session, parent, token)
         .await
-        .map_err(error)
+        .map_err(error)?;
+    for plan in &result.plans {
+        desktop.update_tree_conflict(plan);
+    }
+    Ok(result)
 }
 #[tauri::command]
 pub async fn prepare_native_export(
@@ -86,10 +93,15 @@ pub async fn prepare_native_export(
     session: SftpSessionId,
     entry: RemoteEntryId,
 ) -> Result<capstan_core::transfer::PreparedExport, CommandError> {
-    transfers
-        .prepare_native_export(&sftp, source(&window)?, &terminal.0, session, entry)
+    let label = source(&window)?;
+    let desktop = window.state::<Arc<DesktopState>>();
+    let _scanning = desktop.begin_scan();
+    let result = transfers
+        .prepare_native_export(&sftp, label, &terminal.0, session, entry)
         .await
-        .map_err(error)
+        .map_err(error)?;
+    desktop.update_tree_conflict(&result.plan);
+    Ok(result)
 }
 #[tauri::command]
 pub fn native_export_snapshot(
@@ -227,11 +239,14 @@ pub async fn select_transfer_folder_plan(
     let Some(folder) = folder else {
         return Ok(None);
     };
-    transfers
+    let desktop = window.state::<Arc<DesktopState>>();
+    let _scanning = desktop.begin_scan();
+    let plan = transfers
         .prepare_upload_tree(&sftp, label, &terminal.0, session, parent, folder)
         .await
-        .map(Some)
-        .map_err(error)
+        .map_err(error)?;
+    desktop.update_tree_conflict(&plan);
+    Ok(Some(plan))
 }
 
 #[tauri::command]
@@ -265,11 +280,14 @@ pub async fn select_transfer_folder_download_plan(
     let Some(folder) = folder else {
         return Ok(None);
     };
-    transfers
+    let desktop = window.state::<Arc<DesktopState>>();
+    let _scanning = desktop.begin_scan();
+    let plan = transfers
         .prepare_download_tree(&sftp, label, &terminal.0, session, entry, folder)
         .await
-        .map(Some)
-        .map_err(error)
+        .map_err(error)?;
+    desktop.update_tree_conflict(&plan);
+    Ok(Some(plan))
 }
 
 #[tauri::command]
@@ -284,10 +302,13 @@ pub async fn resolve_transfer_tree_plan(
     revision: ExactU64,
     decisions: Vec<capstan_core::transfer::TreeDecision>,
 ) -> Result<capstan_core::transfer::TreeResult, CommandError> {
-    transfers
+    let label = source(&window)?;
+    let desktop = window.state::<Arc<DesktopState>>();
+    let _scanning = desktop.begin_scan();
+    let result = transfers
         .resolve_tree_plan(
             &sftp,
-            source(&window)?,
+            label,
             &terminal.0,
             session,
             token,
@@ -295,7 +316,13 @@ pub async fn resolve_transfer_tree_plan(
             decisions,
         )
         .await
-        .map_err(error)
+        .map_err(error)?;
+    if let Some(plan) = &result.plan {
+        desktop.update_tree_conflict(plan);
+    } else {
+        desktop.clear_tree_conflict(token);
+    }
+    Ok(result)
 }
 #[tauri::command]
 pub fn release_transfer_tree_plan(
@@ -305,7 +332,11 @@ pub fn release_transfer_tree_plan(
 ) -> Result<(), CommandError> {
     transfers
         .release_tree_plan(source(&window)?, token)
-        .map_err(error)
+        .map_err(error)?;
+    window
+        .state::<Arc<DesktopState>>()
+        .clear_tree_conflict(token);
+    Ok(())
 }
 #[tauri::command]
 pub async fn select_transfer_destination(

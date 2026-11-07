@@ -1,0 +1,83 @@
+{
+  "serverStatus": {
+    "connectionId": "33333333-3333-4333-8333-333333333333",
+    "generation": "9007199254740993",
+    "state": "running",
+    "sampledAt": "1793692800",
+    "cpuPercent": 25.5,
+    "load": [0.5, 1.25, 2.5],
+    "memory": { "total": "9007199254740993", "available": "1024" },
+    "disk": { "mount": "/", "total": "8192", "used": "2048" },
+    "network": { "rxPerSec": "512", "txPerSec": "256" },
+    "details": {
+      "disks": [{ "mount": "/", "total": "8192", "used": "2048" }],
+      "interfaces": [{ "name": "eth0", "rate": { "rxPerSec": "512", "txPerSec": "256" } }]
+    }
+  },
+  "serverStatusStates": ["probing", "running", "paused", "unsupported", "unavailable"],
+  "serverStatusLimits": { "frameBytes": 65536, "interfaces": 64, "mounts": 64, "cpuLines": 1024 },
+  "serverStatusEvent": "server-status-changed",
+  "terminalTheme": {
+    "id": "custom:11111111-1111-4111-8111-111111111111",
+    "name": "Sample",
+    "source": "windows_terminal",
+    "foreground": "#f0f0f0",
+    "background": "#101010",
+    "cursor": "#ffffff",
+    "selectionBackground": "#404040",
+    "ansi": ["#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0", "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff"]
+  },
+  "terminalThemeSources": ["windows_terminal", "iterm2"],
+  "themePreviewToken": "44444444-4444-4444-8444-444444444444",
+  "launchRequest": { "requestId": "22222222-2222-4222-8222-222222222222", "kind": "ssh", "display": "user@example.test:22" },
+  "launchRequestKinds": ["focus", "local", "host", "ssh"],
+  "launchDetails": { "kind": "ssh", "target": { "username": "user", "host": "example.test", "port": 22 } },
+  "launchLimits": { "arguments": 8, "argumentCharacters": 4096, "pendingRequests": 8, "localRecipes": 256, "recentHosts": 10, "shellTasks": 6 },
+  "localLaunchOptions": { "launch_request_id": "22222222-2222-4222-8222-222222222222" },
+  "quakePreferences": { "enabled": false, "hotkey": null, "heightPercent": 50 },
+  "quakeStatus": { "enabled": false, "errorCode": null },
+  "helloStatus": { "available": true, "enabled": true, "invalidated": false },
+  "helloSidecar": { "fileName": "vault-hello.cwh", "version": 1, "maxBytes": 1024, "maxKekSlots": 2, "provider": "passport_ksp_rsa2048_pkcs1" },
+  "settingsDefaults": {
+    "copyOnSelect": false,
+    "systemNotifications": true,
+    "jumpListRecentHosts": false,
+    "quakeEnabled": false,
+    "quakeHotkey": null,
+    "quakeHeightPercent": 50,
+    "checkUpdatesOnStartup": false
+  },
+  "errorCodes": {
+    "terminalTheme": ["theme_limit", "theme_invalid", "theme_json", "theme_xml", "theme_unavailable", "theme_changed"],
+    "serverStatus": ["status_unsupported", "status_rejected", "status_parse", "status_limit", "status_closed"],
+    "launch": ["launch_unavailable", "launch_expired", "launch_kind", "launch_instance_unavailable"],
+    "quake": ["quake_hotkey_busy", "quake_unavailable", "settings_invalid"],
+    "hello": ["hello_unavailable", "hello_canceled", "hello_key_missing", "hello_mismatch", "hello_data"],
+    "update": ["update_unavailable", "update_manifest", "update_version", "update_limit", "update_signature", "update_network", "update_storage", "update_canceled", "update_busy", "update_install", "update_confirmation"]
+  },
+  "updateEndpoint": "https://github.com/Chr0nixz/capstan/releases/latest/download/latest.json",
+  "updateTarget": "windows-x86_64",
+  "updateLimits": {
+    "manifestBytes": 65536,
+    "notesBytes": 16384,
+    "packageBytes": 209715200
+  },
+  "updateStatus": {
+    "available": false,
+    "portable": false,
+    "checkOnStartup": false,
+    "phase": "idle",
+    "release": null,
+    "downloaded": 0,
+    "total": 0,
+    "errorCode": null
+  },
+  "updatePhases": [
+    "idle",
+    "checking",
+    "available",
+    "downloading",
+    "installing",
+    "error"
+  ]
+}

@@ -3,6 +3,7 @@
 #![allow(clippy::pedantic)]
 mod envelope;
 mod error;
+pub mod hello;
 mod model;
 mod store;
 pub use envelope::{EnvelopeKind, KdfParameters, MAX_FILE_BYTES};

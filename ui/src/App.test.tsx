@@ -6,6 +6,7 @@ import { useWorkspace } from "./workspace";
 import { paneLeaves } from "./panes/tree";
 import { paneInputs } from "./panes/input";
 import { copy } from "./i18n";
+import m4 from "../../docs/agent/fixtures/M4-contract.json";
 import type { Snippet } from "./snippets/contracts";
 import type { HostId, TerminalLaunch, TerminalSessionId, TerminalSnapshot } from "./terminal/contracts";
 
@@ -30,6 +31,7 @@ const group = { id: "group-1", name: "Platform", parent_id: null, production: fa
 const groups = [group, { id: "group-2", name: "Build", parent_id: null, production: false }];
 const defaultInvoke = async (command: string, _args?: unknown): Promise<unknown> => {
   if (command === "vault_status") return { exists: true, unlocked: true, revision: 3, epoch: 1 };
+  if (command === "vault_hello_status") return { ...m4.helloStatus, enabled: false };
   if (command === "list_hosts") return [{ ...host }];
   if (command === "list_credentials") return [
     { id: "credential-1", name: "Deploy", revision: 0, kind: "password" },
@@ -40,6 +42,10 @@ const defaultInvoke = async (command: string, _args?: unknown): Promise<unknown>
   if (command === "remote_edit_snapshot") return { revision: "0", sessions: [], recoveryIncomplete: false };
   if (command === "list_trusted_host_keys") return [];
   if (command === "vault_preferences") return { auto_lock_minutes: 30, disconnect_on_lock: false };
+  if (command === "list_terminal_themes") return [];
+  if (command === "load_desktop_preferences") return m4.settingsDefaults;
+  if (command === "list_launch_requests") return [];
+  if (command === "quake_status") return { enabled: false, errorCode: null };
   if (command === "list_agent_identities") return [{ algorithm: "ssh-ed25519", fingerprint: "SHA256:example-key" }];
   if (command === "create_agent_credential") return "credential-agent";
   if (command === "preview_vault_backup") return {
@@ -57,12 +63,14 @@ const invoke = vi.fn(defaultInvoke);
 let container: HTMLDivElement;
 let root: Root;
 let trustChallengeListener: ((event: { payload: unknown }) => void) | null;
+let appEvents: Map<string, (event: { payload: unknown }) => void>;
 
 beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(defaultInvoke);
   container = document.createElement("div");
   trustChallengeListener = null;
+  appEvents = new Map();
   document.body.append(container);
   root = createRoot(container);
   Object.defineProperty(window, "__TAURI__", {
@@ -74,6 +82,7 @@ beforeEach(async () => {
       },
       event: { listen: async (name: string, handler: (event: { payload: unknown }) => void) => {
         if (name === "ssh-trust-challenge") trustChallengeListener = handler;
+        appEvents.set(name, handler);
         return () => undefined;
       } },
     },
@@ -129,6 +138,215 @@ async function openSettings(tab?: string): Promise<void> {
 }
 
 describe("App host workflows", () => {
+  it("enables and disables Hello with native-only authentication arguments", async () => {
+    let enabled = false;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "vault_hello_status") return { ...m4.helloStatus, enabled };
+      if (command === "enable_vault_hello") { enabled = true; return; }
+      if (command === "disable_vault_hello") { enabled = false; return; }
+      return defaultInvoke(command, args);
+    });
+    await openSettings();
+    expect(container.textContent).toContain(copy.en.hello.hint);
+    await act(async () => { bodyButton(copy.en.hello.enable)!.click(); });
+    expect(invoke).toHaveBeenCalledWith("enable_vault_hello", { locale: "en" });
+    expect(bodyButton(copy.en.hello.disable)).toBeDefined();
+    await act(async () => { bodyButton(copy.en.hello.disable)!.click(); });
+    expect(invoke).toHaveBeenCalledWith("disable_vault_hello", undefined);
+    expect(bodyButton(copy.en.hello.enable)).toBeDefined();
+  });
+
+  it.each(m4.errorCodes.hello)("keeps master unlock available after %s", async (code) => {
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "vault_status") return { exists: true, unlocked: false, revision: null, epoch: 2 };
+      if (command === "vault_hello_status") return m4.helloStatus;
+      if (command === "unlock_vault_hello") throw { code };
+      return defaultInvoke(command, args);
+    });
+    await act(async () => { appEvents.get("vault-auto-locked")?.({ payload: null }); });
+    await act(async () => { bodyButton(copy.en.hello.unlock)!.click(); });
+    expect(bodyButton(copy.en.unlockVault)?.disabled).toBe(false);
+    expect(container.querySelector(".host-row")).toBeNull();
+    expect(container.querySelector("[role='alert']")).not.toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("unlock_vault", expect.anything());
+    await act(async () => { bodyButton(copy.en.unlockVault)!.click(); });
+    expect(invoke).toHaveBeenCalledWith("unlock_vault", { locale: "en" });
+  });
+
+  it("blocks duplicate prompts and refreshes private views only after Hello succeeds", async () => {
+    let unlocked = false;
+    let finish: (() => void) | undefined;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "vault_status") return { exists: true, unlocked, revision: unlocked ? 3 : null, epoch: 2 };
+      if (command === "vault_hello_status") return m4.helloStatus;
+      if (command === "unlock_vault_hello") { await new Promise<void>((resolve) => { finish = resolve; }); unlocked = true; return; }
+      return defaultInvoke(command, args);
+    });
+    await act(async () => { appEvents.get("vault-auto-locked")?.({ payload: null }); });
+    invoke.mockClear();
+    await act(async () => { bodyButton(copy.en.hello.unlock)!.click(); });
+    expect(bodyButton(copy.en.hello.unlock)?.disabled).toBe(true);
+    expect(bodyButton(copy.en.unlockVault)?.disabled).toBe(true);
+    expect(invoke).not.toHaveBeenCalledWith("list_hosts", undefined);
+    await act(async () => { bodyButton(copy.en.hello.unlock)!.click(); finish!(); });
+    expect(invoke.mock.calls.filter(([name]) => name === "unlock_vault_hello")).toHaveLength(1);
+    expect(container.querySelector(".host-row")).not.toBeNull();
+  });
+
+  it("reports invalidation after password unlock and allows master unlock when Hello is unavailable", async () => {
+    let unlocked = false;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "vault_status") return { exists: true, unlocked, revision: unlocked ? 3 : null, epoch: 2 };
+      if (command === "vault_hello_status") return { ...m4.helloStatus, available: false, invalidated: unlocked };
+      if (command === "unlock_vault") { unlocked = true; return; }
+      return defaultInvoke(command, args);
+    });
+    await act(async () => { appEvents.get("vault-auto-locked")?.({ payload: null }); });
+    expect(bodyButton(copy.en.hello.unlock)?.disabled).toBe(true);
+    expect(bodyButton(copy.en.unlockVault)?.disabled).toBe(false);
+    expect(container.textContent).not.toContain(copy.en.hello.invalidated);
+    await act(async () => { bodyButton(copy.en.unlockVault)!.click(); });
+    expect(container.textContent).toContain(copy.en.hello.invalidated);
+  });
+  const launch = async (kind: "ssh" | "host" | "local", details: unknown, matches: string[] = []): Promise<string> => {
+    const requestId = crypto.randomUUID();
+    const fallback = invoke.getMockImplementation() ?? defaultInvoke;
+    invoke.mockImplementation(async (command, args) => command === "inspect_launch_request" ? details
+      : command === "match_launch_hosts" ? matches : fallback(command, args));
+    await act(async () => { appEvents.get("launch-request")?.({ payload: { requestId, kind, display: kind === "local" ? "" : "user@host:22" } }); });
+    return requestId;
+  };
+
+  it("confirms an SSH link before opening the exact matching saved host", async () => {
+    await act(async () => useWorkspace.getState().addTerminal());
+    const local = useWorkspace.getState().activeTab;
+    // Rust normalizes the address; the UI must trust its IDs, not compare strings itself.
+    const linked = `${host.address.toUpperCase()}.`;
+    const requestId = await launch("ssh", { kind: "ssh", target: { username: host.username, host: linked, port: host.port } }, [host.id]);
+    expect(useWorkspace.getState().activeTab).toBe(local);
+    const text = await answerConfirmation(copy.en.sshLinkContinue);
+    expect(invoke).toHaveBeenCalledWith("match_launch_hosts", { requestId });
+    expect(text).toContain(linked);
+    expect(text).toContain(host.username);
+    expect(useWorkspace.getState().tabs.find((tab) => tab.id === useWorkspace.getState().activeTab)?.launch).toMatchObject({ kind: "ssh", host_id: host.id });
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+  });
+
+  it("opens an unknown SSH target as a draft and requires a saved credential before connecting", async () => {
+    await act(async () => useWorkspace.getState().addTerminal());
+    const local = useWorkspace.getState().activeTab;
+    const requestId = await launch("ssh", { kind: "ssh", target: { username: "new-user", host: "new.example.test", port: 2222 } });
+    await answerConfirmation(copy.en.sshLinkContinue);
+    expect(useWorkspace.getState().activeTab).toBe(local);
+    const inputs = [...container.querySelectorAll<HTMLInputElement>(".host-editor input")];
+    expect(inputs.some((input) => input.value === "new.example.test")).toBe(true);
+    expect(inputs.some((input) => input.value === "new-user")).toBe(true);
+    await act(async () => container.querySelector<HTMLFormElement>(".host-editor")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(container.querySelector("[aria-invalid='true']")).not.toBeNull();
+    expect(invoke.mock.calls.some(([command]) => command === "save_host")).toBe(false);
+    await act(async () => container.querySelector<HTMLButtonElement>(".host-editor button[aria-label='Close panel']")!.click());
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+  });
+
+  it("discards a saved-host request when native unlock is canceled", async () => {
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "vault_status") return { exists: true, unlocked: false, revision: null, epoch: 1 };
+      if (command === "unlock_vault") throw { code: "canceled" };
+      return defaultInvoke(command, args);
+    });
+    const before = useWorkspace.getState().activeTab;
+    const requestId = await launch("host", { kind: "host", hostId: host.id });
+    expect(invoke).toHaveBeenCalledWith("unlock_vault", { locale: "en" });
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+    expect(useWorkspace.getState().activeTab).toBe(before);
+    expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+  });
+
+  it("offers a choice when multiple saved hosts match and opens only the chosen host", async () => {
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "list_hosts") return [{ ...host }, { ...host, id: "matching-host-2", name: "Other account profile" }];
+      return defaultInvoke(command, args);
+    });
+    await act(async () => useWorkspace.getState().addTerminal());
+    const local = useWorkspace.getState().activeTab;
+    const requestId = await launch("ssh", { kind: "ssh", target: { username: host.username, host: host.address, port: 22 } }, [host.id, "matching-host-2"]);
+    await answerConfirmation(copy.en.sshLinkContinue);
+    expect(useWorkspace.getState().activeTab).toBe(local);
+    const choices = [...document.body.querySelectorAll<HTMLButtonElement>(".launch-choice-list button")];
+    expect(choices).toHaveLength(2);
+    await act(async () => choices[1].click());
+    expect(useWorkspace.getState().tabs.find((tab) => tab.id === useWorkspace.getState().activeTab)?.launch).toMatchObject({ kind: "ssh", host_id: "matching-host-2" });
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+  });
+
+  it("connects an unknown SSH target only after its host form is saved with a credential", async () => {
+    await act(async () => useWorkspace.getState().addTerminal());
+    const local = useWorkspace.getState().activeTab;
+    const requestId = await launch("ssh", { kind: "ssh", target: { username: "new-user", host: "new.example.test", port: 2222 } });
+    await answerConfirmation(copy.en.sshLinkContinue);
+    expect(useWorkspace.getState().activeTab).toBe(local);
+    await act(async () => {
+      const select = [...container.querySelectorAll<HTMLSelectElement>(".host-editor select")].find((input) => [...input.options].some((option) => option.value === "credential-1"))!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "credential-1");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLFormElement>(".host-editor")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    const saved = invoke.mock.calls.find(([command]) => command === "save_host")?.[1] as { host: { id: HostId; credential_id: string; address: string } };
+    expect(saved.host).toMatchObject({ credential_id: "credential-1", address: "new.example.test" });
+    expect(useWorkspace.getState().tabs.find((tab) => tab.id === useWorkspace.getState().activeTab)?.launch).toMatchObject({ kind: "ssh", host_id: saved.host.id });
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+  });
+
+  it("requires confirmation for a taskbar host request and honors cancellation", async () => {
+    await act(async () => useWorkspace.getState().addTerminal());
+    const local = useWorkspace.getState().activeTab;
+    const requestId = await launch("host", { kind: "host", hostId: host.id });
+    expect(await answerConfirmation(null)).toContain(host.address);
+    expect(useWorkspace.getState().activeTab).toBe(local);
+    expect(invoke).toHaveBeenCalledWith("dismiss_launch_request", { requestId });
+  });
+
+  it("keeps recent hosts opt-in, explains the privacy boundary and exposes clear", async () => {
+    await openSettings("Desktop");
+    const recent = [...container.querySelectorAll<HTMLLabelElement>("label")].find((label) => label.textContent === copy.en.jumpListRecentHosts)!;
+    expect(recent.querySelector<HTMLInputElement>("input")!.checked).toBe(false);
+    expect(container.textContent).toContain(copy.en.jumpListPrivacy);
+    await act(async () => bodyButton(copy.en.clearRecentHosts)!.click());
+    expect(invoke).toHaveBeenCalledWith("clear_recent_hosts", undefined);
+    expect(container.textContent).toContain(copy.en.recentHostsCleared);
+  });
+
+  it("opens local requests using only the opaque request ID", async () => {
+    const requestId = await launch("local", { kind: "local" });
+    expect(useWorkspace.getState().tabs.find((tab) => tab.id === useWorkspace.getState().activeTab)?.launch).toEqual({ kind: "local", options: { launch_request_id: requestId } });
+  });
+
+  it("previews a native theme before saving, then offers it to hosts and the command palette", async () => {
+    invoke.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === "preview_terminal_themes") return { token: m4.themePreviewToken, themes: [m4.terminalTheme] };
+      if (command === "save_terminal_theme_preview") return [m4.terminalTheme];
+      return defaultInvoke(command, args);
+    });
+    await openSettings("Desktop");
+    const importTheme = (): Promise<void> => act(async () => { bodyButton(copy.en.importTheme)?.click(); });
+    await importTheme();
+    expect(container.querySelector(".theme-preview")?.textContent).toContain(m4.terminalTheme.name);
+    expect(container.querySelectorAll(".theme-swatches span")).toHaveLength(16);
+    expect(invoke).toHaveBeenCalledWith("preview_terminal_themes", { locale: "en" });
+    expect(invoke.mock.calls.some(([command]) => command === "save_terminal_theme_preview")).toBe(false);
+    await act(async () => { bodyButton(copy.en.cancelEdit)?.click(); });
+    expect(invoke).toHaveBeenCalledWith("discard_terminal_theme_preview", { token: m4.themePreviewToken });
+    await importTheme();
+    await act(async () => { bodyButton(copy.en.saveImportedThemes(1))?.click(); });
+    expect(invoke).toHaveBeenCalledWith("save_terminal_theme_preview", { token: m4.themePreviewToken });
+    expect(container.querySelector(".theme-list")?.textContent).toContain(m4.terminalTheme.name);
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Close panel']")?.click(); });
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Add host']")?.click(); });
+    expect([...container.querySelectorAll("select option")].find((option) => option.getAttribute("value") === m4.terminalTheme.id)?.textContent).toBe(m4.terminalTheme.name);
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Close panel']")?.click(); });
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true })); });
+    expect([...document.body.querySelectorAll(".command-result")].some((action) => action.textContent?.includes(copy.en.themeAction(m4.terminalTheme.name)))).toBe(true);
+  });
   it("lists authenticated recovery revisions and requires an explicit restore choice", async () => {
     const recoveryCandidate = { token: "opaque-recovery-token", kind: "backup" as const, revision: 7 };
     invoke.mockImplementation(async (command: string) => {

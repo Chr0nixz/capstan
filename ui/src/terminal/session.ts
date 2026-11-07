@@ -13,6 +13,7 @@ import {
 } from "./search";
 import { isMultilinePaste, parseOsc52Request } from "./security";
 import type { TerminalTheme } from "./contracts";
+import type { TerminalThemeDefinition } from "../themes/contracts";
 import { subscribeTerminalInput } from "../panes/xtermInput";
 
 export type Disposable = { dispose: () => void };
@@ -22,6 +23,7 @@ export interface TerminalLike {
   loadAddon: (addon: unknown) => void;
   write: (data: Uint8Array, callback?: () => void) => void;
   onData: (listener: (data: string) => void) => Disposable;
+  onBinary?: (listener: (data: string) => void) => Disposable;
   onResize: (listener: (size: { cols: number; rows: number }) => void) => Disposable;
   resize: (cols: number, rows: number) => void;
   focus: () => void;
@@ -37,6 +39,9 @@ export interface TerminalLike {
     };
   };
   clearSelection?: () => void;
+  getSelection?: () => string;
+  onSelectionChange?: (listener: () => void) => Disposable;
+  modes?: { mouseTrackingMode: string };
   scrollToLine?: (line: number) => void;
   select?: (column: number, row: number, length: number) => void;
   textarea?: HTMLTextAreaElement;
@@ -45,18 +50,41 @@ export interface TerminalLike {
   options?: { theme?: Record<string, string> };
 }
 
+/** xterm 5.4 dispatches SGR reports synchronously through onData with the
+ * user flag set. Keep their provenance at the mouse service boundary. */
+function watchMouseReports(terminal: TerminalLike): (Disposable & { readonly active: boolean }) | undefined {
+  const core = "_core" in terminal ? terminal._core : undefined;
+  const mouse = typeof core === "object" && core !== null && "coreMouseService" in core ? core.coreMouseService : undefined;
+  if (typeof mouse !== "object" || mouse === null || !("triggerMouseEvent" in mouse) || typeof mouse.triggerMouseEvent !== "function") return;
+
+  const original = mouse.triggerMouseEvent as (event: unknown) => boolean;
+  let depth = 0;
+  const trigger = function (this: typeof mouse, event: unknown): boolean {
+    depth += 1;
+    try { return original.call(this, event); }
+    finally { depth -= 1; }
+  };
+  try { mouse.triggerMouseEvent = trigger; }
+  catch { return; }
+  return {
+    get active() { return depth > 0; },
+    dispose() { if (mouse.triggerMouseEvent === trigger) mouse.triggerMouseEvent = original; },
+  };
+}
+
 export type RendererAddon = { dispose: () => void; onContextLoss?: (callback: () => void) => Disposable };
 export type RendererFactory = (terminal: TerminalLike) => RendererAddon;
 export type FitAddonLike = { fit: () => void };
 
 export type TerminalSessionOptions = {
   theme?: TerminalTheme;
+  themes?: readonly TerminalThemeDefinition[];
   terminal?: TerminalLike;
   rendererFactory?: RendererFactory;
   fitAddonFactory?: (terminal: TerminalLike) => FitAddonLike;
   inputQueue?: InputQueue;
   sendInput?: (data: Uint8Array) => void | Promise<void>;
-  /** Protocol replies bypass user confirmation and remain scoped to this
+  /** Protocol replies and mouse reports bypass user confirmation and remain scoped to this
    * terminal. The receiver owns their bounded destination FIFO. */
   sendProtocolInput?: (data: Uint8Array) => void | Promise<void>;
   ackOutput?: (bytes: number) => void;
@@ -65,6 +93,10 @@ export type TerminalSessionOptions = {
   onInputOverflow?: (droppedBytes: number) => void;
   onParsedOutput?: (bytes: Uint8Array) => void;
   confirmMultilinePaste?: (lineCount: number) => boolean;
+  copyOnSelect?: () => boolean;
+  readClipboard?: () => Promise<string>;
+  writeSelectionClipboard?: (text: string) => Promise<void>;
+  onSelectionCopyFailed?: () => void;
   onActivateLink?: (uri: string) => void;
   confirmOsc52Write?: (characterCount: number) => boolean;
   writeOsc52Clipboard?: (text: string) => Promise<void>;
@@ -77,7 +109,12 @@ export type TerminalSession = {
   write: (data: Uint8Array) => void;
   writeLocal: (data: Uint8Array) => void;
   setVisible: (visible: boolean) => void;
-  setTheme: (theme: TerminalTheme) => void;
+  setTheme: (theme: TerminalTheme, themes?: readonly TerminalThemeDefinition[]) => void;
+  hasSelection: () => boolean;
+  mouseReporting: () => boolean;
+  copySelection: () => Promise<void>;
+  pasteFromClipboard: () => Promise<void>;
+  clearScreen: () => void;
   focus: () => void;
   flushInput: () => Uint8Array[];
   stopInput: () => void;
@@ -90,7 +127,18 @@ export type TerminalSession = {
   get disposed(): boolean;
 };
 
-export function terminalPalette(theme: TerminalTheme): Record<string, string> {
+const ansiNames = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
+
+export function terminalPalette(theme: TerminalTheme, themes: readonly TerminalThemeDefinition[] = []): Record<string, string> {
+  const imported = themes.find(({ id }) => id === theme);
+  if (imported) return {
+    background: imported.background,
+    foreground: imported.foreground,
+    cursor: imported.cursor,
+    cursorAccent: imported.background,
+    selectionBackground: imported.selectionBackground,
+    ...Object.fromEntries(ansiNames.map((name, index) => [name, imported.ansi[index]])),
+  };
   return theme === "light" ? {
     background: "#f7f8fa",
     foreground: "#24292f",
@@ -138,12 +186,12 @@ export function terminalPalette(theme: TerminalTheme): Record<string, string> {
   };
 }
 
-function defaultTerminal(theme: TerminalTheme = "graphite", onActivateLink?: (uri: string) => void): TerminalLike {
+function defaultTerminal({ theme = "graphite", themes, onActivateLink }: TerminalSessionOptions): TerminalLike {
   const terminal = new Terminal({
     fontFamily: '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace',
     allowTransparency: false,
     allowProposedApi: true,
-    theme: terminalPalette(theme),
+    theme: terminalPalette(theme, themes),
     linkHandler: onActivateLink ? { activate: (_event, uri) => onActivateLink(uri) } : undefined,
   });
   return terminal as unknown as TerminalLike;
@@ -162,7 +210,7 @@ export function createTerminalSession(
   visible: boolean,
   options: TerminalSessionOptions = {},
 ): TerminalSession {
-  const terminal = options.terminal ?? defaultTerminal(options.theme, options.onActivateLink);
+  const terminal = options.terminal ?? defaultTerminal(options);
   const fit = options.fitAddonFactory?.(terminal) ?? (() => {
     const addon = new FitAddon();
     terminal.loadAddon(addon);
@@ -236,11 +284,34 @@ export function createTerminalSession(
     : new ResizeObserver(fitTerminal);
   resizeObserver?.observe(container);
 
+  const enqueueInput = (bytes: Uint8Array): void => {
+    const result = queue.enqueue(bytes);
+    if (result.accepted) void pumpInput();
+    else options.onInputOverflow?.(result.droppedBytes);
+  };
+  const sendProtocolInput = (bytes: Uint8Array): void => {
+    if (!options.sendProtocolInput) {
+      enqueueInput(bytes);
+      return;
+    }
+    const failed = (error: unknown): void => {
+      if (isDisposed || queue.isClosed) return;
+      queue.close();
+      options.onInputError?.(error);
+    };
+    try { void Promise.resolve(options.sendProtocolInput(bytes)).catch(failed); }
+    catch (error) { failed(error); }
+  };
+  const mouseReporting = (): boolean => (terminal.modes?.mouseTrackingMode ?? "none") !== "none";
+  const mouseReports = watchMouseReports(terminal);
   const dataDisposable = subscribeTerminalInput(terminal, (data, origin) => {
     if (isDisposed || queue.isClosed) {
       return;
     }
-    if (origin === "unknown" && options.sendProtocolInput) {
+    const mouseReport = mouseReports?.active ?? false;
+    if (mouseReport && !isVisible) return;
+    if (options.sendProtocolInput && !mouseReport
+      && (origin === "unknown" || (origin === "user" && !mouseReports && mouseReporting()))) {
       // Managed panes cannot safely route unclassified input after an xterm
       // API change. Stop instead of guessing a broadcast or local destination.
       queue.close();
@@ -248,37 +319,42 @@ export function createTerminalSession(
       return;
     }
     const bytes = new TextEncoder().encode(data);
-    if (origin === "protocol" && options.sendProtocolInput) {
-      const failProtocolInput = (error: unknown): void => {
-        if (isDisposed || queue.isClosed) return;
-        queue.close();
-        options.onInputError?.(error);
-      };
-      try { void Promise.resolve(options.sendProtocolInput(bytes)).catch(failProtocolInput); }
-      catch (error) { failProtocolInput(error); }
-      return;
-    }
-    const result = queue.enqueue(bytes);
-    if (result.accepted) {
-      void pumpInput();
-    } else {
-      options.onInputOverflow?.(result.droppedBytes);
-    }
+    if (mouseReport || origin === "protocol") sendProtocolInput(bytes);
+    else enqueueInput(bytes);
+  });
+  const binaryDisposable = terminal.onBinary?.((data) => {
+    if (isDisposed || queue.isClosed || !isVisible) return;
+    // xterm uses its binary event for legacy mouse encodings. Coordinates
+    // belong to the source pane and the payload is already one byte per code unit.
+    sendProtocolInput(Uint8Array.from(data, (character) => character.charCodeAt(0)));
   });
   const resizeDisposable = terminal.onResize(({ cols, rows }) => {
     if (!isDisposed) {
       options.onResize?.(cols, rows);
     }
   });
+  const pasteText = (text: string): void => {
+    if (text && (!isMultilinePaste(text) || options.confirmMultilinePaste?.(text.split(/\r\n|\r|\n/u).length))) terminal.paste?.(text);
+  };
   const pasteListener = (event: ClipboardEvent): void => {
     const text = event.clipboardData?.getData("text/plain");
     if (text === undefined || !isMultilinePaste(text)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    const lineCount = text.split(/\r\n|\r|\n/u).length;
-    if (options.confirmMultilinePaste?.(lineCount)) terminal.paste?.(text);
+    pasteText(text);
   };
   terminal.textarea?.addEventListener("paste", pasteListener, true);
+  let selectingSearchResult = false;
+  const copySelection = async (): Promise<void> => {
+    if (isDisposed || !isVisible) return;
+    const text = terminal.getSelection?.();
+    if (text) await options.writeSelectionClipboard?.(text);
+  };
+  const selectionDisposable = terminal.onSelectionChange?.(() => {
+    if (!selectingSearchResult && options.copyOnSelect?.()) {
+      void copySelection().catch(() => options.onSelectionCopyFailed?.());
+    }
+  });
   const osc52Disposable = terminal.parser?.registerOscHandler(52, (data) => {
     const request = parseOsc52Request(data);
     if (request.kind === "read") {
@@ -359,9 +435,23 @@ export function createTerminalSession(
         unmountRenderer();
       }
     },
-    setTheme(nextTheme: TerminalTheme): void {
+    setTheme(nextTheme: TerminalTheme, themes): void {
       if (isDisposed || !terminal.options) return;
-      terminal.options.theme = terminalPalette(nextTheme);
+      terminal.options.theme = terminalPalette(nextTheme, themes);
+    },
+    hasSelection: () => !!terminal.getSelection?.(),
+    mouseReporting,
+    copySelection,
+    async pasteFromClipboard(): Promise<void> {
+      const epoch = inputEpoch;
+      const text = await options.readClipboard?.();
+      // Clipboard reads are asynchronous. Keep a paste scoped to its pane.
+      if (text && !isDisposed && isVisible && !queue.isClosed && epoch === inputEpoch
+        && (!terminal.textarea || terminal.textarea === document.activeElement)) pasteText(text);
+    },
+    clearScreen(): void {
+      // ED 2 and ED 3 clear the viewport and scrollback in xterm locally.
+      write(new TextEncoder().encode("\x1b[2J\x1b[3J\x1b[H"), false);
     },
     focus(): void {
       if (!isDisposed && isVisible) {
@@ -388,7 +478,9 @@ export function createTerminalSession(
         scrollToLine: (line) => terminal.scrollToLine?.(line),
         select: (column, row, length) => terminal.select?.(column, row, length),
       };
-      return selectTerminalMatch(searchTerminal, found.matches, currentIndex, direction, query);
+      selectingSearchResult = true;
+      try { return selectTerminalMatch(searchTerminal, found.matches, currentIndex, direction, query); }
+      finally { selectingSearchResult = false; }
     },
     clearSearch(): void { terminal.clearSelection?.(); },
     dispose(): void {
@@ -397,7 +489,10 @@ export function createTerminalSession(
       }
       isDisposed = true;
       dataDisposable.dispose();
+      binaryDisposable?.dispose();
+      mouseReports?.dispose();
       resizeDisposable.dispose();
+      selectionDisposable?.dispose();
       terminal.textarea?.removeEventListener("paste", pasteListener, true);
       osc52Disposable?.dispose();
       osc7Disposable?.dispose();

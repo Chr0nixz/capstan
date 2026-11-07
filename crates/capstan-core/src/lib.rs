@@ -6,12 +6,18 @@
 pub mod benchmark;
 
 pub mod application;
+pub mod desktop;
 pub mod forwarding;
+pub mod hotkey;
+pub mod launch;
 pub mod remote_edit;
+pub mod server_status;
 pub mod settings;
 pub mod sftp;
 pub mod shell_integration;
+pub mod themes;
 pub mod transfer;
+pub mod update;
 
 use capstan_ssh::{
     connection_state::{ConnectionErrorCode, ConnectionSnapshot, ConnectionState},
@@ -39,6 +45,8 @@ use zeroize::Zeroize;
 
 #[derive(Debug, Error)]
 pub enum CoreError {
+    #[error(transparent)]
+    Hello(#[from] capstan_vault::hello::HelloError),
     #[error("vault is locked")]
     Locked,
     #[error("vault entity was not found")]
@@ -87,6 +95,7 @@ pub enum CoreError {
 impl CoreError {
     pub fn code(&self) -> &'static str {
         match self {
+            Self::Hello(error) => error.code(),
             Self::Locked => "vault_locked",
             Self::NotFound => "not_found",
             Self::Conflict => "vault_conflict",
@@ -115,6 +124,7 @@ impl CoreError {
 impl From<VaultError> for CoreError {
     fn from(error: VaultError) -> Self {
         match error {
+            VaultError::Hello(error) => Self::Hello(error),
             VaultError::Locked => Self::Locked,
             VaultError::NotFound => Self::NotFound,
             VaultError::Conflict | VaultError::AlreadyExists => Self::Conflict,
@@ -593,6 +603,8 @@ pub struct VaultManager {
     recovery_tokens: Arc<Mutex<HashMap<Uuid, RecoverySelection>>>,
     connections: Arc<ConnectionSupervisor>,
     forwarding: Arc<forwarding::ForwardingService>,
+    server_status: server_status::StatusService,
+    hello_invalidated: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct ConnectionSupervisor {
@@ -726,6 +738,28 @@ impl VaultManager {
                     .map_err(|_| CoreError::TaskFailed)
             })
             .collect()
+    }
+
+    pub fn desktop_transfers(
+        &self,
+        transfers: &transfer::TransferService,
+        window: &str,
+    ) -> std::result::Result<Vec<desktop::DesktopTransfer>, sftp::SftpError> {
+        let mut reconnecting = Vec::new();
+        for entry in self
+            .connections
+            .entries()
+            .map_err(|_| sftp::SftpError::ConnectionLost)?
+        {
+            let record = entry
+                .record
+                .lock()
+                .map_err(|_| sftp::SftpError::ConnectionLost)?;
+            if record.snapshot.state == ConnectionState::Reconnecting {
+                reconnecting.push(record.policy.clone());
+            }
+        }
+        transfers.desktop_snapshot(window, &reconnecting)
     }
     pub fn configure_connection_recovery(
         &self,
@@ -1346,6 +1380,8 @@ impl VaultManager {
             recovery_tokens: Arc::new(Mutex::new(HashMap::new())),
             connections: Arc::new(ConnectionSupervisor::default()),
             forwarding: Arc::new(forwarding::ForwardingService::default()),
+            server_status: server_status::StatusService::default(),
+            hello_invalidated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
     pub fn path(&self) -> &std::path::Path {
@@ -1386,6 +1422,12 @@ impl VaultManager {
             .clear();
         Ok(())
     }
+    fn cleanup_hello_after_password_authentication(vault: &Vault) -> bool {
+        // Optional enrollment cleanup must not prevent authenticated unlock or recovery.
+        vault
+            .cleanup_invalid_hello(&capstan_vault::hello::PlatformHello::default())
+            .unwrap_or(true)
+    }
     pub async fn initialize(&self, password: SecretText, parameters: KdfParameters) -> Result<()> {
         let _lifecycle = self.lifecycle.lock().await;
         self.ensure_locked()?;
@@ -1409,7 +1451,73 @@ impl VaultManager {
         let _lifecycle = self.lifecycle.lock().await;
         self.ensure_locked()?;
         let path = self.path.clone();
-        let vault = task::spawn_blocking(move || Vault::unlock(path, &password))
+        let (vault, invalidated) = task::spawn_blocking(move || {
+            let vault = Vault::unlock(path, &password)?;
+            let invalidated = Self::cleanup_hello_after_password_authentication(&vault);
+            Ok::<_, VaultError>((vault, invalidated))
+        })
+        .await
+        .map_err(|_| CoreError::TaskFailed)??;
+        let mut state = self.vault.write().map_err(|_| CoreError::Storage)?;
+        if state.is_some() {
+            return Err(CoreError::Conflict);
+        }
+        *state = Some(Arc::new(vault));
+        self.hello_invalidated
+            .store(invalidated, std::sync::atomic::Ordering::Release);
+        self.clear_recovery_tokens()?;
+        self.epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.connections
+            .locked
+            .store(false, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+    pub async fn hello_status(&self) -> Result<capstan_vault::hello::HelloStatus> {
+        let path = self.path.clone();
+        let mut status = task::spawn_blocking(move || {
+            Vault::hello_status(&path, &capstan_vault::hello::PlatformHello::default())
+        })
+        .await
+        .map_err(|_| CoreError::TaskFailed)?;
+        status.invalidated = self
+            .hello_invalidated
+            .load(std::sync::atomic::Ordering::Acquire);
+        Ok(status)
+    }
+    pub async fn enable_hello(
+        &self,
+        password: SecretText,
+        provider: Arc<dyn capstan_vault::hello::HelloProvider>,
+    ) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        let vault = self.current()?;
+        task::spawn_blocking(move || vault.enable_hello(&password, provider.as_ref()))
+            .await
+            .map_err(|_| CoreError::TaskFailed)??;
+        self.hello_invalidated
+            .store(false, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+    pub async fn disable_hello(&self) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        let vault = self.current()?;
+        task::spawn_blocking(move || {
+            vault.disable_hello(&capstan_vault::hello::PlatformHello::default())
+        })
+        .await
+        .map_err(|_| CoreError::TaskFailed)??;
+        self.hello_invalidated
+            .store(false, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+    pub async fn unlock_hello(
+        &self,
+        provider: Arc<dyn capstan_vault::hello::HelloProvider>,
+    ) -> Result<()> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.ensure_locked()?;
+        let path = self.path.clone();
+        let vault = task::spawn_blocking(move || Vault::unlock_with_hello(path, provider.as_ref()))
             .await
             .map_err(|_| CoreError::TaskFailed)??;
         let mut state = self.vault.write().map_err(|_| CoreError::Storage)?;
@@ -1422,11 +1530,16 @@ impl VaultManager {
         self.connections
             .locked
             .store(false, std::sync::atomic::Ordering::Release);
+        self.hello_invalidated
+            .store(false, std::sync::atomic::Ordering::Release);
         Ok(())
     }
     pub async fn lock(&self) -> Result<()> {
         self.suspend_connection_retries().await;
         let _lifecycle = self.lifecycle.lock().await;
+        self.connections
+            .locked
+            .store(true, std::sync::atomic::Ordering::Release);
         self.clear_recovery_tokens()?;
         let vault = self.vault.write().map_err(|_| CoreError::Storage)?.take();
         if let Some(vault) = vault {
@@ -1494,15 +1607,20 @@ impl VaultManager {
                 .ok_or(CoreError::RecoveryExpired)?
         };
         let path = self.path.clone();
-        let vault =
-            task::spawn_blocking(move || Vault::restore_candidate(&path, &candidate, &password))
-                .await
-                .map_err(|_| CoreError::TaskFailed)??;
+        let (vault, invalidated) = task::spawn_blocking(move || {
+            let vault = Vault::restore_candidate(&path, &candidate, &password)?;
+            let invalidated = Self::cleanup_hello_after_password_authentication(&vault);
+            Ok::<_, VaultError>((vault, invalidated))
+        })
+        .await
+        .map_err(|_| CoreError::TaskFailed)??;
         let mut state = self.vault.write().map_err(|_| CoreError::Storage)?;
         if state.is_some() {
             return Err(CoreError::Conflict);
         }
         *state = Some(Arc::new(vault));
+        self.hello_invalidated
+            .store(invalidated, std::sync::atomic::Ordering::Release);
         self.clear_recovery_tokens()?;
         self.epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.connections
@@ -2443,6 +2561,7 @@ impl VaultManager {
                     return Err(error.into());
                 }
             }
+            self.start_server_status(&lease);
             Ok((host, shell, lease))
         }
         .await;
@@ -2522,6 +2641,7 @@ impl VaultManager {
                 () = entry.stop.cancelled() => return Err(CoreError::Canceled),
                 result = lease.open_shell(80, 30) => result?,
             };
+            self.start_server_status(&lease);
             Ok((host_id, shell, lease))
         }
         .await;
@@ -3853,5 +3973,323 @@ mod tests {
         );
         host.startup_command = None;
         assert_eq!(startup_shell_input(&host), None);
+    }
+}
+
+#[cfg(test)]
+mod hello_workflow_tests {
+    use super::*;
+    use capstan_vault::hello::{HelloError, HelloProvider, HelloResult};
+    use zeroize::Zeroizing;
+
+    type DeviceKeys = Mutex<HashMap<String, (Vec<u8>, Zeroizing<[u8; 32]>)>>;
+
+    #[derive(Default)]
+    struct Device {
+        keys: DeviceKeys,
+        canceled: std::sync::atomic::AtomicBool,
+        gate: Mutex<Option<Arc<ConsentGate>>>,
+    }
+    #[derive(Default)]
+    struct ConsentGate {
+        entered: tokio::sync::Notify,
+        released: Mutex<bool>,
+        changed: std::sync::Condvar,
+    }
+    impl ConsentGate {
+        fn release(&self) {
+            *self.released.lock().unwrap() = true;
+            self.changed.notify_all();
+        }
+    }
+    impl HelloProvider for Device {
+        fn available(&self) -> bool {
+            true
+        }
+        fn protect(&self, name: &str, secret: &[u8; 32]) -> HelloResult<Vec<u8>> {
+            let blob = vec![0; 256];
+            self.keys
+                .lock()
+                .unwrap()
+                .insert(name.into(), (blob.clone(), Zeroizing::new(*secret)));
+            Ok(blob)
+        }
+        fn unprotect(&self, name: &str, blob: &[u8]) -> HelloResult<Zeroizing<[u8; 32]>> {
+            if let Some(gate) = self.gate.lock().unwrap().take() {
+                gate.entered.notify_one();
+                let mut released = gate.released.lock().unwrap();
+                while !*released {
+                    released = gate.changed.wait(released).unwrap();
+                }
+            }
+            if self.canceled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err(HelloError::Canceled);
+            }
+            let keys = self.keys.lock().unwrap();
+            let (expected, secret) = keys.get(name).ok_or(HelloError::KeyMissing)?;
+            if blob != expected {
+                return Err(HelloError::Data);
+            }
+            Ok(secret.clone())
+        }
+        fn exists(&self, name: &str) -> HelloResult<bool> {
+            Ok(self.keys.lock().unwrap().contains_key(name))
+        }
+        fn delete(&self, name: &str) -> HelloResult<()> {
+            self.keys.lock().unwrap().remove(name);
+            Ok(())
+        }
+    }
+    fn password() -> SecretText {
+        SecretText::new("core Hello test master password".into())
+    }
+    fn fast() -> KdfParameters {
+        KdfParameters {
+            memory_kib: 19_456,
+            iterations: 2,
+            parallelism: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn hello_unlock_obeys_lock_epochs_and_password_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = VaultManager::new(directory.path().join("vault.capstan"));
+        let device = Arc::new(Device::default());
+        manager.initialize(password(), fast()).await.unwrap();
+        manager
+            .enable_hello(password(), device.clone())
+            .await
+            .unwrap();
+        let epoch = manager.epoch();
+        manager.lock().await.unwrap();
+        device
+            .canceled
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            manager
+                .unlock_hello(device.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            "hello_canceled"
+        );
+        assert!(!manager.status().unlocked);
+        assert_eq!(manager.epoch(), epoch + 1);
+        assert!(capstan_vault::hello::sidecar_path(manager.path()).exists());
+        device
+            .canceled
+            .store(false, std::sync::atomic::Ordering::Release);
+        manager.unlock_hello(device.clone()).await.unwrap();
+        assert!(manager.status().unlocked);
+        assert_eq!(manager.epoch(), epoch + 2);
+        manager
+            .current()
+            .unwrap()
+            .transaction(0, |_| Ok(()))
+            .unwrap();
+        assert_eq!(manager.revision().unwrap(), 1);
+        assert!(matches!(
+            manager.unlock_hello(device).await,
+            Err(CoreError::Conflict)
+        ));
+        manager.lock().await.unwrap();
+        manager.unlock(password()).await.unwrap();
+        assert_eq!(manager.revision().unwrap(), 1);
+    }
+    #[tokio::test]
+    async fn corrupt_hello_is_cleaned_only_after_successful_master_unlock() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.capstan");
+        let manager = VaultManager::new(path.clone());
+        manager.initialize(password(), fast()).await.unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let sidecar = capstan_vault::hello::sidecar_path(&path);
+        std::fs::write(&sidecar, b"corrupt Hello enrollment").unwrap();
+        manager.lock().await.unwrap();
+        assert!(manager
+            .unlock(SecretText::new("wrong".into()))
+            .await
+            .is_err());
+        assert!(sidecar.exists());
+        assert!(!manager.status().unlocked);
+        manager.unlock(password()).await.unwrap();
+        assert!(manager.status().unlocked);
+        assert!(!sidecar.exists());
+        assert!(manager.hello_status().await.unwrap().invalidated);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn recovery_cleans_incompatible_hello_before_master_password_change() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.capstan");
+        let manager = VaultManager::new(path.clone());
+        let device = Arc::new(Device::default());
+        manager.initialize(password(), fast()).await.unwrap();
+        let original = std::fs::read(&path).unwrap();
+        manager
+            .enable_hello(password(), device.clone())
+            .await
+            .unwrap();
+        for next in ["second master password", "third master password"] {
+            manager
+                .current()
+                .unwrap()
+                .change_master_password(0, &SecretText::new(next.into()), fast())
+                .unwrap();
+        }
+        manager.lock().await.unwrap();
+        let epoch = manager.epoch();
+        let sidecar = capstan_vault::hello::sidecar_path(&path);
+        let enrolled = std::fs::read(&sidecar).unwrap();
+        let before_restore = std::fs::read(&path).unwrap();
+        let candidates = manager.list_recovery_candidates(password()).await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        let token = candidates[0].token;
+
+        assert_eq!(
+            manager
+                .restore_recovery_candidate(token, SecretText::new("wrong".into()))
+                .await
+                .unwrap_err()
+                .code(),
+            "vault_authentication"
+        );
+        assert!(!manager.status().unlocked);
+        assert_eq!(manager.epoch(), epoch);
+        assert!(!manager.hello_status().await.unwrap().invalidated);
+        assert_eq!(std::fs::read(&sidecar).unwrap(), enrolled);
+        assert_eq!(std::fs::read(&path).unwrap(), before_restore);
+
+        manager
+            .restore_recovery_candidate(token, password())
+            .await
+            .unwrap();
+        assert!(manager.status().unlocked);
+        assert_eq!(manager.epoch(), epoch + 1);
+        assert!(!manager
+            .connections
+            .locked
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(!sidecar.exists());
+        let status = manager.hello_status().await.unwrap();
+        assert!(!status.enabled);
+        assert!(status.invalidated);
+        assert_eq!(device.keys.lock().unwrap().len(), 1);
+
+        let replacement = SecretText::new("fourth master password".into());
+        manager
+            .change_master_password(replacement.clone(), manager.revision().unwrap())
+            .await
+            .unwrap();
+        assert!(Vault::unlock(&path, &replacement).is_ok());
+        assert!(Vault::unlock(&path, &password()).is_err());
+
+        // A later authenticated restore without an enrollment clears the old notice.
+        manager.lock().await.unwrap();
+        let candidates = manager.list_recovery_candidates(password()).await.unwrap();
+        manager
+            .restore_recovery_candidate(candidates[0].token, password())
+            .await
+            .unwrap();
+        assert!(!manager.hello_status().await.unwrap().invalidated);
+    }
+
+    #[tokio::test]
+    async fn recovery_remains_unlocked_and_reports_failed_hello_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.capstan");
+        let manager = VaultManager::new(path.clone());
+        manager.initialize(password(), fast()).await.unwrap();
+        let original = std::fs::read(&path).unwrap();
+        manager
+            .current()
+            .unwrap()
+            .transaction(0, |_| Ok(()))
+            .unwrap();
+        manager.lock().await.unwrap();
+        // An unexpected directory makes sidecar removal fail on every platform.
+        let sidecar = capstan_vault::hello::sidecar_path(&path);
+        std::fs::create_dir(&sidecar).unwrap();
+        let unexpected = sidecar.join("preserved.txt");
+        std::fs::write(&unexpected, b"preserve unexpected files").unwrap();
+
+        let candidates = manager.list_recovery_candidates(password()).await.unwrap();
+        manager
+            .restore_recovery_candidate(candidates[0].token, password())
+            .await
+            .unwrap();
+        assert!(manager.status().unlocked);
+        let status = manager.hello_status().await.unwrap();
+        assert!(status.enabled);
+        assert!(status.invalidated);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::read(&unexpected).unwrap(),
+            b"preserve unexpected files"
+        );
+        assert!(Vault::unlock(&path, &password()).is_ok());
+        assert_eq!(
+            manager
+                .current()
+                .unwrap()
+                .transaction(0, |_| Ok(()))
+                .unwrap(),
+            1
+        );
+    }
+    #[test]
+    fn hello_error_codes_survive_the_core_boundary() {
+        for error in [
+            HelloError::Unavailable,
+            HelloError::Canceled,
+            HelloError::KeyMissing,
+            HelloError::Mismatch,
+            HelloError::Data,
+        ] {
+            assert_eq!(
+                CoreError::from(VaultError::from(error)).code(),
+                error.code()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lock_waiting_on_hello_consent_still_wins_after_unlock_finishes() {
+        use std::{future::Future, task::Poll};
+        let directory = tempfile::tempdir().unwrap();
+        let manager = Arc::new(VaultManager::new(directory.path().join("vault.capstan")));
+        let device = Arc::new(Device::default());
+        manager.initialize(password(), fast()).await.unwrap();
+        manager
+            .enable_hello(password(), device.clone())
+            .await
+            .unwrap();
+        manager.lock().await.unwrap();
+        let gate = Arc::new(ConsentGate::default());
+        *device.gate.lock().unwrap() = Some(gate.clone());
+        let unlocking_manager = manager.clone();
+        let unlocking = tokio::spawn(async move { unlocking_manager.unlock_hello(device).await });
+        let entered = tokio::time::timeout(Duration::from_secs(5), gate.entered.notified()).await;
+        if entered.is_err() {
+            gate.release();
+        }
+        entered.unwrap();
+        let mut locking = Box::pin(manager.lock());
+        let pending = std::future::poll_fn(|context| {
+            Poll::Ready(locking.as_mut().poll(context).is_pending())
+        })
+        .await;
+        gate.release();
+        unlocking.await.unwrap().unwrap();
+        locking.await.unwrap();
+        assert!(pending);
+        assert!(!manager.status().unlocked);
+        assert!(manager
+            .connections
+            .locked
+            .load(std::sync::atomic::Ordering::Acquire));
     }
 }

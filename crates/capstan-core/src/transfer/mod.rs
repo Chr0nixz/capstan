@@ -195,6 +195,7 @@ mod tests {
             decision_receiver: Mutex::new(Some(receiver)),
             retry: Mutex::new(None),
             started: Mutex::new(None),
+            desktop_timing: Mutex::new(AttemptTiming::new()),
             last_progress: Mutex::new(Instant::now()),
             batch: None,
             recovery: None,
@@ -276,6 +277,7 @@ struct Task {
     decision_receiver: Mutex<Option<mpsc::Receiver<Decision>>>,
     retry: Mutex<Option<RetryPlan>>,
     started: Mutex<Option<Instant>>,
+    desktop_timing: Mutex<AttemptTiming>,
     last_progress: Mutex<Instant>,
     batch: Option<Arc<batch::Member>>,
     recovery: Option<Arc<RecoveryStore>>,
@@ -552,6 +554,11 @@ impl Task {
         let mut status = self.status.lock().map_err(|_| SftpError::ConnectionLost)?;
         if !status.state.terminal() {
             operation(&mut status);
+            if status.state.terminal() {
+                if let Ok(mut timing) = self.desktop_timing.lock() {
+                    timing.finished = Some(Instant::now());
+                }
+            }
             status.version.0 += 1;
         }
         Ok(())
@@ -601,6 +608,20 @@ impl Task {
         })
     }
 }
+struct AttemptTiming {
+    started: Instant,
+    finished: Option<Instant>,
+}
+
+impl AttemptTiming {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            finished: None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     grants: HashMap<Uuid, Grant>,
@@ -1397,6 +1418,7 @@ impl TransferService {
                 budget: self.budget.clone(),
             })),
             started: Mutex::new(None),
+            desktop_timing: Mutex::new(AttemptTiming::new()),
             last_progress: Mutex::new(Instant::now()),
             status: Mutex::new(TransferSnapshot {
                 id,
@@ -1472,6 +1494,51 @@ impl TransferService {
                     .lock()
                     .map(|status| status.clone())
                     .map_err(|_| SftpError::ConnectionLost)
+            })
+            .collect()
+    }
+
+    /// Rust-only desktop observation. Paths, names and credentials are excluded.
+    pub(crate) fn desktop_snapshot(
+        &self,
+        window: &str,
+        reconnecting: &[capstan_ssh::PoolKey],
+    ) -> Result<Vec<crate::desktop::DesktopTransfer>, SftpError> {
+        self.state
+            .lock()
+            .map_err(|_| SftpError::ConnectionLost)?
+            .tasks
+            .iter()
+            .filter(|task| task.window == window)
+            .map(|task| {
+                let status = task.status.lock().map_err(|_| SftpError::ConnectionLost)?;
+                let timing = task
+                    .desktop_timing
+                    .lock()
+                    .map_err(|_| SftpError::ConnectionLost)?;
+                let awaiting_reconnect = status.state == TransferState::Interrupted
+                    && !reconnecting.is_empty()
+                    && task
+                        .retry
+                        .lock()
+                        .map_err(|_| SftpError::ConnectionLost)?
+                        .as_ref()
+                        .is_some_and(|plan| {
+                            reconnecting
+                                .iter()
+                                .any(|policy| same_retry_policy(&plan.policy, policy))
+                        });
+                Ok(crate::desktop::DesktopTransfer {
+                    id: status.id,
+                    version: status.version.0,
+                    batch_id: status.batch.as_ref().map(|batch| batch.id),
+                    state: status.state,
+                    processed: status.processed.0,
+                    total: status.total.0,
+                    attempt_started: timing.started,
+                    finished: timing.finished,
+                    awaiting_reconnect,
+                })
             })
             .collect()
     }
@@ -1666,6 +1733,9 @@ impl TransferService {
             plan.local = Some(local.clone());
             *retry = Some(plan.clone());
             task.paused.store(false, Ordering::SeqCst);
+            if let Ok(mut timing) = task.desktop_timing.lock() {
+                *timing = AttemptTiming::new();
+            }
             status.state = TransferState::Retrying;
             status.error = None;
             status.conflict = None;

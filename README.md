@@ -15,8 +15,9 @@ See [the current status](docs/agent/board.md) and
 ## Build on Windows
 
 Use Windows 11 x64 with WebView2 Runtime, the Visual Studio C++ build tools and
-Windows SDK, Rust 1.96.0, Node.js 22, pnpm 10.28.1, and CMake. NSIS is required
-for installer builds. AWS-LC uses the pinned dependency's prebuilt NASM objects
+Windows SDK, Rust 1.96.0, Node.js 22, pnpm 10.28.1, and CMake. NSIS and Python
+3.12 are required for installer builds and their embedded payload verification.
+AWS-LC uses the pinned dependency's prebuilt NASM objects
 on supported Windows x64 builds; it still requires the C/C++ toolchain.
 
 ```powershell
@@ -33,6 +34,11 @@ powershell -NoProfile -File scripts/Build-Portable.ps1 -OutputPath target/bundle
 NSIS output is under `target/release/bundle/nsis`. The portable packaging script
 refuses to overwrite an existing archive. Artifacts are unsigned; see
 [portable and installed data locations](docs/PORTABLE.md).
+
+Software updates are manual by default and require a configured trusted updater
+public key. This checkout leaves that key empty, so updates are unavailable.
+Portable builds only announce updates. See [updates and recovery](docs/UPDATES.md)
+for signing, installation and key rotation.
 
 ## Use and protect your data
 
@@ -68,8 +74,11 @@ Capstan 是 Windows 优先的本地终端与 SSH 客户端，目前提供 PowerS
 [远程文件与恢复](docs/SFTP.md)。
 
 构建前安装 Windows 11 x64、WebView2、Visual Studio C++ 构建工具与 Windows SDK、
-Rust 1.96.0、Node.js 22、pnpm 10.28.1、CMake；生成安装包还需要 NSIS。开发与打包
+Rust 1.96.0、Node.js 22、pnpm 10.28.1、CMake；生成安装包及内嵌文件校验还需要 NSIS 和 Python 3.12。开发与打包
 命令见上方。产物尚未签名，安装/便携版数据位置见 [便携说明](docs/PORTABLE.md)。
+
+软件更新默认手动检查；当前源码未配置生产更新公钥，功能不可用。便携版只提示新版本。
+签名发布、安装失败恢复与密钥轮换见 [更新说明](docs/UPDATES.md)。
 
 本地终端无需解锁加密库；保存的主机与新 SSH 连接需要解锁。首次连接需独立核验主机
 指纹，密钥变化会阻断连接。更新便携程序时保留完整 `data/`；备份导出使用独立口令。

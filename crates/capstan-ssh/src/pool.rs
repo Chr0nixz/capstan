@@ -44,6 +44,7 @@ enum EntryState<T> {
         value: Arc<T>,
         leases: usize,
         idle_generation: u64,
+        idle: CancellationToken,
     },
 }
 struct Entry<T> {
@@ -144,7 +145,11 @@ impl<T: Send + Sync + 'static> ConnectionPool<T> {
                     value,
                     leases,
                     idle_generation,
+                    idle,
                 } => {
+                    if *leases == 0 {
+                        *idle = CancellationToken::new();
+                    }
                     *leases += 1;
                     *idle_generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
                     ready = Some(value.clone());
@@ -205,6 +210,7 @@ impl<T: Send + Sync + 'static> ConnectionPool<T> {
                                     leases: 0,
                                     idle_generation: NEXT_GENERATION
                                         .fetch_add(1, Ordering::Relaxed),
+                                    idle: CancellationToken::new(),
                                 };
                             }
                             for waiter in waiters {
@@ -250,7 +256,11 @@ impl<T: Send + Sync + 'static> ConnectionPool<T> {
                     value: ready,
                     leases,
                     idle_generation,
+                    idle,
                 } if Arc::ptr_eq(ready, &response) => {
+                    if *leases == 0 {
+                        *idle = CancellationToken::new();
+                    }
                     *leases += 1;
                     *idle_generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
                     ready.clone()
@@ -334,7 +344,8 @@ impl<T: Send + Sync + 'static> ConnectionPool<T> {
             };
             let previous = std::mem::replace(&mut *state, EntryState::Vacant);
             match previous {
-                EntryState::Ready { value, .. } => {
+                EntryState::Ready { value, idle, .. } => {
+                    idle.cancel();
                     if !connections
                         .iter()
                         .any(|existing| Arc::ptr_eq(existing, &value))
@@ -420,6 +431,21 @@ impl<T: Send + Sync + 'static> ConnectionLease<T> {
         Arc::downgrade(&self.value)
     }
 
+    /// Observes this busy interval without retaining a pool lease.
+    /// The token stays canceled even if the same connection is reused.
+    pub fn idle_token(&self) -> Result<CancellationToken> {
+        let state = self
+            ._token
+            .entry
+            .state
+            .lock()
+            .map_err(|_| SshError::Protocol)?;
+        match &*state {
+            EntryState::Ready { idle, .. } => Ok(idle.child_token()),
+            _ => Err(SshError::Canceled),
+        }
+    }
+
     /// The exact target used to acquire this authenticated pool entry.
     /// Callers cannot substitute a hostname supplied by terminal output.
     pub fn authenticated_target(&self) -> &str {
@@ -445,10 +471,12 @@ impl<T: Send + Sync + 'static> Drop for LeaseToken<T> {
                 EntryState::Ready {
                     leases,
                     idle_generation,
+                    idle,
                     ..
                 } => {
                     *leases = leases.saturating_sub(1);
                     if *leases == 0 {
+                        idle.cancel();
                         *idle_generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
                         Some(*idle_generation)
                     } else {
@@ -572,11 +600,14 @@ mod tests {
             .await
             .expect("build");
         let clone = lease.clone();
+        let idle = lease.idle_token().expect("busy interval");
         drop(lease);
+        assert!(!idle.is_cancelled());
         tokio::time::advance(Duration::from_secs(29)).await;
         tokio::task::yield_now().await;
         assert_eq!(pool.entry_count().await, 1);
         drop(clone);
+        assert!(idle.is_cancelled());
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(29)).await;
         let reused = pool
@@ -584,6 +615,11 @@ mod tests {
             .await
             .expect("reuse before expiry");
         assert_eq!(*reused.connection(), 1);
+        assert!(idle.is_cancelled());
+        assert!(!reused
+            .idle_token()
+            .expect("new busy interval")
+            .is_cancelled());
         drop(reused);
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(30)).await;

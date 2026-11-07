@@ -44,8 +44,9 @@ jobs:
   publish:
     if: ${{ github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'Chr0nixz/capstan' }}
     needs: [preflight, validate]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    runs-on: windows-2022
+    timeout-minutes: 20
+    environment: release
     permissions:
       contents: write
     steps:
@@ -57,6 +58,7 @@ jobs:
       - name: Require the validated artifact ID
         env:
           ARTIFACT_ID: ${{ needs.validate.outputs.artifact-id }}
+        shell: bash
         run: '[[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]'
 
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
@@ -64,9 +66,27 @@ jobs:
           artifact-ids: ${{ needs.validate.outputs.artifact-id }}
           path: target/ci-packages
 
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.28.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Install the pinned signing CLI
+        run: pnpm -C ui install --frozen-lockfile
+
+      - name: Sign the validated installer and verify the update manifest
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: python scripts/release.py sign-updates target/ci-packages "$env:RELEASE_VERSION"
+
       - name: Publish verified draft
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
           RELEASE_COMMIT: ${{ needs.preflight.outputs.commit }}
-        run: python3 scripts/release.py publish target/ci-packages "$RELEASE_VERSION" "$RELEASE_COMMIT"
+        run: python scripts/release.py publish target/ci-packages "$env:RELEASE_VERSION" "$env:RELEASE_COMMIT"
