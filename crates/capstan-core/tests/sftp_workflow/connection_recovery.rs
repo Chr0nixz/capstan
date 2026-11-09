@@ -1,5 +1,5 @@
 use super::*;
-use capstan_core::transfer::WindowsDestination;
+use capstan_core::transfer::NativeDestination;
 
 async fn recover(mode: &str) {
     let (fixture, session, transfers) = fixture().await;
@@ -26,8 +26,8 @@ async fn recover(mode: &str) {
             TransferTarget::Download { entry: entry.id },
         )
         .unwrap();
-    let destination = Arc::new(WindowsDestination::new(
-        capstan_native_windows::transfer::Destination::select(&target).unwrap(),
+    let destination = Arc::new(NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&target).unwrap(),
     ));
     let grant = transfers.grant_destination(&context, destination).unwrap();
     remote.stall_read.store(true, Ordering::SeqCst);

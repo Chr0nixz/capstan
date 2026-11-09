@@ -1,6 +1,6 @@
 //! Narrow, already-authorized local I/O. Implementations never accept WebView paths.
 use crate::sftp::SftpError;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 use std::io;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +54,7 @@ pub trait LocalDestination: Send + Sync {
     fn commit(&self, expected: Option<LocalVersion>) -> Result<(), SftpError>;
     fn discard(&self) -> Result<(), SftpError>;
 }
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub(crate) fn local_error(error: io::Error) -> SftpError {
     match error.kind() {
         io::ErrorKind::PermissionDenied => SftpError::PermissionDenied,
@@ -71,8 +71,8 @@ pub(crate) async fn blocking<T: Send + 'static>(
         .map_err(|_| SftpError::LocalIo)?
 }
 
-#[cfg(windows)]
-impl LocalSource for capstan_native_windows::transfer::Source {
+#[cfg(any(windows, unix))]
+impl LocalSource for crate::native_fs::Source {
     fn name(&self) -> Result<String, SftpError> {
         self.name().map_err(local_error)
     }
@@ -86,23 +86,23 @@ impl LocalSource for capstan_native_windows::transfer::Source {
         self.verify().map_err(local_error)
     }
 }
-#[cfg(windows)]
-pub struct WindowsDestination(std::sync::Mutex<capstan_native_windows::transfer::Destination>);
-#[cfg(windows)]
-impl WindowsDestination {
-    pub fn new(destination: capstan_native_windows::transfer::Destination) -> Self {
+#[cfg(any(windows, unix))]
+pub struct NativeDestination(std::sync::Mutex<crate::native_fs::Destination>);
+#[cfg(any(windows, unix))]
+impl NativeDestination {
+    pub fn new(destination: crate::native_fs::Destination) -> Self {
         Self(std::sync::Mutex::new(destination))
     }
     fn with<T>(
         &self,
-        operation: impl FnOnce(&mut capstan_native_windows::transfer::Destination) -> io::Result<T>,
+        operation: impl FnOnce(&mut crate::native_fs::Destination) -> io::Result<T>,
     ) -> Result<T, SftpError> {
         operation(&mut *self.0.lock().map_err(|_| SftpError::LocalIo)?).map_err(local_error)
     }
 }
-#[cfg(windows)]
-impl From<capstan_native_windows::transfer::Version> for LocalVersion {
-    fn from(value: capstan_native_windows::transfer::Version) -> Self {
+#[cfg(any(windows, unix))]
+impl From<crate::native_fs::Version> for LocalVersion {
+    fn from(value: crate::native_fs::Version) -> Self {
         Self {
             size: value.size,
             modified: value.modified,
@@ -111,8 +111,8 @@ impl From<capstan_native_windows::transfer::Version> for LocalVersion {
         }
     }
 }
-#[cfg(windows)]
-impl LocalDestination for WindowsDestination {
+#[cfg(any(windows, unix))]
+impl LocalDestination for NativeDestination {
     fn name(&self) -> Result<String, SftpError> {
         self.with(|file| file.name())
     }
@@ -164,14 +164,12 @@ impl LocalDestination for WindowsDestination {
     }
     fn commit(&self, expected: Option<LocalVersion>) -> Result<(), SftpError> {
         self.with(|file| {
-            file.commit(
-                expected.map(|value| capstan_native_windows::transfer::Version {
-                    size: value.size,
-                    modified: value.modified,
-                    identity: value.identity,
-                    attributes: value.attributes,
-                }),
-            )
+            file.commit(expected.map(|value| crate::native_fs::Version {
+                size: value.size,
+                modified: value.modified,
+                identity: value.identity,
+                attributes: value.attributes,
+            }))
         })
     }
     fn discard(&self) -> Result<(), SftpError> {

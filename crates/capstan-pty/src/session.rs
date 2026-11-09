@@ -132,13 +132,7 @@ impl PtySession {
             })
             .map_err(|error| PtyError::Pty(error.to_string()))?;
 
-        let executable = config
-            .command
-            .shell
-            .executable
-            .to_string_lossy()
-            .into_owned();
-        let mut command = CommandBuilder::new(executable);
+        let mut command = CommandBuilder::new(&config.command.shell.executable);
         command.args(&config.command.shell.args);
         if let Some(directory) = config.command.working_directory.as_ref() {
             if matches!(config.command.shell.kind, ShellKind::Wsl { .. }) {

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm -C ui build",
+    "features": ["tauri-runtime"]
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Capstan",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 320,
+        "decorations": true,
+        "transparent": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 14, "y": 20 },
+        "backgroundColor": "#121316",
+        "acceptFirstMouse": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "resources": {
+      "../target/runtime/": null,
+      "../docs/PORTABLE.md": null
+    },
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
+    "category": "public.app-category.developer-tools",
+    "copyright": "GPL-3.0-or-later",
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTerminalSession, terminalPalette, type Disposable, type TerminalLike } from "./session";
 import { InputQueue } from "./inputQueue";
@@ -114,6 +114,98 @@ describe("terminal session lifecycle", () => {
     await session.copySelection();
     expect(writeSelectionClipboard).toHaveBeenCalledTimes(2);
     session.dispose();
+  });
+
+  it("waits for an asynchronous paste answer and drops it once the pane is gone", async () => {
+    const terminal = fakeTerminal();
+    const answers: Array<(accepted: boolean) => void> = [];
+    const session = createTerminalSession(document.createElement("div"), true, { terminal,
+      confirmMultilinePaste: () => new Promise((resolve) => { answers.push(resolve); }),
+      rendererFactory: () => ({ dispose: vi.fn() }) });
+    const paste = (): void => {
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: { getData: () => "first\nsecond" } });
+      terminal.textarea?.dispatchEvent(event);
+    };
+    paste();
+    expect(terminal.paste).not.toHaveBeenCalled();
+    answers[0](false);
+    await Promise.resolve();
+    expect(terminal.paste).not.toHaveBeenCalled();
+    paste();
+    answers[1](true);
+    await vi.waitFor(() => expect(terminal.paste).toHaveBeenCalledWith("first\nsecond"));
+    paste();
+    session.dispose();
+    answers[2](true);
+    await Promise.resolve();
+    expect(terminal.paste).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes an OSC 52 clipboard request only after an asynchronous approval", async () => {
+    const terminal = fakeTerminal();
+    const writeOsc52Clipboard = vi.fn(async () => undefined);
+    let answer!: (accepted: boolean) => void;
+    const session = createTerminalSession(document.createElement("div"), true, { terminal, writeOsc52Clipboard,
+      confirmOsc52Write: () => new Promise((resolve) => { answer = resolve; }),
+      rendererFactory: () => ({ dispose: vi.fn() }) });
+    expect(await terminal.oscHandler?.("c;SGVsbG8=")).toBe(true);
+    expect(writeOsc52Clipboard).not.toHaveBeenCalled();
+    answer(true);
+    await vi.waitFor(() => expect(writeOsc52Clipboard).toHaveBeenCalledWith("Hello"));
+    session.dispose();
+  });
+
+  describe("macOS key handling", () => {
+    const keyboard = (key: string, init: KeyboardEventInit = {}, type = "keydown") =>
+      new KeyboardEvent(type, { key, metaKey: true, cancelable: true, ...init });
+    function macSession() {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+      let handler!: (event: KeyboardEvent) => boolean;
+      const sent: string[] = [];
+      const terminal = Object.assign(fakeTerminal(), {
+        clear: vi.fn(),
+        attachCustomKeyEventHandler: vi.fn((next: (event: KeyboardEvent) => boolean) => { handler = next; }),
+      });
+      const session = createTerminalSession(document.createElement("div"), true, { terminal,
+        sendInput: (bytes) => { sent.push(new TextDecoder().decode(bytes)); },
+        rendererFactory: () => ({ dispose: vi.fn() }) });
+      return { terminal, session, sent, press: (event: KeyboardEvent) => handler(event) };
+    }
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it("does not install the handler on other platforms", () => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+      const attach = vi.fn();
+      const session = createTerminalSession(document.createElement("div"), true, {
+        terminal: Object.assign(fakeTerminal(), { attachCustomKeyEventHandler: attach }),
+        rendererFactory: () => ({ dispose: vi.fn() }) });
+      expect(attach).not.toHaveBeenCalled();
+      session.dispose();
+    });
+
+    it("sends line-editing bytes once per press and hides the whole chord from xterm", async () => {
+      const { session, sent, press } = macSession();
+      const down = keyboard("ArrowLeft");
+      expect(press(down)).toBe(false);
+      expect(down.defaultPrevented).toBe(true);
+      expect(press(keyboard("ArrowLeft", {}, "keyup"))).toBe(false);
+      expect(press(keyboard("Backspace"))).toBe(false);
+      await vi.waitFor(() => expect(sent).toEqual(["\x01", "\x15"]));
+      session.dispose();
+    });
+
+    it("clears on Command+K and leaves clipboard chords and Control keys alone", () => {
+      const { terminal, session, sent, press } = macSession();
+      expect(press(keyboard("k"))).toBe(false);
+      expect(terminal.clear).toHaveBeenCalledTimes(1);
+      expect(press(keyboard("k", {}, "keyup"))).toBe(false);
+      expect(terminal.clear).toHaveBeenCalledTimes(1);
+      for (const key of ["c", "v", "a"]) expect(press(keyboard(key))).toBe(true);
+      expect(press(keyboard("k", { metaKey: false, ctrlKey: true }))).toBe(true);
+      expect(sent).toEqual([]);
+      session.dispose();
+    });
   });
 
   it("gates menu paste through multiline confirmation and drops results after focus or shell changes", async () => {

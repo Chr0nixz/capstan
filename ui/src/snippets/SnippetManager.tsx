@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEventHandler, type ReactElement, type ReactNode, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { copy } from "../i18n";
-import { CloseIcon, FolderPlusIcon, PencilIcon, PlusIcon, SnippetIcon, TrashIcon, CheckIcon } from "../ui/icons";
+import { CloseIcon, FolderPlusIcon, PencilIcon, PlayIcon, PlusIcon, SnippetIcon, TrashIcon, CheckIcon } from "../ui/icons";
 import { decodeSnippet, decodeSnippetGroup, type Snippet, type SnippetGroup } from "./contracts";
 import { renderSnippetTemplate, templateVariables, withAutoEnter } from "./template";
 import { snippetMutationError } from "./errors";
@@ -9,6 +9,11 @@ import { snippetMutationError } from "./errors";
 type Labels = typeof copy.en | typeof copy["zh-CN"];
 type Draft = { id: string; group_id: string | null; name: string; template: string; auto_enter: boolean };
 export type SnippetRunRequest = { requestId: string; snippetId: string };
+/** Where a snippet lands: the focused pane, or the active tab's broadcast selection. */
+export type SnippetTarget = {
+  current: { name: string; production: boolean } | null;
+  broadcast: { count: number; production: boolean };
+};
 
 type Props = {
   labels: Labels;
@@ -22,6 +27,7 @@ type Props = {
   onDeleteSnippet: (id: string) => Promise<void>;
   onRun: (input: string, target: "current" | "broadcast") => Promise<void>;
   broadcastTargetsAvailable: boolean;
+  target?: SnippetTarget;
   runRequest?: SnippetRunRequest;
   onRequestConsumed: (requestId: string) => void;
   messages?: ReactNode;
@@ -32,7 +38,7 @@ type Props = {
 
 const emptyDraft = (): Draft => ({ id: crypto.randomUUID(), group_id: null, name: "", template: "", auto_enter: true });
 
-export function SnippetManager({ labels, groups, snippets, search, onSearch, onSaveGroup, onDeleteGroup, onSaveSnippet, onDeleteSnippet, onRun, broadcastTargetsAvailable, runRequest, onRequestConsumed, messages, onClose, panelRef, onKeyDown }: Props): ReactElement {
+export function SnippetManager({ labels, groups, snippets, search, onSearch, onSaveGroup, onDeleteGroup, onSaveSnippet, onDeleteSnippet, onRun, broadcastTargetsAvailable, target, runRequest, onRequestConsumed, messages, onClose, panelRef, onKeyDown }: Props): ReactElement {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [groupName, setGroupName] = useState("");
   const [groupDrafts, setGroupDrafts] = useState<Record<string, string>>({});
@@ -45,6 +51,7 @@ export function SnippetManager({ labels, groups, snippets, search, onSearch, onS
   const [error, setError] = useState("");
   const [runTarget, setRunTarget] = useState<"current" | "broadcast">("current");
   const [runDraft, setRunDraft] = useState<{ snippet: Snippet; values: Record<string, string> } | null>(null);
+  const productionDestination = runTarget === "broadcast" ? !!target?.broadcast.production : !!target?.current?.production;
   const normalized = search.trim().toLocaleLowerCase();
   const visible = useMemo(() => snippets.filter((snippet) => !normalized
     || [snippet.name, snippet.template, groups.find((group) => group.id === snippet.group_id)?.name ?? ""]
@@ -75,7 +82,7 @@ export function SnippetManager({ labels, groups, snippets, search, onSearch, onS
     try {
       await onRun(input, runTarget);
     } catch {
-      setError(labels.operationFailed);
+      setError(labels.snippetRunFailed);
     } finally {
       runningRef.current = false;
       setRunning(false);
@@ -169,6 +176,11 @@ export function SnippetManager({ labels, groups, snippets, search, onSearch, onS
         </select></label>
         <button className="icon-button" type="button" aria-label={labels.newSnippet} title={labels.newSnippet} disabled={saving} onClick={() => { setError(""); setDraft(emptyDraft()); }}><PlusIcon /></button>
       </div>
+      {target && <p className="snippet-destination" data-prod={productionDestination || undefined}>
+        {runTarget === "broadcast" ? <span>{labels.snippetBroadcastCount(target.broadcast.count)}</span>
+          : target.current ? <bdi>{target.current.name}</bdi> : <span>{labels.snippetNoTerminal}</span>}
+        {productionDestination && <><span className="prod-chip">{labels.production}</span><span className="snippet-destination-hint">{labels.snippetProductionHint}</span></>}
+      </p>}
       <form className="snippet-group-create" onSubmit={(event) => { void saveGroup(event); }}>
         <input aria-label={labels.newSnippetGroup} placeholder={labels.newSnippetGroup} value={groupName} disabled={saving} onChange={(event) => setGroupName(event.currentTarget.value)} maxLength={128} />
         <button className="icon-button" type="submit" disabled={saving || !groupName.trim()} aria-label={labels.saveSnippetGroup} title={labels.saveSnippetGroup}><FolderPlusIcon /></button>
@@ -184,13 +196,23 @@ export function SnippetManager({ labels, groups, snippets, search, onSearch, onS
       </ul>}
       {visible.length === 0 && <p className="empty-state">{snippets.length === 0 ? labels.noSnippets : labels.noSnippetMatches}</p>}
       <ul className="item-list snippet-list" aria-label={labels.snippets}>
-        {visible.map((snippet) => <li key={snippet.id}>
-          <button className="snippet-run" type="button" disabled={running} onClick={() => startRun(snippet)}><strong>{snippet.name}</strong><span>{groups.find((group) => group.id === snippet.group_id)?.name ?? labels.noGroup}</span></button>
-          <div className="item-actions">
-            <button className="icon-button" type="button" aria-label={`${labels.editSnippet}: ${snippet.name}`} title={labels.editSnippet} disabled={saving} onClick={() => setDraft({ ...snippet })}><PencilIcon size={14} /></button>
-            <button className="icon-button" type="button" aria-label={`${labels.deleteSnippet}: ${snippet.name}`} title={labels.deleteSnippet} disabled={saving} onClick={() => { void mutate(() => onDeleteSnippet(snippet.id)); }}><TrashIcon size={14} /></button>
-          </div>
-        </li>)}
+        {visible.map((snippet) => {
+          const lines = snippet.template.split(/\r\n|\r|\n/u);
+          const group = groups.find((item) => item.id === snippet.group_id)?.name;
+          // The card shows what will be sent; only the Run key sends it.
+          return <li key={snippet.id}>
+            <div className="snippet-main">
+              <span className="snippet-name"><strong>{snippet.name}</strong>{group && <span>{group}</span>}</span>
+              <span className="snippet-command"><code title={snippet.template}>{lines[0]}</code>{lines.length > 1 && <span>{labels.snippetMoreLines(lines.length - 1)}</span>}</span>
+            </div>
+            <div className="item-actions">
+              <button className="snippet-run" type="button" disabled={running} aria-label={`${labels.runSnippet}: ${snippet.name}`} title={labels.runSnippet}
+                onClick={() => startRun(snippet)}><PlayIcon size={12} />{labels.snippetRunShort}</button>
+              <button className="icon-button" type="button" aria-label={`${labels.editSnippet}: ${snippet.name}`} title={labels.editSnippet} disabled={saving} onClick={() => setDraft({ ...snippet })}><PencilIcon size={14} /></button>
+              <button className="icon-button" type="button" aria-label={`${labels.deleteSnippet}: ${snippet.name}`} title={labels.deleteSnippet} disabled={saving} onClick={() => { void mutate(() => onDeleteSnippet(snippet.id)); }}><TrashIcon size={14} /></button>
+            </div>
+          </li>;
+        })}
       </ul>
       {error && <p className="inline-error" role="alert">{error}</p>}
     </div>

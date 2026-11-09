@@ -12,6 +12,8 @@ export type ConfirmRequest = {
   /** Destructive actions use the danger key; anything else uses the amber primary. */
   tone?: "danger" | "primary";
   theme?: TerminalTheme;
+  /** The host the action reaches and the exact text it applies, shown in a mono well. */
+  target?: { host: string; productionLabel?: string; detail: string };
 };
 type Pending = { request: ConfirmRequest; resolve: (accepted: boolean) => void };
 
@@ -43,6 +45,10 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
         onCloseAutoFocus={(event) => { event.preventDefault(); if (returnRef.current?.isConnected) returnRef.current.focus(); }}>
         <Dialog.Title><span className="dialog-mark" aria-hidden="true"><AlertIcon size={16} /></span>{request.title}</Dialog.Title>
         <Dialog.Description>{request.body}</Dialog.Description>
+        {request.target && <p className="confirm-target">
+          {request.target.productionLabel && <span className="prod-chip">{request.target.productionLabel}</span>}
+          <span className="confirm-host">{request.target.host}</span><code>{request.target.detail}</code>
+        </p>}
         <div className="sftp-dialog-actions">
           <button ref={cancelRef} className="ghost-button" type="button" onClick={() => settle(false)}>{request.cancel}</button>
           <button className={request.tone === "primary" ? "primary-action" : "danger-action"} type="button" onClick={() => settle(true)}>{request.confirm}</button>

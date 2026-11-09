@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { copy } from "../i18n";
 import { readRecentCommands, rememberCommand, searchCommands, type PaletteAction } from "./registry";
 import type { CommandAction } from "./contracts";
+import { shortcutLabel } from "../window/platform";
 import {
   BroadcastIcon, CloseIcon, DownloadIcon, FolderIcon, LockIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShellIcon,
   SidebarIcon, SnippetIcon, SplitDownIcon, SplitRightIcon, ThemeIcon, TunnelIcon,
@@ -64,6 +65,7 @@ export function CommandPalette({ open, labels, actions, onOpenChange, onExecute 
   const inputRef = useRef<HTMLInputElement>(null);
   const chosenRef = useRef(false);
   // A chosen action decides where focus goes; only a dismissed palette restores it.
+  const returnRef = useRef<HTMLElement | null>(null);
   const handOffRef = useRef(false);
   const listId = useId();
   const recentKeys = useMemo(() => open ? readRecentCommands() : [], [open]);
@@ -125,8 +127,17 @@ export function CommandPalette({ open, labels, actions, onOpenChange, onExecute 
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Overlay className="command-palette-overlay" />
-      <Dialog.Content className="command-palette" onOpenAutoFocus={(event) => { event.preventDefault(); inputRef.current?.focus(); }}
-        onCloseAutoFocus={(event) => { if (handOffRef.current) { handOffRef.current = false; event.preventDefault(); } }}
+      <Dialog.Content className="command-palette" onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          inputRef.current?.focus();
+        }}
+        // A modal Dialog only refocuses its Trigger, and the palette has none.
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (handOffRef.current) handOffRef.current = false;
+          else if (returnRef.current?.isConnected) returnRef.current.focus();
+        }}
         onEscapeKeyDown={(event) => { if (event.isComposing || event.keyCode === 229) event.preventDefault(); }}>
         <Dialog.Title className="sr-only">{labels.commandPalette}</Dialog.Title>
         <Dialog.Description className="sr-only">{labels.searchCommands}</Dialog.Description>
@@ -145,7 +156,7 @@ export function CommandPalette({ open, labels, actions, onOpenChange, onExecute 
                 <span className="command-label">{candidate.label}</span>
                 {candidate.production && <span className="prod-chip">{labels.production}</span>}
                 {candidate.detail && <span className={"command-detail" + (candidate.detailMono ? " mono" : "")}>{candidate.detail}</span>}
-                {candidate.shortcut && <kbd>{candidate.shortcut}</kbd>}
+                {candidate.shortcut && <kbd>{shortcutLabel(candidate.shortcut)}</kbd>}
               </div>;
             })}
           </div>)}

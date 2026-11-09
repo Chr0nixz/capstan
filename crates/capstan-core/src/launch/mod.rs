@@ -142,7 +142,7 @@ fn parse_local_args(
             }
             "--cwd" if working_directory.is_none() => {
                 let value = args.get(index + 1)?;
-                if !valid_windows_directory(value) || !directory_exists(value) {
+                if !valid_directory_argument(value) || !directory_exists(value) {
                     return None;
                 }
                 working_directory = Some(PathBuf::from(value));
@@ -171,6 +171,15 @@ pub fn shell_task_arguments(id: &str) -> Option<String> {
     }
     // Profile IDs cannot contain backslashes, so only embedded quotes need escaping.
     Some(format!("--local --shell \"{}\"", id.replace('"', "\\\"")))
+}
+
+fn valid_directory_argument(value: &str) -> bool {
+    if cfg!(unix) && value.starts_with('/') {
+        return value.chars().count() <= MAX_ARGUMENT_LENGTH
+            && !value.chars().any(char::is_control)
+            && !value.split('/').any(|part| part == "." || part == "..");
+    }
+    valid_windows_directory(value)
 }
 
 fn valid_windows_directory(value: &str) -> bool {
@@ -339,6 +348,31 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_directories_are_accepted_without_parent_segments() {
+        let local =
+            |path: &str| parse_launch_args_with(&args(&["--local", "--cwd", path]), |_| true);
+        assert_eq!(
+            local("/Users/me/project"),
+            LaunchRequest::Local {
+                shell_id: None,
+                working_directory: Some(PathBuf::from("/Users/me/project")),
+            }
+        );
+        for rejected in [
+            "/Users/../etc",
+            "/Users/./me",
+            "relative/path",
+            "/bad\npath",
+        ] {
+            assert!(
+                !matches!(local(rejected), LaunchRequest::Local { .. }),
+                "{rejected}"
+            );
+        }
     }
 
     #[cfg(windows)]

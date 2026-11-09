@@ -22,6 +22,20 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
 describe("command palette activation boundaries", () => {
+  it("returns focus to where it was when closed without an action", async () => {
+    await act(async () => render(false));
+    const origin = document.createElement("textarea");
+    document.body.append(origin);
+    origin.focus();
+    await act(async () => render(true));
+    expect(document.activeElement).not.toBe(origin);
+    await act(async () => render(false));
+    // Radix restores focus from a timer after the content unmounts.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(document.activeElement).toBe(origin);
+    origin.remove();
+  });
+
   it("executes one action before the close commits and accepts a new opening", async () => {
     const option = document.body.querySelector<HTMLButtonElement>(".command-result")!;
     await act(async () => { option.click(); option.click(); });

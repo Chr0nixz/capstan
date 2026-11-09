@@ -16,7 +16,11 @@ path = "src/main.rs"
 
 [features]
 default = []
-tauri-runtime = ["dep:tauri", "dep:tauri-plugin-snap-layout", "dep:tauri-plugin-global-shortcut", "dep:tauri-plugin-updater", "dep:serde_json"]
+tauri-runtime = [
+    "dep:tauri", "dep:tauri-plugin-snap-layout", "dep:tauri-plugin-global-shortcut",
+    "dep:tauri-plugin-updater", "dep:serde_json", "dep:objc2", "dep:objc2-app-kit",
+    "dep:objc2-foundation",
+]
 m0-benchmarks = ["tauri-runtime", "capstan-pty/m0-benchmarks", "capstan-core/benchmarks", "dep:serde_json"]
 custom-protocol = ["tauri-runtime", "tauri/custom-protocol"]
 
@@ -42,6 +46,16 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "sync", 
 
 [target.'cfg(windows)'.dependencies]
 capstan-native-windows = { path = "../vendor/capstan-native-windows" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.4", optional = true }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = [
+    "NSAlert", "NSApplication", "NSControl", "NSOpenPanel", "NSSavePanel",
+    "NSSecureTextField", "NSTextField", "NSView", "NSWindow", "NSWorkspace",
+] }
+objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = [
+    "NSArray", "NSGeometry", "NSString", "NSURL",
+] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

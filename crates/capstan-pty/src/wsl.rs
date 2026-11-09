@@ -1,12 +1,17 @@
+#[cfg(windows)]
 use std::process::{Command, Stdio};
+#[cfg(windows)]
 use std::thread;
+#[cfg(windows)]
 use std::time::{Duration, Instant};
+#[cfg(windows)]
 use std::{io::Read, process::Child};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{PtyError, Result};
 
+#[cfg(windows)]
 const MAX_WSL_PROBE_OUTPUT: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +45,7 @@ pub struct WslProbeResult {
 
 #[derive(Debug, Clone)]
 pub struct WslProbe {
+    #[cfg(windows)]
     config: WslProbeConfig,
 }
 
@@ -60,7 +66,12 @@ impl Default for WslProbeConfig {
 
 impl WslProbe {
     pub fn new(config: WslProbeConfig) -> Self {
-        Self { config }
+        #[cfg(not(windows))]
+        let _ = config;
+        Self {
+            #[cfg(windows)]
+            config,
+        }
     }
 
     pub fn probe(&self) -> Result<WslProbeResult> {
@@ -128,6 +139,7 @@ impl WslProbe {
         }
     }
 
+    #[cfg(windows)]
     fn fallback_with_reason(&self, reason: String) -> Result<WslProbeResult> {
         let distributions = probe_wsl_exe(self.config.timeout_ms)?;
         Ok(WslProbeResult {
@@ -138,6 +150,7 @@ impl WslProbe {
     }
 }
 
+#[cfg(windows)]
 fn probe_wsl_exe(timeout_ms: u64) -> Result<Vec<WslDistribution>> {
     let executable = std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)
@@ -181,6 +194,7 @@ fn probe_wsl_exe(timeout_ms: u64) -> Result<Vec<WslDistribution>> {
     Ok(parse_wsl_verbose_output(&stdout))
 }
 
+#[cfg(windows)]
 pub(crate) fn validate_directory(shell: &crate::ShellInfo, path: &str) -> Result<()> {
     if !path.starts_with('/') || path.len() > 4096 || path.contains('\0') {
         return Err(PtyError::InvalidWorkingDirectory);
@@ -199,11 +213,8 @@ pub(crate) fn validate_directory(shell: &crate::ShellInfo, path: &str) -> Result
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(0x0800_0000);
     let mut child = command
         .spawn()
         .map_err(|_| PtyError::WslProbe("directory_probe_failed".into()))?;
@@ -213,6 +224,12 @@ pub(crate) fn validate_directory(shell: &crate::ShellInfo, path: &str) -> Result
     Ok(())
 }
 
+#[cfg(not(windows))]
+pub(crate) fn validate_directory(_: &crate::ShellInfo, _: &str) -> Result<()> {
+    Err(PtyError::InvalidWorkingDirectory)
+}
+
+#[cfg(windows)]
 fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<std::process::ExitStatus> {
     let started = Instant::now();
     loop {

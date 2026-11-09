@@ -433,9 +433,9 @@ impl Settings {
         commit_document(document, storage)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn read(&self) -> Result<(Map<String, Value>, Storage), SettingsError> {
-        use capstan_native_windows::transfer::{Destination, Source};
+        use crate::native_fs::{Destination, Source};
         let destination = Destination::select(&self.path).map_err(storage_error)?;
         let expected = destination.snapshot().map_err(storage_error)?;
         let document = if expected.is_some() {
@@ -464,7 +464,7 @@ impl Settings {
         ))
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     fn read(&self) -> Result<(Map<String, Value>, Storage), SettingsError> {
         let _ = &self.path;
         Err(SettingsError::Unavailable)
@@ -493,7 +493,7 @@ fn decode_editor(document: &Map<String, Value>) -> Result<Option<PathBuf>, Setti
         .transpose()
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn decode_document(bytes: &[u8]) -> Result<Map<String, Value>, SettingsError> {
     if bytes.len() > MAX_SETTINGS_BYTES {
         return Err(SettingsError::Invalid);
@@ -574,7 +574,7 @@ fn decode_recent_hosts(document: &Map<String, Value>) -> Result<Vec<uuid::Uuid>,
     Ok(history)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn storage_error(error: std::io::Error) -> SettingsError {
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         SettingsError::Changed
@@ -583,12 +583,12 @@ fn storage_error(error: std::io::Error) -> SettingsError {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 struct Storage {
-    destination: capstan_native_windows::transfer::Destination,
-    expected: Option<capstan_native_windows::transfer::Version>,
+    destination: crate::native_fs::Destination,
+    expected: Option<crate::native_fs::Version>,
 }
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 impl Storage {
     fn commit(mut self, bytes: &[u8]) -> Result<(), SettingsError> {
         self.destination
@@ -603,9 +603,9 @@ impl Storage {
             .map_err(storage_error)
     }
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 struct Storage;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 impl Storage {
     fn commit(self, _: &[u8]) -> Result<(), SettingsError> {
         Err(SettingsError::Unavailable)
@@ -671,7 +671,7 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[tokio::test]
     async fn desktop_writes_preserve_existing_and_unknown_settings() {
         let root = tempfile::tempdir().unwrap();
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(saved["systemNotifications"], false);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[tokio::test]
     async fn recent_history_is_opt_in_bounded_and_cleared_without_changing_other_preferences() {
         use crate::launch::recent::HistoryChange;
@@ -793,7 +793,7 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[tokio::test]
     async fn quake_settings_are_atomic_and_invalid_edits_leave_the_previous_shortcut_intact() {
         let root = tempfile::tempdir().unwrap();
@@ -837,7 +837,7 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[tokio::test]
     async fn ordered_async_writes_reject_foreign_sessions_and_drain_before_exit() {
         let root = tempfile::tempdir().unwrap();
@@ -887,7 +887,7 @@ mod tests {
         assert_eq!(settings.panel().unwrap(), PanelLayout::default());
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[tokio::test(start_paused = true)]
     async fn coordinated_exit_timeout_keeps_preferences_writable_after_recovery() {
         let root = tempfile::tempdir().unwrap();
@@ -947,7 +947,7 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[test]
     fn native_atomic_save_survives_reopen_and_preserves_other_ui_preferences() {
         let root = tempfile::tempdir().unwrap();
@@ -975,7 +975,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     #[test]
     fn malformed_oversize_and_changed_files_are_preserved() {
         let root = tempfile::tempdir().unwrap();

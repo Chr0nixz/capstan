@@ -191,7 +191,7 @@ fn parses_iterm_xml_and_rejects_missing_components_entities_and_depth() {
     );
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[test]
 fn preview_is_read_only_until_confirmed_and_catalog_updates_atomically() {
     let directory = tempfile::tempdir().unwrap();

@@ -438,17 +438,15 @@ async fn batch(env: Environment) {
                 transfers
                     .grant_source(
                         &context,
-                        Arc::new(
-                            capstan_native_windows::transfer::Source::open(&env.input).unwrap(),
-                        ),
+                        Arc::new(capstan_core::native_fs::Source::open(&env.input).unwrap()),
                     )
                     .unwrap()
             } else {
                 transfers
                     .grant_destination(
                         &context,
-                        Arc::new(WindowsDestination::new(
-                            capstan_native_windows::transfer::Destination::select(
+                        Arc::new(NativeDestination::new(
+                            capstan_core::native_fs::Destination::select(
                                 &env.workspace.join(format!("matrix-returned-{index}.bin")),
                             )
                             .unwrap(),
@@ -633,7 +631,7 @@ impl LocalSource for ReadSource {
     }
 }
 struct WrittenDestination {
-    inner: WindowsDestination,
+    inner: NativeDestination,
     written: AtomicU64,
     first_offset: AtomicU64,
 }
@@ -712,8 +710,8 @@ async fn resume(env: Environment) {
     };
     let local_path = env.workspace.join("resume-returned.bin");
     let destination = Arc::new(WrittenDestination {
-        inner: WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&local_path).unwrap(),
+        inner: NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&local_path).unwrap(),
         ),
         written: AtomicU64::new(0),
         first_offset: AtomicU64::new(u64::MAX),
@@ -723,7 +721,7 @@ async fn resume(env: Environment) {
         transfers
             .grant_source(
                 &context,
-                Arc::new(capstan_native_windows::transfer::Source::open(&env.input).unwrap()),
+                Arc::new(capstan_core::native_fs::Source::open(&env.input).unwrap()),
             )
             .unwrap()
     } else {
@@ -784,7 +782,7 @@ async fn resume(env: Environment) {
     };
     assert!(retained > 0 && retained < env.bytes);
     let source = Arc::new(ReadSource {
-        inner: Arc::new(capstan_native_windows::transfer::Source::open(&env.input).unwrap()),
+        inner: Arc::new(capstan_core::native_fs::Source::open(&env.input).unwrap()),
         read_bytes: AtomicU64::new(0),
     });
     if env.direction == "upload" {

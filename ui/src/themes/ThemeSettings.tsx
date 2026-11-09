@@ -5,6 +5,7 @@ import { useConfirm } from "../ui/ConfirmDialog";
 import { saveDesktopPreference, useDesktopPreferences, useTerminalThemes } from "./store";
 import type { DesktopPreference, TerminalThemeDefinition, ThemePreview } from "./contracts";
 import { QuakeSettings } from "../window/QuakeSettings";
+import { isMacOS } from "../window/platform";
 
 type Locale = keyof typeof copy;
 
@@ -92,7 +93,7 @@ export function ThemeSettings({ locale }: { locale: Locale }): ReactElement {
     <div className="settings-group">
       <label className="check-row"><input type="checkbox" checked={preferences.copyOnSelect} disabled={!ready || saving}
         onChange={(event) => changePreference("copyOnSelect", event.currentTarget.checked)} />{labels.copyOnSelect}</label>
-      <label className="check-row"><input type="checkbox" checked={preferences.systemNotifications} disabled={!ready || saving}
+      {!isMacOS() && <><label className="check-row"><input type="checkbox" checked={preferences.systemNotifications} disabled={!ready || saving}
         onChange={(event) => changePreference("systemNotifications", event.currentTarget.checked)} />{labels.systemNotifications}</label>
       <label className="check-row"><input type="checkbox" checked={preferences.jumpListRecentHosts} disabled={!ready || saving}
         onChange={(event) => changePreference("jumpListRecentHosts", event.currentTarget.checked)} />{labels.jumpListRecentHosts}</label>
@@ -102,7 +103,7 @@ export function ThemeSettings({ locale }: { locale: Locale }): ReactElement {
         void invokeTauri("clear_recent_hosts").then(() => setRecentCleared(true))
           .catch(() => setPreferenceError(true)).finally(() => setBusy(false));
       }}>{labels.clearRecentHosts}</button>
-      {recentCleared && <p role="status" className="quiet-copy">{labels.recentHostsCleared}</p>}
+      {recentCleared && <p role="status" className="quiet-copy">{labels.recentHostsCleared}</p>}</>}
       {(preferenceError || preferencesLoadError) && <p className="sftp-dialog-error" role="alert">{labels.desktopPreferencesError}</p>}
     </div>
     <QuakeSettings locale={locale} />

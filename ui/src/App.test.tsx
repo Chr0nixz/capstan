@@ -474,6 +474,19 @@ describe("App host workflows", () => {
     }));
   });
 
+  it("marks a production host's trusted key with the production chip", async () => {
+    const key = { target: host.address, port: host.port, algorithm: "ssh-ed25519", fingerprint: "SHA256:prod-key", first_trusted_at: 1_800_000_000 };
+    invoke.mockImplementation(async (command: string, args?: unknown) => command === "list_trusted_host_keys" ? [key]
+      : command === "list_hosts" ? [{ ...host, production: true }] : defaultInvoke(command, args));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<App />); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    await openSettings("Host keys");
+    const row = container.querySelector(".trust-manager li");
+    expect(row?.querySelector("strong")?.textContent).toBe(`${host.name}${copy.en.production}`);
+    expect(row?.querySelector(".prod-chip")).not.toBeNull();
+  });
+
   it("shows redacted host trust and requires confirmation before forgetting it", async () => {
     const key = {
       target: "build.example.test", port: 2222, algorithm: "ssh-ed25519",
@@ -785,6 +798,37 @@ describe("App host workflows", () => {
     expect([...container.querySelectorAll(".terminal-tab")].filter((tab) => tab.textContent?.includes("Build Server"))).toHaveLength(2);
   });
 
+  it("asks before Escape or a click outside drops unsaved host edits", async () => {
+    const editor = () => container.querySelector<HTMLFormElement>("form.host-editor");
+    const escape = async () => act(async () => {
+      editor()!.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    // An untouched editor closes at once.
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Edit host: Build Server']")?.click(); });
+    await escape();
+    expect(editor()).toBeNull();
+    expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Edit host: Build Server']")?.click(); });
+    const name = editor()!.querySelector<HTMLInputElement>("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "Build Server 2");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await escape();
+    const dialog = document.body.querySelector("[role='alertdialog']");
+    expect(dialog?.textContent).toContain(copy.en.confirmDiscardHostTitle("Build Server"));
+    expect(document.activeElement?.textContent).toBe(copy.en.keepEditing);
+    await act(async () => { bodyButton(copy.en.keepEditing)?.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(editor()?.querySelector("input")?.value).toBe("Build Server 2");
+
+    await act(async () => { container.querySelector<HTMLElement>(".sheet-scrim")?.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    await act(async () => { bodyButton(copy.en.discardChanges)?.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(editor()).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("save_host", expect.anything());
+  });
+
   it("inherits production from a parent group and saves the host's own switch", async () => {
     invoke.mockImplementation(async (command: string, args?: unknown) => command === "list_hosts"
       ? [{ ...host, group_id: "group-1" }, { ...host, id: "host-2", name: "Lab box" }]
@@ -798,7 +842,13 @@ describe("App host workflows", () => {
     expect(rows.find((row) => row.textContent?.includes("Lab box"))?.dataset.prod).toBeUndefined();
     await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Edit host: Build Server']")?.click(); });
     expect(container.querySelector("#host-production-hint")?.textContent).toBe("Already production through the group Live.");
+    // Inherited production reads as on and locked, and the editor header carries the chip.
+    const inherited = [...container.querySelectorAll<HTMLLabelElement>("form.host-editor label")].find((label) => label.textContent === "Production host")?.querySelector("input");
+    expect(inherited?.checked).toBe(true);
+    expect(inherited?.disabled).toBe(true);
+    expect(container.querySelector("#sheet-title .prod-chip")?.textContent).toBe(copy.en.production);
     await act(async () => { bodyButton("Cancel")?.click(); });
+    expect(container.querySelector("form.host-editor")).toBeNull();
     await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Edit host: Lab box']")?.click(); });
     const production = [...container.querySelectorAll<HTMLLabelElement>("form.host-editor label")].find((label) => label.textContent === "Production host")?.querySelector("input");
     await act(async () => { production?.click(); });
@@ -1061,7 +1111,57 @@ async function openSnippetBroadcast(): Promise<void> {
   await act(async () => { select.value = "broadcast"; select.dispatchEvent(new Event("change", { bubbles: true })); });
 }
 
+async function mountProductionSnippetApp(autoEnter: boolean): Promise<void> {
+  invoke.mockImplementation(async (command, args) => command === "list_snippets" ? [{ ...runSnippet, auto_enter: autoEnter }]
+    : command === "list_hosts" ? [{ ...host, production: true }] : defaultInvoke(command, args));
+  await act(async () => root.unmount());
+  useWorkspace.setState(useWorkspace.getInitialState());
+  root = createRoot(container);
+  await act(async () => {
+    root.render(<App />);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  });
+  await act(async () => useWorkspace.getState().addSshTerminal(host.id as HostId, host.name, "graphite"));
+}
+
 describe("App snippet delivery boundaries", () => {
+  it("asks before a snippet runs a command on a production host and sends nothing on Cancel", async () => {
+    await mountProductionSnippetApp(true);
+    const write = vi.fn(async (_bytes: Uint8Array) => undefined);
+    const unregister = paneInputs.register(activeSnippetTab().focusedPaneId, write);
+    try {
+      await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Open command snippets']")!.click());
+      const destination = container.querySelector(".snippet-destination");
+      expect(destination?.textContent).toContain(host.name);
+      expect(destination?.querySelector(".prod-chip")?.textContent).toBe(copy.en.production);
+      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
+      expect(write).not.toHaveBeenCalled();
+      const text = await answerConfirmation(null);
+      expect(text).toContain(copy.en.confirmSnippetProductionTitle(host.name));
+      expect(text).toContain("echo review");
+      expect(write).not.toHaveBeenCalled();
+      expect(container.querySelector(".snippet-manager")).not.toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
+      await answerConfirmation(copy.en.confirmSnippetProductionSend(host.name));
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("echo review\r");
+      expect(container.querySelector(".snippet-manager")).toBeNull();
+    } finally { unregister(); }
+  });
+
+  it("inserts a one-line snippet without Enter into a production pane without asking", async () => {
+    await mountProductionSnippetApp(false);
+    const write = vi.fn(async (_bytes: Uint8Array) => undefined);
+    const unregister = paneInputs.register(activeSnippetTab().focusedPaneId, write);
+    try {
+      await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Open command snippets']")!.click());
+      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
+      expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("echo review");
+    } finally { unregister(); }
+  });
+
   it("refreshes after a vault conflict and preserves the snippet draft for an explicit retry", async () => {
     await mountSnippetApp();
     let revision = 3, name = runSnippet.name;
@@ -1091,7 +1191,7 @@ describe("App snippet delivery boundaries", () => {
     expect(saved[0].expectedRevision).toBe("3");
     expect(editor.querySelector("[role='alert']")?.textContent).toBe(copy.en.snippetConflict);
     expect(input.value).toBe("My preserved draft");
-    expect(container.querySelector(".snippet-run")?.textContent).toContain("Concurrent update");
+    expect(container.querySelector(".snippet-list")?.textContent).toContain("Concurrent update");
     expect(container.querySelector(".message-stack")?.textContent).not.toContain(copy.en.connectionFailed);
     await act(async () => editor.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(saved).toHaveLength(2);
@@ -1172,11 +1272,13 @@ describe("App snippet delivery boundaries", () => {
       await chooseSnippetAction();
       expect(write).toHaveBeenCalledTimes(1);
       expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("echo review\r");
-      expect(container.querySelector(".snippet-manager")).not.toBeNull();
+      // A delivered run closes the sheet so the output is visible.
+      expect(container.querySelector(".snippet-manager")).toBeNull();
 
+      await act(async () => container.querySelector<HTMLButtonElement>("button[aria-label='Open command snippets']")!.click());
       await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
       expect(write).toHaveBeenCalledTimes(2);
-      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-manager button[aria-label='Close panel']")!.click());
+      expect(container.querySelector(".snippet-manager")).toBeNull();
       await openSnippetPalette();
       await chooseSnippetAction();
       expect(write).toHaveBeenCalledTimes(3);
@@ -1285,7 +1387,9 @@ describe("App snippet delivery boundaries", () => {
       await answerConfirmation(copy.en.confirmBroadcastSend(1));
       expect(write).toHaveBeenCalledTimes(1);
       expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe(autoEnter ? "echo review\r" : "echo review");
-      expect(container.querySelector(".snippet-manager [role='status']")?.textContent).toContain(copy.en.snippetSent);
+      expect(container.querySelector(".snippet-manager")).toBeNull();
+      expect(container.querySelector(".message-stack [role='status']")?.textContent).toContain(copy.en.snippetSent);
+      await openSnippetBroadcast();
       await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
       expect(write).toHaveBeenCalledTimes(1);
       await answerConfirmation(null);

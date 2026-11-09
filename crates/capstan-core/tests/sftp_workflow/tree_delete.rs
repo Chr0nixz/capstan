@@ -175,7 +175,7 @@ async fn recursive_delete_cancellation_waits_for_the_admitted_ack_and_retains_th
     let settings = Arc::new(capstan_core::settings::Settings::new(
         settings_root.path().to_owned(),
     ));
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     let settings_session = settings.snapshot().unwrap().session;
     let transfers = TransferService::default();
     state.stall_remove.store(true, Ordering::SeqCst);
@@ -200,7 +200,7 @@ async fn recursive_delete_cancellation_waits_for_the_admitted_ack_and_retains_th
         assert!(tokio::time::timeout(Duration::from_millis(30), &mut exit)
             .await
             .is_err());
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         assert_eq!(
             settings
                 .clone()

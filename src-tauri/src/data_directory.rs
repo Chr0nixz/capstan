@@ -8,6 +8,18 @@ pub const PORTABLE_MARKER_CONTENT: &[u8] = b"CAPSTAN_PORTABLE_V1";
 const PORTABLE_DATA_DIRECTORY: &str = "data";
 static PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(target_os = "macos")]
+#[cfg_attr(not(feature = "tauri-runtime"), allow(dead_code))]
+pub(crate) fn lock_instance(directory: &Path) -> io::Result<fs::File> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join(".capstan.lock"))?;
+    file.try_lock().map_err(io::Error::from)?;
+    Ok(file)
+}
+
 /// Select the portable data directory only when the executable's sibling marker is valid.
 /// The chosen directory is created and checked for write access before it is returned.
 pub fn resolve_data_directory(executable: &Path, roaming_data: &Path) -> io::Result<PathBuf> {
@@ -61,6 +73,21 @@ mod tests {
     use super::{resolve_data_directory, PORTABLE_MARKER_CONTENT, PORTABLE_MARKER_NAME};
     use std::fs;
     use std::io::ErrorKind;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_second_instance_cannot_write_to_the_same_data_directory() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let held = super::lock_instance(root.path()).expect("first lock");
+        assert_eq!(
+            super::lock_instance(root.path())
+                .expect_err("second lock")
+                .kind(),
+            ErrorKind::WouldBlock
+        );
+        drop(held);
+        super::lock_instance(root.path()).expect("lock after process exits");
+    }
 
     #[test]
     fn absent_marker_uses_the_roaming_directory_even_if_data_exists_next_to_executable() {

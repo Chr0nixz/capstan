@@ -414,7 +414,7 @@ async fn dropping_the_last_browser_and_data_users_releases_all_subsystems_before
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn exit_drains_a_canceled_data_subsystem_even_when_the_primary_has_no_pending_work() {
     use capstan_core::transfer::{TransferService, TransferState};

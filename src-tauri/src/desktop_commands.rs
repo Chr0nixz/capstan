@@ -1,20 +1,23 @@
-//! Native taskbar updates and text-only background notifications.
+//! Native transfer progress and text-only Windows background notifications.
 use crate::CommandError;
 use capstan_core::{
-    desktop::{
-        taskbar_progress, DesktopTransfer, NoticeQueue, NoticeSummary, NoticeTracker,
-        ProgressState, TaskbarProgress,
-    },
-    settings::Settings,
+    desktop::{taskbar_progress, DesktopTransfer, ProgressState, TaskbarProgress},
     sftp::{ExactU64, LOCAL_GRANT_LIFETIME_SECONDS},
     transfer::{TransferService, TreePlanSummary},
     VaultManager,
 };
+#[cfg(windows)]
+use capstan_core::{
+    desktop::{NoticeQueue, NoticeSummary, NoticeTracker},
+    settings::Settings,
+};
+#[cfg(windows)]
+use std::sync::atomic::AtomicBool;
 use std::{
     collections::HashMap,
     path::Path,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -30,6 +33,7 @@ pub struct DesktopState {
     scanning: AtomicUsize,
     tree_conflicts: Mutex<HashMap<Uuid, Instant>>,
     acknowledged: Mutex<HashMap<Uuid, u64>>,
+    #[cfg(windows)]
     chinese: AtomicBool,
 }
 
@@ -56,7 +60,10 @@ impl DesktopState {
     }
 
     pub fn set_locale(&self, locale: &str) {
+        #[cfg(windows)]
         self.chinese.store(locale == "zh-CN", Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let _ = locale;
     }
 
     fn progress(&self, tasks: &[DesktopTransfer], now: Instant) -> TaskbarProgress {
@@ -139,6 +146,7 @@ fn send_progress(window: &WebviewWindow, progress: TaskbarProgress) -> tauri::Re
     })
 }
 
+#[cfg(windows)]
 fn toast_body(summary: NoticeSummary, chinese: bool) -> String {
     let mut lines = Vec::new();
     if summary.completed != 0 {
@@ -165,6 +173,7 @@ fn toast_body(summary: NoticeSummary, chinese: bool) -> String {
     lines.join(" · ")
 }
 
+#[cfg(windows)]
 pub fn install(window: &WebviewWindow, executable: &Path, portable: bool) {
     let app_id = window.config().identifier.clone();
     let shortcut = std::env::var_os("APPDATA").map(|root| {
@@ -289,6 +298,44 @@ pub fn install(window: &WebviewWindow, executable: &Path, portable: bool) {
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn install(window: &WebviewWindow, _: &Path, _: bool) {
+    let vault = window.state::<Arc<VaultManager>>().inner().clone();
+    let desktop = window.state::<Arc<DesktopState>>().inner().clone();
+    let transfers = window.state::<Arc<TransferService>>().inner().clone();
+    let stop = CancellationToken::new();
+    let window_stop = stop.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            window_stop.cancel();
+        }
+    });
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut last = TaskbarProgress::default();
+        loop {
+            let delay = if matches!(
+                last.state,
+                ProgressState::Normal | ProgressState::Indeterminate
+            ) {
+                SAMPLE_INTERVAL
+            } else {
+                Duration::from_secs(1)
+            };
+            tokio::select! {
+                () = stop.cancelled() => break,
+                () = tokio::time::sleep(delay) => {}
+            }
+            if let Ok(tasks) = vault.desktop_transfers(&transfers, window.label()) {
+                let progress = desktop.progress(&tasks, Instant::now());
+                if progress != last && send_progress(&window, progress).is_ok() {
+                    last = progress;
                 }
             }
         }

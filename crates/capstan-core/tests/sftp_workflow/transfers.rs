@@ -4,19 +4,19 @@ use capstan_core::transfer::{
     Decision, TransferService, TransferSnapshot, TransferState, TransferTarget,
 };
 use std::sync::Mutex;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "connection_recovery.rs"]
 mod connection_recovery;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "download_recovery.rs"]
 mod download_recovery;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "folder_conflicts.rs"]
 mod folder_conflicts;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "mixed_load.rs"]
 mod mixed_load;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "native_transfers.rs"]
 mod native_transfers;
 #[path = "remote_edits.rs"]
@@ -25,7 +25,7 @@ mod remote_edits;
 mod shell_transactions;
 #[path = "tree_delete.rs"]
 mod tree_delete;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[path = "tree_plans.rs"]
 mod tree_plans;
 
@@ -621,7 +621,7 @@ pub(super) async fn finished(service: &TransferService, id: Uuid) -> TransferSna
     })
     .await
 }
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub(super) fn enqueue_upload(
     fixture: &Fixture,
     session: SftpSessionId,
@@ -633,13 +633,13 @@ pub(super) fn enqueue_upload(
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(source).unwrap()),
         )
         .unwrap();
     transfers.enqueue(context, selection.token).unwrap()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn native_files_roundtrip_with_short_reads_empty_files_and_full_hashes() {
     use sha2::{Digest, Sha256};
@@ -684,8 +684,8 @@ async fn native_files_roundtrip_with_short_reads_empty_files_and_full_hashes() {
             )
             .unwrap();
         let output = root.path().join(format!("output-{name}"));
-        let local = capstan_core::transfer::WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+        let local = capstan_core::transfer::NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&output).unwrap(),
         );
         let selection = transfers
             .grant_destination(&context, Arc::new(local))
@@ -705,7 +705,7 @@ async fn native_files_roundtrip_with_short_reads_empty_files_and_full_hashes() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn conflict_decision_is_single_use_and_rechecked_after_write() {
     let (fixture, session, transfers) = fixture().await;
@@ -771,7 +771,7 @@ async fn conflict_decision_is_single_use_and_rechecked_after_write() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn missing_extensions_refuse_replacement_and_allow_explicit_save_as() {
     let fixture = Fixture::new().await;
@@ -826,7 +826,7 @@ async fn missing_extensions_refuse_replacement_and_allow_explicit_save_as() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn remote_write_commit_and_hash_failures_preserve_targets_and_remove_partials() {
     for fault in 0..3 {
@@ -866,6 +866,7 @@ async fn remote_write_commit_and_hash_failures_preserve_targets_and_remove_parti
     }
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
 #[cfg(windows)]
 #[tokio::test]
 async fn failed_upload_cleanup_preserves_a_replaced_remote_temporary() {
@@ -920,6 +921,7 @@ async fn failed_upload_cleanup_preserves_a_replaced_remote_temporary() {
     fixture.close().await;
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
 #[cfg(windows)]
 #[tokio::test]
 async fn failed_owned_upload_cleanup_keeps_a_baseline_bound_cleanup_record() {
@@ -969,7 +971,7 @@ async fn failed_owned_upload_cleanup_keeps_a_baseline_bound_cleanup_record() {
     let grant = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     assert_eq!(
@@ -997,7 +999,7 @@ async fn failed_owned_upload_cleanup_keeps_a_baseline_bound_cleanup_record() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn rejected_exclusive_open_does_not_report_a_nonexistent_partial() {
     let (fixture, session, transfers) = fixture().await;
@@ -1016,7 +1018,7 @@ async fn rejected_exclusive_open_does_not_report_a_nonexistent_partial() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn lost_commit_ack_is_verified_read_only_on_the_same_transport_without_replay() {
     let (fixture, session, transfers) = fixture().await;
@@ -1045,7 +1047,7 @@ async fn lost_commit_ack_is_verified_read_only_on_the_same_transport_without_rep
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn task_lease_survives_originating_terminal_revocation() {
     let (fixture, session, transfers) = fixture().await;
@@ -1072,7 +1074,7 @@ async fn task_lease_survives_originating_terminal_revocation() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn three_worker_limit_queued_cancel_and_inflight_cancel_keep_targets() {
     let (fixture, session, transfers) = fixture().await;
@@ -1185,13 +1187,13 @@ async fn revocation_during_attachment_is_prompt_and_does_not_register_a_view() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub(super) struct FaultDestination {
-    pub(super) inner: capstan_core::transfer::WindowsDestination,
+    pub(super) inner: capstan_core::transfer::NativeDestination,
     pub(super) fault: u8,
     pub(super) hold: Option<Arc<CommitHold>>,
 }
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[derive(Default)]
 pub(super) struct CommitHold {
     entered: AtomicUsize,
@@ -1199,7 +1201,7 @@ pub(super) struct CommitHold {
     pub(super) released: Mutex<bool>,
     pub(super) changed: std::sync::Condvar,
 }
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 impl capstan_core::transfer::LocalDestination for FaultDestination {
     fn name(&self) -> Result<String, SftpError> {
         self.inner.name()
@@ -1292,10 +1294,11 @@ impl capstan_core::transfer::LocalDestination for FaultDestination {
     }
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
 #[cfg(windows)]
 #[tokio::test]
 async fn failed_download_discard_keeps_an_identity_bound_cleanup_record() {
-    use capstan_core::transfer::WindowsDestination;
+    use capstan_core::transfer::NativeDestination;
     let (fixture, session, transfers) = fixture().await;
     fixture
         .observations
@@ -1316,8 +1319,8 @@ async fn failed_download_discard_keeps_an_identity_bound_cleanup_record() {
         .grant_destination(
             &context,
             Arc::new(FaultDestination {
-                inner: WindowsDestination::new(
-                    capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+                inner: NativeDestination::new(
+                    capstan_core::native_fs::Destination::select(&output).unwrap(),
                 ),
                 fault: 4,
                 hold: None,
@@ -1345,8 +1348,8 @@ async fn failed_download_discard_keeps_an_identity_bound_cleanup_record() {
         transfers.recovery_snapshot().unwrap().entries[0].state,
         capstan_core::transfer::RecoveryState::CleanupRequired
     );
-    let destination = Arc::new(WindowsDestination::new(
-        capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+    let destination = Arc::new(NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&output).unwrap(),
     ));
     let selection = transfers
         .grant_recovered_destination("main", id, &context, destination)
@@ -1362,7 +1365,7 @@ async fn failed_download_discard_keeps_an_identity_bound_cleanup_record() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn local_write_flush_and_commit_failures_keep_existing_files_and_clean_by_handle() {
     let (fixture, session, transfers) = fixture().await;
@@ -1380,8 +1383,8 @@ async fn local_write_flush_and_commit_failures_keep_existing_files_and_clean_by_
             .transfer_context("main", "one", session, TransferTarget::Download { entry })
             .unwrap();
         let destination = FaultDestination {
-            inner: capstan_core::transfer::WindowsDestination::new(
-                capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+            inner: capstan_core::transfer::NativeDestination::new(
+                capstan_core::native_fs::Destination::select(&output).unwrap(),
             ),
             fault,
             hold: None,
@@ -1410,7 +1413,7 @@ async fn local_write_flush_and_commit_failures_keep_existing_files_and_clean_by_
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn concurrent_download_publication_rechecks_the_target_after_the_previous_commit() {
     let (fixture, session, transfers) = fixture().await;
@@ -1430,8 +1433,8 @@ async fn concurrent_download_publication_rechecks_the_target_after_the_previous_
             .transfer_context("main", "one", session, TransferTarget::Download { entry })
             .unwrap();
         let destination = FaultDestination {
-            inner: capstan_core::transfer::WindowsDestination::new(
-                capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+            inner: capstan_core::transfer::NativeDestination::new(
+                capstan_core::native_fs::Destination::select(&output).unwrap(),
             ),
             fault: 3,
             hold: Some(hold.clone()),
@@ -1495,7 +1498,7 @@ async fn concurrent_download_publication_rechecks_the_target_after_the_previous_
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn selection_tokens_are_owner_bound_single_use_and_releasable() {
     let (fixture, session, transfers) = fixture().await;
@@ -1512,7 +1515,7 @@ async fn selection_tokens_are_owner_bound_single_use_and_releasable() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     let other_context = fixture
@@ -1548,7 +1551,7 @@ async fn selection_tokens_are_owner_bound_single_use_and_releasable() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     transfers
@@ -1559,7 +1562,7 @@ async fn selection_tokens_are_owner_bound_single_use_and_releasable() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn skip_and_exit_drain_do_not_commit_or_leave_local_grants() {
     let (fixture, session, transfers) = fixture().await;
@@ -1600,7 +1603,7 @@ async fn skip_and_exit_drain_do_not_commit_or_leave_local_grants() {
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn configured_openssh_core_file_workflow() {
     use sha2::{Digest, Sha256};
@@ -1718,7 +1721,7 @@ async fn configured_openssh_core_file_workflow() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     let id = transfers.enqueue(context, selection.token).unwrap();
@@ -1741,7 +1744,7 @@ async fn configured_openssh_core_file_workflow() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     let id = transfers.enqueue(context, selection.token).unwrap();
@@ -1774,8 +1777,8 @@ async fn configured_openssh_core_file_workflow() {
         )
         .unwrap();
     let output = local.path().join("output.bin");
-    let destination = capstan_core::transfer::WindowsDestination::new(
-        capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+    let destination = capstan_core::transfer::NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&output).unwrap(),
     );
     let selection = transfers
         .grant_destination(&context, Arc::new(destination))
@@ -2009,8 +2012,8 @@ async fn owned_payload_peak_stays_constant_when_native_file_size_doubles() {
             )
             .unwrap();
         let output = local.path().join(format!("returned-{size}.bin"));
-        let destination = capstan_core::transfer::WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+        let destination = capstan_core::transfer::NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&output).unwrap(),
         );
         let selection = transfers
             .grant_destination(&context, Arc::new(destination))

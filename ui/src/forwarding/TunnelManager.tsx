@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEventHandler, type ReactElement, type Ref } from "react";
 import { copy } from "../i18n";
-import { CloseIcon, PencilIcon, PlusIcon, TrashIcon, TunnelIcon } from "../ui/icons";
+import { AlertIcon, CloseIcon, PencilIcon, PlusIcon, RetryIcon, TrashIcon, TunnelIcon } from "../ui/icons";
 import { formatBytes } from "../ui/format";
 import type { ConfirmRequest } from "../ui/ConfirmDialog";
 import type { HostView } from "../terminal/contracts";
@@ -56,6 +56,8 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
   const [error, setError] = useState("");
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const pending = useRef(new Set<string>());
   const runtimeRequests = useRef(new Map<string, number>());
   const busy = pendingKeys.has("config");
@@ -65,6 +67,8 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
   useEffect(() => {
     alive.current = true;
     let disposed = false;
+    setLoading(true);
+    setLoadFailed(false);
     const cleanup: Array<() => void> = [];
     const install = async (watch: Promise<() => void>): Promise<void> => {
       const stop = await watch;
@@ -74,9 +78,9 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
       tunnelApi.list().then((next) => { if (!disposed) setConfigs(next); }),
       install(watchTunnels((snapshot) => { if (!disposed) setSnapshots((current) => ({ ...current, [snapshot.id]: snapshot })); })),
       install(watchConnections((snapshot) => { if (!disposed) setConnections((current) => ({ ...current, [snapshot.connectionId]: snapshot })); })),
-    ]).catch(() => { if (!disposed) setError(labels.tunnelLoadFailed); }).finally(() => { if (!disposed) setLoading(false); });
+    ]).catch(() => { if (!disposed) setLoadFailed(true); }).finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; alive.current = false; cleanup.forEach((stop) => stop()); };
-  }, []);
+  }, [loadAttempt]);
   const run = async (operation: () => Promise<void>, key = "config"): Promise<void> => {
     if (pending.current.has(key)) return;
     pending.current.add(key); setPendingKeys(new Set(pending.current)); setError("");
@@ -120,9 +124,12 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
   return <aside ref={panelRef} className="sheet tunnel-manager" role="dialog" aria-labelledby="tunnel-title" tabIndex={-1} onKeyDown={onKeyDown}>
     <header className="sheet-header"><h2 id="tunnel-title"><TunnelIcon size={14} />{labels.tunnels}</h2><button className="icon-button" type="button" title={labels.closePanel} aria-label={labels.closePanel} onClick={onClose}><CloseIcon /></button></header>
     <div className="sheet-body">
-      <div className="tunnel-toolbar"><button type="button" disabled={busy || loading || hosts.length === 0} onClick={() => { setError(""); setDraft(freshDraft(hosts[0]?.id ?? "")); }}><PlusIcon size={14} />{labels.tunnelNew}</button></div>
+      <div className="tunnel-toolbar"><button type="button" disabled={busy || loading || loadFailed || hosts.length === 0} onClick={() => { setError(""); setDraft(freshDraft(hosts[0]?.id ?? "")); }}><PlusIcon size={14} />{labels.tunnelNew}</button></div>
       {error && <p role="alert" className="inline-error">{error}</p>}
-      {loading ? <p role="status">{labels.tunnelLoading}</p> : configs.length === 0 && <p className="tunnel-help">{hosts.length === 0 ? labels.noHosts : labels.tunnelEmpty}</p>}
+      {/* A failed load replaces the empty state: "no tunnels" would be a guess. */}
+      {loadFailed ? <p role="alert" className="inline-error"><AlertIcon size={14} /><span>{labels.tunnelLoadFailed}</span>
+        <button type="button" className="ghost-button" disabled={loading} onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RetryIcon size={14} />{labels.tunnelRetryLoad}</button></p>
+        : loading ? <p role="status">{labels.tunnelLoading}</p> : configs.length === 0 && <p className="tunnel-help">{hosts.length === 0 ? labels.noHosts : labels.tunnelEmpty}</p>}
       <ul className="tunnel-list" aria-label={labels.tunnels}>{configs.map((config) => {
         const host = hosts.find((item) => item.id === config.host_id);
         const snapshot = snapshots[config.id];

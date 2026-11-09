@@ -16,6 +16,8 @@ import { activateTerminalLink } from "./security";
 import { ArrowDownIcon, ArrowUpIcon, CheckIcon, CloseIcon, RetryIcon } from "../ui/icons";
 import { flushSync } from "react-dom";
 import { saveDesktopPreference, useDesktopPreferences, useTerminalThemes } from "../themes/store";
+import { isMacOS, primaryModifier } from "../window/platform";
+import { useConfirm } from "../ui/ConfirmDialog";
 
 export type TerminalPaneLabels = {
   localShell: string;
@@ -53,6 +55,9 @@ export type TerminalPaneLabels = {
   osc52ReadBlocked: string;
   osc52WriteFailed: string;
   confirmExternalLink: (protocol: string, url: string) => string;
+  terminalConfirmTitle: string;
+  terminalConfirmAccept: string;
+  cancelEdit: string;
   externalLinkFailed: string;
   sessionEnded: string;
   sessionFailed: string;
@@ -128,6 +133,23 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
     else onRestart?.();
   };
   const labelsRef = useRef(labels);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  const [askInApp, confirmDialog] = useConfirm();
+  const openConfirmations = useRef(0);
+  const askRef = useRef((body: string, remote = false): boolean | Promise<boolean> => {
+    // wry implements no WKUIDelegate confirm panel, so on macOS window.confirm
+    // returns false without showing anything.
+    if (!isMacOS()) return window.confirm(body);
+    // A remote program must not swap the question a user is about to answer.
+    if (remote && openConfirmations.current > 0) return false;
+    openConfirmations.current += 1;
+    const current = labelsRef.current;
+    return askInApp({
+      title: current.terminalConfirmTitle, body, confirm: current.terminalConfirmAccept, cancel: current.cancelEdit,
+      tone: "primary", theme: themeRef.current,
+    }).finally(() => { openConfirmations.current -= 1; });
+  });
   const visibleRef = useRef(visible);
   const inputCallbacksRef = useRef({ confirmBroadcast, onInputResult });
   inputCallbacksRef.current = { confirmBroadcast, onInputResult };
@@ -208,8 +230,11 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       closeSearch();
       return;
     }
-    if (event.ctrlKey && event.shiftKey && event.key.toLocaleLowerCase() === "f") {
+    const mac = isMacOS();
+    if (!event.nativeEvent.isComposing && primaryModifier(event, mac) && !event.altKey && event.shiftKey === !mac
+      && event.key.toLocaleLowerCase() === "f") {
       event.preventDefault();
+      event.stopPropagation();
       setSearchOpen(true);
       return;
     }
@@ -296,12 +321,12 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       // Broadcast confirmation gates the complete encoded input (including
       // bracketed paste) once, before any target receives bytes.
       confirmMultilinePaste: (lineCount) => !!paneId && !!useWorkspace.getState().tabs.find((tab) => tab.id === tabId)?.broadcastEnabled
-        || window.confirm(labelsRef.current.confirmMultilinePaste(lineCount)),
+        || askRef.current(labelsRef.current.confirmMultilinePaste(lineCount)),
       copyOnSelect: () => useDesktopPreferences.getState().preferences.copyOnSelect,
       readClipboard: () => navigator.clipboard.readText(),
       writeSelectionClipboard: async (text) => navigator.clipboard.writeText(text),
       onSelectionCopyFailed: () => setMenuError(labelsRef.current.terminalClipboardError),
-      confirmOsc52Write: (characterCount) => window.confirm(labelsRef.current.confirmOsc52Write(characterCount)),
+      confirmOsc52Write: (characterCount) => askRef.current(labelsRef.current.confirmOsc52Write(characterCount), true),
       writeOsc52Clipboard: (text) => navigator.clipboard.writeText(text),
       onOsc52ReadBlocked: () => localMessage(labelsRef.current.osc52ReadBlocked),
       onOsc52WriteFailed: () => localMessage(labelsRef.current.osc52WriteFailed),
@@ -309,7 +334,7 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       onActivateLink: (uri) => {
         activateTerminalLink(
           uri,
-          (url) => window.confirm(labelsRef.current.confirmExternalLink(url.protocol, url.href)),
+          (url) => askRef.current(labelsRef.current.confirmExternalLink(url.protocol, url.href)),
           (url) => {
             if (isTauriAvailable()) {
               void invokeTauri("open_external_url", {
@@ -413,6 +438,7 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
   // into xterm. Tab activation and explicit terminal actions request it here.
   useEffect(() => { if (visible && focused) sessionRef.current?.focus(); }, [visible, focusRequest, tabId, launch]);
   return <div className="terminal-pane-root" onKeyDownCapture={onPaneKeyDown}>
+    {confirmDialog}
     {searchOpen && <form className="terminal-search-toolbar" onSubmit={(event) => { event.preventDefault(); moveMatch(1); }}>
       <input
         ref={searchInputRef}

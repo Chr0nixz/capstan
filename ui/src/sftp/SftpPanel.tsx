@@ -15,6 +15,7 @@ import { TreeTransferDialog } from "../transfers/TreeTransferDialog";
 import { sftpCopy } from "./copy";
 import { tauriSftpTransport } from "./transport";
 import { remoteEditors } from "../editors/controller";
+import { supportsNativeExport, supportsRemoteEditing } from "../window/platform";
 import type { FileKind, Mutation, RemoteEntryId, Shell, ShellAction, ShellPreview, SftpErrorCode, SftpSessionId } from "./contracts";
 import { AlertIcon, ArrowRightIcon, ArrowUpIcon, CheckIcon, CollapseIcon, CopyIcon, DockBottomIcon, DockRightIcon, DownloadIcon, ExportIcon, ExternalEditIcon, EyeIcon, FileIcon, FilePlusIcon, FolderDownloadIcon, FolderIcon, FolderPlusIcon, FolderUploadIcon, FollowIcon, KeyIcon, LinkIcon, MoreIcon, PencilIcon, RefreshIcon, ShellIcon, TrashIcon, UploadIcon } from "../ui/icons";
 
@@ -281,6 +282,8 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
   }, [state.page]);
   const entries = state.page?.entries.filter((entry) => showHidden || !entry.name.startsWith(".")) ?? [];
   const selected = state.page?.entries.find((entry) => entry.id === state.selected);
+  // One Tab stop for the whole table (the selected row, else the first); arrows move within it.
+  const tabbableEntry = entries.some((entry) => entry.id === state.selected) ? state.selected : entries[0]?.id;
   const error = state.error ? labels.errors[state.error as SftpErrorCode] : null;
   const preferencesMessage = preferencesError === "load" ? labels.preferencesLoadFailed : labels.preferencesSaveFailed;
   const navigate = async (nextPath: string): Promise<void> => {
@@ -353,7 +356,12 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
   };
   const openEntry = (entry: typeof selected): void => {
     if (state.busy || !entry) return;
-    if (entry.metadata.kind === "file") { void openEditor(entry); return; }
+    if (entry.metadata.kind === "file") {
+      if (supportsRemoteEditing()) void openEditor(entry);
+      else if (entry.id === state.selected) void beginTransfer(true);
+      else controller.select(entry.id);
+      return;
+    }
     if (entry.metadata.kind !== "directory" && entry.metadata.kind !== "symlink") return;
     const base = state.page?.path ?? "/";
     void navigate(base === "/" ? `/${entry.name}` : `${base}/${entry.name}`);
@@ -430,14 +438,14 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
   const menuItems: Array<MenuItem | "separator"> = [
     { label: transferLabels.uploadFolder, icon: <FolderUploadIcon size={14} />, run: () => void beginFolderTransfer(), disabled: blocked || !state.page },
     { label: transferLabels.downloadFolder, icon: <FolderDownloadIcon size={14} />, run: () => void beginFolderDownload(), disabled: blocked || selected?.metadata.kind !== "directory" },
-    { label: transferLabels.prepareExport, icon: <ExportIcon size={14} />, run: prepareNativeExport, disabled: blocked || !selected || !["file", "directory"].includes(selected.metadata.kind) },
+    ...(supportsNativeExport() ? [{ label: transferLabels.prepareExport, icon: <ExportIcon size={14} />, run: prepareNativeExport, disabled: blocked || !selected || !["file", "directory"].includes(selected.metadata.kind) }] : []),
     "separator",
     { label: labels.newFile, icon: <FilePlusIcon size={14} />, run: () => openDialog({ kind: "create", directory: false }), disabled: state.busy || !state.page },
     { label: labels.rename, icon: <PencilIcon size={14} />, run: () => startRename(), disabled: state.busy || !selected, keys: "F2" },
     { label: labels.permissions, icon: <KeyIcon size={14} />, run: () => openDialog({ kind: "permissions" }, formatMode(selected?.metadata.permissions ?? null)), disabled: state.busy || !canEditMode },
     { label: labels.remove, icon: <TrashIcon size={14} />, run: () => startDelete(), disabled: state.busy || !selected, keys: "Del", danger: true },
     "separator",
-    { label: labels.edit, icon: <ExternalEditIcon size={14} />, run: () => void openEditor(), disabled: state.busy || editorBusy || selected?.metadata.kind !== "file" },
+    ...(supportsRemoteEditing() ? [{ label: labels.edit, icon: <ExternalEditIcon size={14} />, run: () => void openEditor(), disabled: state.busy || editorBusy || selected?.metadata.kind !== "file" }] : []),
     { label: labels.shellIntegration, icon: <ShellIcon size={14} />, run: openIntegration, disabled: state.busy || selected?.metadata.kind !== "file" },
     "separator",
     { label: copyStatus ? labels.copied : labels.copy, icon: copyStatus ? <CheckIcon size={14} className="check-pop" /> : <CopyIcon size={14} />, run: () => { void copyPath(); }, disabled: !state.page },
@@ -452,12 +460,12 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     const kind = entry.metadata.kind;
     const opens = kind === "directory" || kind === "symlink";
     return [
-      opens ? { label: labels.go, icon: <FolderIcon size={14} />, run: () => openEntry(entry), disabled: state.busy, keys: "Enter" }
-        : { label: labels.edit, icon: <ExternalEditIcon size={14} />, run: () => void openEditor(entry), disabled: state.busy || editorBusy || kind !== "file", keys: "Enter" },
+      ...(opens ? [{ label: labels.go, icon: <FolderIcon size={14} />, run: () => openEntry(entry), disabled: state.busy, keys: "Enter" }]
+        : supportsRemoteEditing() ? [{ label: labels.edit, icon: <ExternalEditIcon size={14} />, run: () => void openEditor(entry), disabled: state.busy || editorBusy || kind !== "file", keys: "Enter" }] : []),
       kind === "directory"
         ? { label: transferLabels.downloadFolder, icon: <FolderDownloadIcon size={14} />, run: () => void beginFolderDownload(), disabled: blocked }
         : { label: transferLabels.download, icon: <DownloadIcon size={14} />, run: () => void beginTransfer(true), disabled: blocked || kind !== "file" },
-      { label: transferLabels.prepareExport, icon: <ExportIcon size={14} />, run: prepareNativeExport, disabled: blocked || !["file", "directory"].includes(kind) },
+      ...(supportsNativeExport() ? [{ label: transferLabels.prepareExport, icon: <ExportIcon size={14} />, run: prepareNativeExport, disabled: blocked || !["file", "directory"].includes(kind) }] : []),
       "separator",
       { label: labels.rename, icon: <PencilIcon size={14} />, run: () => startRename(entry), disabled: state.busy, keys: "F2" },
       { label: labels.permissions, icon: <KeyIcon size={14} />, run: () => openDialog({ kind: "permissions" }, formatMode(entry.metadata.permissions)), disabled: state.busy || !canEditMode },
@@ -591,7 +599,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
           onDoubleClick={(event) => { if (!(event.target as HTMLElement).closest("button")) openEntry(entry); }}
           onContextMenu={(event) => { if (state.busy) return; event.preventDefault(); controller.select(entry.id); openMenuAt(event.clientX, event.clientY, event.currentTarget.querySelector<HTMLElement>(".sftp-entry-name")); }}>
           <td><span className="sftp-entry" data-kind={entry.metadata.kind}>{entry.metadata.kind === "directory" ? <FolderIcon size={14} /> : entry.metadata.kind === "symlink" ? <LinkIcon size={14} /> : <FileIcon size={14} />}
-            <button type="button" className="sftp-entry-name" title={entry.name} disabled={state.busy} onClick={() => controller.select(entry.id)} onDoubleClick={() => openEntry(entry)} onKeyDown={(event) => rowKeyDown(event, entry)}>
+            <button type="button" className="sftp-entry-name" title={entry.name} disabled={state.busy} tabIndex={entry.id === tabbableEntry ? 0 : -1} onClick={() => controller.select(entry.id)} onDoubleClick={() => openEntry(entry)} onKeyDown={(event) => rowKeyDown(event, entry)}>
               <span className="sftp-name-head">{head}</span>{tail && <span className="sftp-name-tail">{tail}</span>}
             </button></span></td>
           <td title={entry.metadata.size ?? undefined}>{formatSize(entry.metadata.size)}</td>

@@ -42,6 +42,10 @@ afterEach(() => {
   container.remove();
 });
 
+function runButton(name: string): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(`button[aria-label='Run snippet: ${name}']`);
+}
+
 // The editor and variable form are portaled dialogs, so search the whole document.
 function buttonByText(text: string): HTMLButtonElement | undefined {
   return [...document.body.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === text || button.textContent?.startsWith(text));
@@ -181,12 +185,12 @@ describe("snippet manager run flow", () => {
   it("does not enqueue another run while its send is pending and handles a rejected send", async () => {
     let rejectSend!: (reason: Error) => void;
     onRun.mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { rejectSend = reject; }));
-    const run = buttonByText("Show status")!;
+    const run = runButton("Show status")!;
     await act(async () => { run.click(); run.click(); });
     expect(onRun).toHaveBeenCalledTimes(1);
     expect(run.disabled).toBe(true);
     await act(async () => rejectSend(new Error("backend")));
-    expect(container.querySelector("[role='alert']")?.textContent).toBe(copy.en.operationFailed);
+    expect(container.querySelector("[role='alert']")?.textContent).toBe(copy.en.snippetRunFailed);
     expect(run.disabled).toBe(false);
     expect(onRun).toHaveBeenCalledTimes(1);
   });
@@ -212,16 +216,16 @@ describe("snippet manager run flow", () => {
     await act(async () => editor.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(onSaveSnippet).toHaveBeenCalledExactlyOnceWith(snippets[2]);
 
-    await act(async () => buttonByText("Change directory")!.click());
+    await act(async () => runButton("Change directory")!.click());
     let variable = document.body.querySelector<HTMLInputElement>(".snippet-variable-form input")!;
     expect(variable.value).toBe("/tmp");
     expect(variable.closest("label")?.textContent).toContain("目录");
     await act(async () => buttonByText("Cancel")!.click());
     expect(onRun).not.toHaveBeenCalled();
-    await act(async () => buttonByText("Change directory")!.click());
+    await act(async () => runButton("Change directory")!.click());
     await act(async () => buttonByText("Send to terminal")!.click());
     expect(onRun).toHaveBeenCalledExactlyOnceWith("cd /tmp\r", "current");
-    await act(async () => buttonByText("Change directory")!.click());
+    await act(async () => runButton("Change directory")!.click());
     variable = document.body.querySelector<HTMLInputElement>(".snippet-variable-form input")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(variable, "/srv/项目");
@@ -246,11 +250,37 @@ describe("snippet manager run flow", () => {
     expect(onSaveSnippet).toHaveBeenCalledExactlyOnceWith({ ...snippets[2], template });
 
     await act(async () => root.render(<SnippetManager {...managerProps()} snippets={[{ ...snippets[2], template }]} />));
-    await act(async () => buttonByText("Change directory")!.click());
+    await act(async () => runButton("Change directory")!.click());
     const variables = document.body.querySelectorAll<HTMLInputElement>(".snippet-variable-form input");
     expect([...variables].map((input) => input.value)).toEqual(["web"]);
     await act(async () => buttonByText("Send to terminal")!.click());
     expect(onRun).toHaveBeenCalledExactlyOnceWith("docker ps --format '{{.Names}}' --filter name=web\r", "current");
+  });
+
+  it("shows each command on its card and sends only from the Run key", async () => {
+    const twoSteps = { id: "55555555-5555-4555-8555-555555555555", group_id: null, name: "Two steps", template: "cd /srv\nmake", auto_enter: true } as Snippet;
+    await act(async () => root.render(<SnippetManager {...managerProps()} snippets={[...snippets, twoSteps]} />));
+    const items = [...container.querySelectorAll<HTMLElement>(".snippet-list > li")];
+    expect(items[1].querySelector("code")?.textContent).toBe("echo ready");
+    expect(items[3].querySelector("code")?.textContent).toBe("cd /srv");
+    expect(items[3].querySelector(".snippet-command")?.textContent).toContain(copy.en.snippetMoreLines(1));
+    await act(async () => items[1].querySelector<HTMLElement>(".snippet-main")!.click());
+    expect(onRun).not.toHaveBeenCalled();
+    await act(async () => runButton("Show status")!.click());
+    expect(onRun).toHaveBeenCalledExactlyOnceWith("echo ready", "current");
+  });
+
+  it("names the destination and marks a production target", async () => {
+    await act(async () => root.render(<SnippetManager {...managerProps()}
+      target={{ current: { name: "prod-api-east", production: true }, broadcast: { count: 2, production: false } }} />));
+    const destination = () => container.querySelector(".snippet-destination")!;
+    expect(destination().textContent).toContain("prod-api-east");
+    expect(destination().querySelector(".prod-chip")?.textContent).toBe(copy.en.production);
+    expect(destination().textContent).toContain(copy.en.snippetProductionHint);
+    const select = container.querySelector<HTMLSelectElement>(".snippet-target select")!;
+    await act(async () => { select.value = "broadcast"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(destination().textContent).toContain(copy.en.snippetBroadcastCount(2));
+    expect(destination().querySelector(".prod-chip")).toBeNull();
   });
 
   it("uses variable defaults, cancels without sending, honors the selected target and auto-enter", async () => {
@@ -261,7 +291,7 @@ describe("snippet manager run flow", () => {
         setter?.call(target, "broadcast");
         target.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      buttonByText("Greeting")?.click();
+      runButton("Greeting")?.click();
     });
     let variable = document.body.querySelector<HTMLInputElement>(".snippet-variable-form input");
     expect(variable?.value).toBe("default");
@@ -270,13 +300,13 @@ describe("snippet manager run flow", () => {
     });
     expect(onRun).not.toHaveBeenCalled();
 
-    await act(async () => { buttonByText("Greeting")?.click(); });
+    await act(async () => { runButton("Greeting")?.click(); });
     variable = document.body.querySelector<HTMLInputElement>(".snippet-variable-form input");
     expect(variable?.value).toBe("default");
     await act(async () => { buttonByText("Send to terminal")?.click(); });
     expect(onRun).toHaveBeenCalledExactlyOnceWith("echo default\r", "broadcast");
 
-    await act(async () => { buttonByText("Show status")?.click(); });
+    await act(async () => { runButton("Show status")?.click(); });
     expect(onRun).toHaveBeenLastCalledWith("echo ready", "broadcast");
   });
 });

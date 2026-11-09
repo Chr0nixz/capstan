@@ -1,11 +1,80 @@
 //! OS drop receipts and staged export tokens. IPC never grants local paths.
 use super::*;
+use crate::native_fs::Source;
 use crate::sftp::{SftpService, SftpSessionId};
+#[cfg(windows)]
 use capstan_native_windows::{
     export::ExportStage,
     staged_drag::{DragOutcome, StagedDrag},
-    transfer::Source,
 };
+#[cfg(not(windows))]
+use unsupported_export::{DragOutcome, ExportStage, StagedDrag};
+
+/// Dragging staged downloads out to the desktop shell is Windows-only (OLE).
+/// Elsewhere no stage can be constructed, so every method is unreachable and
+/// the export commands report `local_io` before touching the file system.
+#[cfg(not(windows))]
+mod unsupported_export {
+    use std::{
+        io,
+        path::{Path, PathBuf},
+    };
+
+    fn unsupported() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "dragging files out is not available on this platform",
+        )
+    }
+
+    pub(super) enum ExportStage {}
+    impl ExportStage {
+        pub(super) fn discover(_: &Path) -> io::Result<Vec<(String, Self)>> {
+            Err(unsupported())
+        }
+        pub(super) fn prepare(_: &Path, _: &str, _: &[String], _: &[String]) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub(super) fn root(&self) -> &Path {
+            match *self {}
+        }
+        pub(super) fn display_name(&self) -> Option<String> {
+            match *self {}
+        }
+        pub(super) fn partial_paths(&self) -> Vec<PathBuf> {
+            match *self {}
+        }
+        pub(super) fn register_partials(&mut self, _: &[String]) -> io::Result<()> {
+            match *self {}
+        }
+        pub(super) fn configure(&mut self, _: &[String], _: &[String]) -> io::Result<()> {
+            match *self {}
+        }
+        pub(super) fn pin(&mut self) -> io::Result<()> {
+            match *self {}
+        }
+        pub(super) fn drag_paths(&self) -> io::Result<Vec<PathBuf>> {
+            match *self {}
+        }
+        pub(super) fn cleanup(&mut self) -> io::Result<()> {
+            match *self {}
+        }
+    }
+
+    #[derive(PartialEq, Eq)]
+    pub(super) enum DragOutcome {
+        Copied,
+    }
+    pub(super) enum StagedDrag {}
+    impl StagedDrag {
+        pub(super) fn prepare(_: &Path, _: &[PathBuf]) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub(super) fn start(&self, _: isize) -> io::Result<DragOutcome> {
+            match *self {}
+        }
+    }
+}
 
 const MAX_EXPORTS: usize = 8;
 struct DropReceipt {
@@ -261,7 +330,7 @@ impl TransferService {
                 let name = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .filter(|name| capstan_native_windows::transfer::valid_name(name))
+                    .filter(|name| crate::native_fs::valid_name(name))
                     .ok_or(SftpError::PathInvalid)?
                     .to_owned();
                 if !names.insert(name.clone()) {

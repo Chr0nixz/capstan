@@ -17,6 +17,8 @@ const browserCandidates = [
   process.env.CAPSTAN_TEST_BROWSER,
   join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft", "Edge", "Application", "msedge.exe"),
   join(process.env.ProgramFiles ?? "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 ].filter(Boolean);
 let browser;
 for (const candidate of browserCandidates) {
@@ -118,6 +120,9 @@ async function launch(scale, route, screenshot, viewport, media = [], updateScen
     const { targetId } = await connection.send("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await connection.send("Target.attachToTarget", { targetId, flatten: true });
     await connection.send("Page.enable", {}, sessionId);
+    // The fixtures exercise the Windows surface and its keys on every host.
+    const { userAgent } = await connection.send("Browser.getVersion", {});
+    await connection.send("Emulation.setUserAgentOverride", { userAgent, platform: "Win32" }, sessionId);
     if (viewport) {
       await connection.send("Emulation.setDeviceMetricsOverride", { width: viewport[0], height: viewport[1], deviceScaleFactor: scale, mobile: false }, sessionId);
     }

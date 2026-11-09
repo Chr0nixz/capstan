@@ -2,7 +2,7 @@
 //! Only a private disposable configuration can supply paths; IPC supplies IDs.
 use crate::{
     sftp::{ExactU64, RemotePath, SftpError, SftpService},
-    transfer::{Direction, TransferService, TransferState, TransferTarget, WindowsDestination},
+    transfer::{Direction, NativeDestination, TransferService, TransferState, TransferTarget},
 };
 use capstan_ssh::{ConnectionLease, PasswordConnection};
 use serde::{Deserialize, Serialize};
@@ -176,7 +176,7 @@ impl TransferLoad {
                 Direction::Upload => transfers.grant_source(
                     &context,
                     Arc::new(
-                        capstan_native_windows::transfer::Source::open(&config.input)
+                        crate::native_fs::Source::open(&config.input)
                             .map_err(|_| SftpError::LocalIo)?,
                     ),
                 )?,
@@ -184,13 +184,12 @@ impl TransferLoad {
                     let output = config
                         .input
                         .with_file_name(format!("visible-{id}-{index}.bin"));
-                    let destination =
-                        capstan_native_windows::transfer::Destination::select(&output)
-                            .map_err(|_| SftpError::LocalIo)?;
+                    let destination = crate::native_fs::Destination::select(&output)
+                        .map_err(|_| SftpError::LocalIo)?;
                     local_paths.push(output);
                     transfers.grant_destination(
                         &context,
-                        Arc::new(WindowsDestination::new(destination)),
+                        Arc::new(NativeDestination::new(destination)),
                     )?
                 }
             };

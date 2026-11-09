@@ -249,6 +249,9 @@ describe("SFTP panel", () => {
   });
 
   it("moves row selection with arrow keys", async () => {
+    const tabbable = () => [...container.querySelectorAll<HTMLButtonElement>(".sftp-entry-name")].filter((row) => row.tabIndex === 0).map((row) => row.textContent);
+    // The table is one Tab stop: the first row until a row is selected.
+    expect(tabbable()).toEqual(["folder"]);
     const first = button("folder");
     await act(async () => {
       first?.focus();
@@ -256,6 +259,7 @@ describe("SFTP panel", () => {
     });
     expect(document.activeElement?.textContent).toBe("notes.txt");
     expect(container.querySelector("tr.selected")?.textContent).toContain("notes.txt");
+    expect(tabbable()).toEqual(["notes.txt"]);
   });
 
   it("attaches to its SSH terminal, filters hidden entries, and enters remote directories", async () => {

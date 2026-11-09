@@ -8,6 +8,7 @@ import { editorCopy } from "./copy";
 import { transferCopy } from "../transfers/copy";
 import type { RetryBinding } from "./transport";
 import { ChevronRightIcon, ExternalEditIcon } from "../ui/icons";
+import { supportsRemoteEditing } from "../window/platform";
 
 export function RemoteEditors({ locale, hosts, theme, sessions: bindings = [], onRetrySessionRequested }: { locale: "en" | "zh-CN"; hosts: Readonly<Record<string, string>>; theme: TerminalTheme; sessions?: readonly RetryBinding[]; onRetrySessionRequested?: (hostId: string) => void }): ReactElement | null {
   const state = useSyncExternalStore(remoteEditors.store.subscribe, remoteEditors.store.getState, remoteEditors.store.getState);
@@ -20,7 +21,7 @@ export function RemoteEditors({ locale, hosts, theme, sessions: bindings = [], o
   const busy = !!selected && state.pending.includes(selected.id);
   const safely = async (action: () => Promise<unknown>): Promise<void> => { try { await action(); } catch { /* Controller retains the stable error. */ } };
   useEffect(() => {
-    if (!isTauriAvailable()) return;
+    if (!isTauriAvailable() || !supportsRemoteEditing()) return;
     remoteEditors.start();
     const timer = window.setInterval(() => void remoteEditors.refresh(), 500);
     return () => { window.clearInterval(timer); remoteEditors.dispose(); };
@@ -34,7 +35,7 @@ export function RemoteEditors({ locale, hosts, theme, sessions: bindings = [], o
     setRequested(null);
     void safely(() => requested.cleanup ? remoteEditors.cleanup(requested.id, binding) : remoteEditors.retry(requested.id, binding));
   }, [requested, bindings, state.snapshot]);
-  if (!isTauriAvailable()) return null;
+  if (!isTauriAvailable() || !supportsRemoteEditing()) return null;
   const sessions = state.snapshot?.sessions ?? [];
   if (sessions.length === 0 && !state.error && !state.snapshot?.recoveryIncomplete) return null;
   return <>

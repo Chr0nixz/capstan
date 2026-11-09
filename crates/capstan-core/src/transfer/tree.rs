@@ -1,11 +1,11 @@
 //! Folder plans defer every mutation until incompatible names/types and existing
 //! directories have explicit, version-bound decisions. Skips cover a subtree.
 use super::*;
+use crate::native_fs::SelectedDirectory;
 use crate::sftp::{
     service::{map_error, metadata},
     FileKind, SftpService, SftpSessionId,
 };
-use capstan_native_windows::transfer::{Destination, SelectedDirectory};
 use capstan_ssh::sftp::ClientError;
 
 const MAX_PLANS: usize = 8;
@@ -240,7 +240,7 @@ impl Plan {
                 || node.relative.split('/').next() != Some(".capstan-export"))
             && node.relative.split('/').all(|name| {
                 if self.destination.is_some() {
-                    capstan_native_windows::transfer::valid_name(name)
+                    crate::native_fs::valid_name(name)
                 } else {
                     crate::sftp::RemoteName::from_bytes(name.as_bytes()).is_ok()
                 }
@@ -352,33 +352,30 @@ impl TransferService {
                 name: "selection".into(),
             },
         )?;
-        let nodes = local::blocking(move || {
-            let root = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or(SftpError::PathInvalid)?
-                .to_owned();
-            let directories = capstan_native_windows::transfer::enumerate_folder_directories(&path)
-                .map_err(local::local_error)?;
-            let files = capstan_native_windows::transfer::enumerate_folder(&path)
-                .map_err(local::local_error)?;
-            let mut nodes = vec![node(root.clone(), true, None, None)];
-            nodes.extend(
-                directories
-                    .into_iter()
-                    .map(|relative| node(format!("{root}/{}", slash(&relative)), true, None, None)),
-            );
-            nodes.extend(files.into_iter().map(|(relative, source)| {
-                node(
-                    format!("{root}/{}", slash(&relative)),
-                    false,
-                    Some(Arc::new(source)),
-                    None,
-                )
-            }));
-            Ok(nodes)
-        })
-        .await?;
+        let nodes =
+            local::blocking(move || {
+                let root = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or(SftpError::PathInvalid)?
+                    .to_owned();
+                let (directories, files) =
+                    crate::native_fs::scan_folder(&path).map_err(local::local_error)?;
+                let mut nodes = vec![node(root.clone(), true, None, None)];
+                nodes.extend(directories.into_iter().map(|relative| {
+                    node(format!("{root}/{}", slash(&relative)), true, None, None)
+                }));
+                nodes.extend(files.into_iter().map(|(relative, source)| {
+                    node(
+                        format!("{root}/{}", slash(&relative)),
+                        false,
+                        Some(Arc::new(source)),
+                        None,
+                    )
+                }));
+                Ok(nodes)
+            })
+            .await?;
         let binding = sftp.export_binding(window, terminal, session)?;
         if binding != context.binding {
             return Err(SftpError::ScopeExpired);
@@ -540,8 +537,7 @@ impl TransferService {
                     return Err(SftpError::ScopeExpired)
                 }
                 TreeChoice::Rename { name }
-                    if (plan.destination.is_some()
-                        && !capstan_native_windows::transfer::valid_name(name))
+                    if (plan.destination.is_some() && !crate::native_fs::valid_name(name))
                         || crate::sftp::RemoteName::from_bytes(name.as_bytes()).is_err() =>
                 {
                     return Err(SftpError::PathInvalid)
@@ -622,8 +618,8 @@ impl TransferService {
         } else {
             let destination = plan.destination.clone().ok_or(SftpError::ScopeExpired)?;
             local::blocking(move || {
-                capstan_native_windows::transfer::prepare_destination_folder(
-                    destination.root(),
+                crate::native_fs::prepare_selected_folder(
+                    &destination,
                     &directories.iter().map(PathBuf::from).collect::<Vec<_>>(),
                 )
                 .map_err(local::local_error)
@@ -661,13 +657,13 @@ impl TransferService {
                 let destination = plan.destination.clone().ok_or(SftpError::ScopeExpired)?;
                 let relative = PathBuf::from(&node.relative);
                 let local = local::blocking(move || {
-                    Destination::select_under_folder(destination.root(), &relative)
+                    crate::native_fs::select_folder_destination(&destination, &relative)
                         .map_err(local::local_error)
                 })
                 .await?;
                 items.push((
                     context,
-                    Local::Destination(Arc::new(WindowsDestination::new(local))),
+                    Local::Destination(Arc::new(NativeDestination::new(local))),
                 ));
             }
         }

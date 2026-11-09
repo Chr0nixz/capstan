@@ -82,7 +82,7 @@ impl ThemeCatalog {
     }
 
     /// Only the path returned by the native picker may be used here.
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub fn preview(&self, path: &Path) -> Result<ThemePreview, ThemeError> {
         let extension = path
             .extension()
@@ -184,10 +184,10 @@ impl ThemeCatalog {
         Ok(themes)
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     fn read(&self) -> Result<(Vec<TerminalThemeDefinition>, Storage), ThemeError> {
-        let destination = capstan_native_windows::transfer::Destination::select(&self.path)
-            .map_err(storage_error)?;
+        let destination =
+            crate::native_fs::Destination::select(&self.path).map_err(storage_error)?;
         let expected = destination.snapshot().map_err(storage_error)?;
         let themes = if expected.is_some() {
             let themes = decode_catalog(&read_bounded(&self.path, MAX_CATALOG_BYTES)?)?;
@@ -207,7 +207,7 @@ impl ThemeCatalog {
         ))
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     fn read(&self) -> Result<(Vec<TerminalThemeDefinition>, Storage), ThemeError> {
         let _ = &self.path;
         Err(ThemeError::Unavailable)
@@ -257,7 +257,7 @@ fn unique_name(name: &str, names: &mut HashSet<String>) -> String {
     unreachable!("bounded catalog names")
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, unix, test))]
 fn decode_catalog(bytes: &[u8]) -> Result<Vec<TerminalThemeDefinition>, ThemeError> {
     if bytes.len() > MAX_CATALOG_BYTES {
         return Err(ThemeError::Limit);
@@ -290,7 +290,7 @@ fn decode_catalog(bytes: &[u8]) -> Result<Vec<TerminalThemeDefinition>, ThemeErr
     Ok(themes)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn storage_error(error: std::io::Error) -> ThemeError {
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         ThemeError::Changed
@@ -299,9 +299,9 @@ fn storage_error(error: std::io::Error) -> ThemeError {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ThemeError> {
-    let file = capstan_native_windows::transfer::Source::open(path).map_err(storage_error)?;
+    let file = crate::native_fs::Source::open(path).map_err(storage_error)?;
     let size = usize::try_from(file.size())
         .ok()
         .filter(|size| *size <= limit)
@@ -320,13 +320,13 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, ThemeError> {
     Ok(bytes)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 struct Storage {
-    destination: capstan_native_windows::transfer::Destination,
-    expected: Option<capstan_native_windows::transfer::Version>,
+    destination: crate::native_fs::Destination,
+    expected: Option<crate::native_fs::Version>,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 impl Storage {
     fn commit(mut self, themes: &[TerminalThemeDefinition]) -> Result<(), ThemeError> {
         if themes.len() > MAX_THEMES {
@@ -352,9 +352,9 @@ impl Storage {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 struct Storage;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 impl Storage {
     fn commit(self, _: &[TerminalThemeDefinition]) -> Result<(), ThemeError> {
         Err(ThemeError::Unavailable)

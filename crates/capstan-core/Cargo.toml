@@ -39,6 +39,10 @@ tempfile = "=3.27.0"
 [target.'cfg(windows)'.dependencies]
 capstan-native-windows = { path = "../../vendor/capstan-native-windows" }
 
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.190"
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+
 [dev-dependencies]
 tempfile = "=3.27.0"
 russh = { version = "=0.61.2", default-features = false, features = ["ring", "rsa"] }

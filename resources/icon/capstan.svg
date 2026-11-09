@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Capstan app icon source: a shell prompt whose cursor is the rope wound
+       onto a capstan drum. Regenerate platform icons with:
+       ui/node_modules/.bin/tauri icon resources/icon/capstan.svg -o src-tauri/icons -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2d33"/>
+      <stop offset="1" stop-color="#141519"/>
+    </linearGradient>
+    <linearGradient id="drum" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b38131"/>
+      <stop offset="0.42" stop-color="#e8bf64"/>
+      <stop offset="1" stop-color="#a2722a"/>
+    </linearGradient>
+    <linearGradient id="cap" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#efcc7b"/>
+      <stop offset="1" stop-color="#c38f33"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)" filter="url(#shadow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="3"/>
+  <!-- Prompt chevron. -->
+  <path d="M226 392 L322 462 L226 532" fill="none" stroke="#d8d4cb" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Capstan drum: cap, waisted barrel with rope turns, base. -->
+  <g transform="translate(636 0)">
+    <rect x="-150" y="292" width="300" height="60" rx="30" fill="url(#cap)"/>
+    <path d="M-104 352 C-80 456 -80 556 -104 662 L104 662 C80 556 80 456 104 352 Z" fill="url(#drum)"/>
+    <g fill="none" stroke="#1a1408" stroke-opacity="0.5" stroke-width="15" stroke-linecap="round">
+      <path d="M-90 420 L90 456"/>
+      <path d="M-84 494 L84 530"/>
+      <path d="M-88 568 L88 604"/>
+    </g>
+    <rect x="-166" y="662" width="332" height="66" rx="33" fill="url(#cap)"/>
+  </g>
+  <!-- Cursor underscore that runs onto the drum as rope. -->
+  <path d="M226 616 L470 616 C510 616 530 610 552 600" fill="none" stroke="#d9a441" stroke-width="30" stroke-linecap="round"/>
+</svg>

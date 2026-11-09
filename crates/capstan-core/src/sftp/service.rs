@@ -470,7 +470,7 @@ impl SftpService {
         })
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub(crate) fn export_binding(
         &self,
         window: &str,
@@ -486,7 +486,7 @@ impl SftpService {
             .authorize(session, &view.binding, Instant::now())?;
         Ok(view.binding.clone())
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     pub(crate) fn tree_client(
         &self,
         window: &str,

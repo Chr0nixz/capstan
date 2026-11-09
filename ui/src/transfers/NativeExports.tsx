@@ -8,13 +8,14 @@ import type { TerminalTheme } from "../terminal/contracts";
 import { nativeExports, type NativeExport } from "./native";
 import { transferCopy } from "./copy";
 import { ChevronRightIcon, ExportIcon } from "../ui/icons";
+import { supportsNativeExport } from "../window/platform";
 export function NativeExports({ locale, theme }: { locale: "en" | "zh-CN"; theme: TerminalTheme }): ReactElement | null {
   const labels = transferCopy[locale];
   const [items, setItems] = useState<NativeExport[]>([]), [error, setError] = useState<SftpErrorCode | null>(null);
   const [selected, setSelected] = useState<NativeExport | null>(null), [pending, setPending] = useState(false);
   const [expanded, setExpanded] = useState(false);
   useEffect(() => {
-    if (!isTauriAvailable()) return;
+    if (!isTauriAvailable() || !supportsNativeExport()) return;
     let active = true, reading = false;
     const refresh = async (): Promise<void> => { if (reading) return; reading = true; try { const items = await nativeExports(); if (active) setItems((previous) => [...previous.filter((old) => items.some((item) => item.token === old.token)).map((old) => items.find((item) => item.token === old.token)!), ...items.filter((item) => !previous.some((old) => old.token === item.token))]); } catch (cause) { if (active) setError(sftpError(cause)); } finally { reading = false; } };
     void refresh();

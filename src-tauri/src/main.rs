@@ -26,22 +26,23 @@ fn main() {
     if benchmark_preflight() {
         return;
     }
-    let executable = std::env::current_exe().expect("application executable path unavailable");
-    #[cfg(windows)]
-    let roaming = std::env::var_os("APPDATA")
-        .map(std::path::PathBuf::from)
-        .expect("APPDATA unavailable")
-        .join("Capstan");
+    // Synchronous commands run on the AppKit main thread, and core services reach
+    // tokio::spawn from them; without a runtime context that panics and aborts.
     #[cfg(not(windows))]
-    let roaming = executable
-        .parent()
-        .expect("application executable has no parent")
-        .join("data");
-    let data_directory = capstan_app::data_directory::resolve_data_directory(&executable, &roaming)
-        .expect("application data directory unavailable");
+    let runtime = tauri::async_runtime::handle();
+    #[cfg(not(windows))]
+    let _runtime_context = runtime.inner().enter();
     let context = tauri::generate_context!();
     #[cfg(windows)]
     let builder = {
+        let executable = std::env::current_exe().expect("application executable path unavailable");
+        let roaming = std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .expect("APPDATA unavailable")
+            .join("Capstan");
+        let data_directory =
+            capstan_app::data_directory::resolve_data_directory(&executable, &roaming)
+                .expect("application data directory unavailable");
         let arguments = std::env::args_os()
             .skip(1)
             .map(|value| value.to_string_lossy().into_owned())
@@ -66,10 +67,7 @@ fn main() {
         }
     };
     #[cfg(not(windows))]
-    let builder = {
-        let _ = data_directory;
-        tauri::Builder::default()
-    };
+    let builder = tauri::Builder::default();
     capstan_app::tauri_channel::register_commands(builder)
         .run(context)
         .expect("failed to run Capstan Tauri application");

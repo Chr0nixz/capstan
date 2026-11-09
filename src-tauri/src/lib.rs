@@ -16,6 +16,10 @@ mod forwarding_commands;
 mod launch_commands;
 #[cfg(all(windows, feature = "tauri-runtime"))]
 pub use launch_commands::prepare_instance;
+#[cfg(all(target_os = "macos", feature = "tauri-runtime"))]
+mod macos_menu;
+#[cfg(feature = "tauri-runtime")]
+mod native_dialog;
 #[cfg(feature = "tauri-runtime")]
 mod quake;
 #[cfg(all(windows, feature = "tauri-runtime"))]
@@ -758,32 +762,25 @@ pub mod tauri_channel {
         vault.status()
     }
 
-    #[cfg(windows)]
     async fn prompt_native_secret(
         window: &tauri::WebviewWindow<tauri::Wry>,
         title: String,
         message: String,
+        locale: &str,
     ) -> std::result::Result<SecretText, CommandError> {
-        let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
-        let prompt = tauri::async_runtime::spawn_blocking(move || {
-            capstan_native_windows::prompt_secret(&title, &message, "", parent)
-        })
-        .await
-        .map_err(|_| CommandError::new("task_failed"))?
-        .map_err(|_| CommandError::new("native_credential_ui"))?
-        .ok_or_else(|| CommandError::new("canceled"))?;
-        let password = String::from_utf16(prompt.password())
-            .map_err(|_| CommandError::new("invalid_input"))?;
-        Ok(SecretText::new(password))
-    }
-
-    #[cfg(not(windows))]
-    async fn prompt_native_secret(
-        _: &tauri::WebviewWindow<tauri::Wry>,
-        _: String,
-        _: String,
-    ) -> std::result::Result<SecretText, CommandError> {
-        Err(CommandError::new("native_credential_ui"))
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
+        crate::native_dialog::prompt_secret(window, title, message, locale)
+            .await
+            .map_err(|error| {
+                CommandError::new(if error.kind() == std::io::ErrorKind::InvalidData {
+                    "invalid_input"
+                } else {
+                    "native_credential_ui"
+                })
+            })?
+            .ok_or_else(|| CommandError::new("canceled"))
     }
 
     fn native_prompt_copy(
@@ -859,7 +856,7 @@ pub mod tauri_channel {
         let (title, message) = native_prompt_copy(&locale, true, None);
         vault
             .initialize(
-                prompt_native_secret(&window, title, message).await?,
+                prompt_native_secret(&window, title, message, &locale).await?,
                 KdfParameters::default(),
             )
             .await?;
@@ -882,7 +879,7 @@ pub mod tauri_channel {
         }
         let (title, message) = native_prompt_copy(&locale, true, None);
         vault
-            .unlock(prompt_native_secret(&window, title, message).await?)
+            .unlock(prompt_native_secret(&window, title, message, &locale).await?)
             .await?;
         attempts.allow_new();
         activity.record();
@@ -935,7 +932,7 @@ pub mod tauri_channel {
         let (title, message) = native_prompt_copy(&locale, true, None);
         vault
             .enable_hello(
-                prompt_native_secret(&window, title, message).await?,
+                prompt_native_secret(&window, title, message, &locale).await?,
                 provider,
             )
             .await?;
@@ -977,7 +974,7 @@ pub mod tauri_channel {
     ) -> std::result::Result<Vec<VaultRecoveryCandidateView>, CommandError> {
         let (title, message) = native_recovery_prompt_copy(&locale, false);
         vault
-            .list_recovery_candidates(prompt_native_secret(&window, title, message).await?)
+            .list_recovery_candidates(prompt_native_secret(&window, title, message, &locale).await?)
             .await
             .map_err(Into::into)
     }
@@ -993,7 +990,10 @@ pub mod tauri_channel {
     ) -> std::result::Result<(), CommandError> {
         let (title, message) = native_recovery_prompt_copy(&locale, true);
         vault
-            .restore_recovery_candidate(token, prompt_native_secret(&window, title, message).await?)
+            .restore_recovery_candidate(
+                token,
+                prompt_native_secret(&window, title, message, &locale).await?,
+            )
             .await?;
         attempts.allow_new();
         activity.record();
@@ -1008,6 +1008,7 @@ pub mod tauri_channel {
     #[tauri::command]
     #[allow(clippy::too_many_arguments)] // Managed workflow services are injected separately.
     pub async fn lock_vault(
+        app: tauri::AppHandle,
         vault: State<'_, Arc<VaultManager>>,
         attempts: State<'_, SshAttempts>,
         broker: State<'_, Arc<TrustBroker>>,
@@ -1015,8 +1016,11 @@ pub mod tauri_channel {
         ssh_sessions: State<'_, SshSessions>,
         backup_imports: State<'_, BackupImportSessions>,
         transfers: State<'_, Arc<capstan_core::transfer::TransferService>>,
-        #[cfg(windows)] editors: State<'_, Arc<capstan_core::remote_edit::RemoteEditorService>>,
     ) -> std::result::Result<(), CommandError> {
+        #[cfg(windows)]
+        let editors = app.state::<Arc<capstan_core::remote_edit::RemoteEditorService>>();
+        #[cfg(not(windows))]
+        let _ = app;
         backup_imports.clear();
         let preferences = vault.preferences().map_err(CommandError::from)?;
         lock_vault_and_cleanup(
@@ -1076,11 +1080,12 @@ pub mod tauri_channel {
         vault: State<'_, Arc<VaultManager>>,
         backup_imports: State<'_, BackupImportSessions>,
         settings: State<'_, Arc<capstan_core::settings::Settings>>,
-        #[cfg(windows)] editors: State<'_, Arc<capstan_core::remote_edit::RemoteEditorService>>,
     ) -> std::result::Result<(), CommandError> {
         if window.label() != "main" {
             return Err(CommandError::new("window_source"));
         }
+        #[cfg(windows)]
+        let editors = window.state::<Arc<capstan_core::remote_edit::RemoteEditorService>>();
         #[cfg(windows)]
         editors
             .prepare_exit(window.label())
@@ -1093,11 +1098,11 @@ pub mod tauri_channel {
         )
         .await
         .map_err(|error| CommandError::new(error.to_string()));
-        if let Err(error) = result {
-            #[cfg(windows)]
+        #[cfg(windows)]
+        if result.is_err() {
             editors.abort_exit();
-            return Err(error);
         }
+        result?;
         backup_imports.clear();
         attempts.block_and_cancel_all(&broker).await;
         terminals.close_all().await;
@@ -1110,6 +1115,7 @@ pub mod tauri_channel {
     #[tauri::command]
     #[allow(clippy::too_many_arguments)] // Tauri injects each managed service separately.
     pub async fn check_vault_auto_lock(
+        app: tauri::AppHandle,
         vault: State<'_, Arc<VaultManager>>,
         activity: State<'_, UserActivity>,
         attempts: State<'_, SshAttempts>,
@@ -1118,8 +1124,11 @@ pub mod tauri_channel {
         ssh_sessions: State<'_, SshSessions>,
         backup_imports: State<'_, BackupImportSessions>,
         transfers: State<'_, Arc<capstan_core::transfer::TransferService>>,
-        #[cfg(windows)] editors: State<'_, Arc<capstan_core::remote_edit::RemoteEditorService>>,
     ) -> std::result::Result<bool, CommandError> {
+        #[cfg(windows)]
+        let editors = app.state::<Arc<capstan_core::remote_edit::RemoteEditorService>>();
+        #[cfg(not(windows))]
+        let _ = app;
         let locked = maybe_auto_lock(
             vault.inner(),
             activity.inner(),
@@ -1181,7 +1190,13 @@ pub mod tauri_channel {
             capstan_native_windows::open_external_url(&url)
                 .map_err(|_| CommandError::new("external_open_failed"))
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            crate::native_dialog::open_url(&url)
+                .then_some(())
+                .ok_or_else(|| CommandError::new("external_open_failed"))
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             Err(CommandError::new("external_open_unsupported"))
         }
@@ -1238,7 +1253,7 @@ pub mod tauri_channel {
         locale: String,
     ) -> std::result::Result<Uuid, CommandError> {
         let (title, message) = native_prompt_copy(&locale, false, Some(&name));
-        let secret = prompt_native_secret(&window, title, message).await?;
+        let secret = prompt_native_secret(&window, title, message, &locale).await?;
         let password = secret.expose().to_owned();
         vault
             .add_password_credential(name, password)
@@ -1256,17 +1271,18 @@ pub mod tauri_channel {
         if name.trim().is_empty() || name.len() > 256 {
             return Err(CommandError::new("invalid_input"));
         }
-        let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
         let title = if locale.starts_with("zh") {
             "选择 SSH 私钥"
         } else {
             "Select SSH private key"
         };
-        let path = tauri::async_runtime::spawn_blocking(move || {
-            capstan_native_windows::pick_private_key_file(title, parent)
-        })
+        let path = crate::native_dialog::pick(
+            &window,
+            title,
+            &locale,
+            crate::native_dialog::Picker::PrivateKey,
+        )
         .await
-        .map_err(|_| CommandError::new("task_failed"))?
         .map_err(|_| CommandError::new("native_file_picker"))?
         .ok_or_else(|| CommandError::new("canceled"))?;
         let file = std::fs::File::open(path).map_err(|_| CommandError::new("credential_file"))?;
@@ -1302,7 +1318,7 @@ pub mod tauri_channel {
                     format!("Enter the passphrase for “{name}”."),
                 )
             };
-            Some(prompt_native_secret(&window, title, message).await?)
+            Some(prompt_native_secret(&window, title, message, &locale).await?)
         } else {
             None
         };
@@ -1323,17 +1339,18 @@ pub mod tauri_channel {
         if name.trim().is_empty() || name.len() > 256 {
             return Err(CommandError::new("invalid_input"));
         }
-        let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
         let title = if locale.starts_with("zh") {
             "选择 SSH 私钥文件"
         } else {
             "Select SSH private key file"
         };
-        let path = tauri::async_runtime::spawn_blocking(move || {
-            capstan_native_windows::pick_private_key_file(title, parent)
-        })
+        let path = crate::native_dialog::pick(
+            &window,
+            title,
+            &locale,
+            crate::native_dialog::Picker::PrivateKey,
+        )
         .await
-        .map_err(|_| CommandError::new("task_failed"))?
         .map_err(|_| CommandError::new("native_file_picker"))?
         .ok_or_else(|| CommandError::new("canceled"))?;
         let file = std::fs::File::open(&path).map_err(|_| CommandError::new("credential_file"))?;
@@ -1369,7 +1386,7 @@ pub mod tauri_channel {
                     format!("Enter the passphrase for “{name}”."),
                 )
             };
-            Some(prompt_native_secret(&window, title, message).await?)
+            Some(prompt_native_secret(&window, title, message, &locale).await?)
         } else {
             None
         };
@@ -1417,7 +1434,7 @@ pub mod tauri_channel {
             return Err(CommandError::new("invalid_input"));
         }
         let (title, message) = native_prompt_copy(&locale, false, Some(&credential.name));
-        let secret = prompt_native_secret(&window, title, message).await?;
+        let secret = prompt_native_secret(&window, title, message, &locale).await?;
         vault
             .save_password_credential(
                 credential.name,
@@ -1462,7 +1479,7 @@ pub mod tauri_channel {
                 "Enter a new Vault master password (at least 12 characters).".to_owned(),
             )
         };
-        let password = prompt_native_secret(&window, title, message).await?;
+        let password = prompt_native_secret(&window, title, message, &locale).await?;
         vault
             .change_master_password(password, expected_revision)
             .await?;
@@ -1488,18 +1505,19 @@ pub mod tauri_channel {
                 "Choose a separate passphrase for this .cbak backup.".to_owned(),
             )
         };
-        let password = prompt_native_secret(&window, title, message).await?;
-        let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
+        let password = prompt_native_secret(&window, title, message, &locale).await?;
         let title = if locale.starts_with("zh") {
             "保存 Capstan 加密备份"
         } else {
             "Save Capstan encrypted backup"
         };
-        let destination = tauri::async_runtime::spawn_blocking(move || {
-            capstan_native_windows::save_vault_backup_file(title, parent)
-        })
+        let destination = crate::native_dialog::pick(
+            &window,
+            title,
+            &locale,
+            crate::native_dialog::Picker::Backup { save: true },
+        )
         .await
-        .map_err(|_| CommandError::new("task_failed"))?
         .map_err(|_| CommandError::new("native_file_picker"))?
         .ok_or_else(|| CommandError::new("canceled"))?;
         vault
@@ -1519,17 +1537,18 @@ pub mod tauri_channel {
         expected_epoch: u64,
         locale: String,
     ) -> std::result::Result<PendingBackupPreview, CommandError> {
-        let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
         let title = if locale.starts_with("zh") {
             "选择 Capstan 加密备份"
         } else {
             "Select Capstan encrypted backup"
         };
-        let source = tauri::async_runtime::spawn_blocking(move || {
-            capstan_native_windows::pick_vault_backup_file(title, parent)
-        })
+        let source = crate::native_dialog::pick(
+            &window,
+            title,
+            &locale,
+            crate::native_dialog::Picker::Backup { save: false },
+        )
         .await
-        .map_err(|_| CommandError::new("task_failed"))?
         .map_err(|_| CommandError::new("native_file_picker"))?
         .ok_or_else(|| CommandError::new("canceled"))?;
         let (title, message) = if locale.starts_with("zh") {
@@ -1543,7 +1562,7 @@ pub mod tauri_channel {
                 "Enter this .cbak file's passphrase to preview its merge.".to_owned(),
             )
         };
-        let password = prompt_native_secret(&window, title, message).await?;
+        let password = prompt_native_secret(&window, title, message, &locale).await?;
         let preview = vault
             .preview_backup(source.clone(), password.clone())
             .await
@@ -1866,6 +1885,13 @@ pub mod tauri_channel {
     pub fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
         #[cfg(feature = "m0-benchmarks")]
         let builder = builder.manage(crate::benchmark::BenchmarkState::default());
+        #[cfg(unix)]
+        let _ = capstan_core::native_fs::raise_open_file_limit();
+        #[cfg(target_os = "macos")]
+        let builder = builder
+            .manage(crate::native_dialog::ModalDialog::default())
+            .menu(crate::macos_menu::build)
+            .on_menu_event(crate::macos_menu::handle_event);
         builder
             .manage(crate::launch_commands::LaunchRequests::default())
             .manage(crate::quake::QuakeController::default())
@@ -1908,6 +1934,9 @@ pub mod tauri_channel {
                     &executable,
                     &roaming_data_directory,
                 )?;
+                #[cfg(target_os = "macos")]
+                app.manage(crate::data_directory::lock_instance(&data_directory)?);
+                #[cfg(windows)]
                 app.state::<Arc<capstan_core::transfer::TransferService>>()
                     .configure_recovery_directory(data_directory.clone())
                     .map_err(|_| {
@@ -2149,6 +2178,7 @@ pub mod tauri_channel {
                 crate::remote_edit_commands::discover_remote_edit_residuals,
                 #[cfg(windows)]
                 crate::remote_edit_commands::retry_remote_edit,
+                #[cfg(windows)]
                 crate::remote_edit_commands::cleanup_remote_edit_temporaries,
                 #[cfg(windows)]
                 crate::remote_edit_commands::resolve_remote_edit_conflict,
@@ -2158,9 +2188,13 @@ pub mod tauri_channel {
                 crate::transfer_commands::enqueue_native_drop,
                 crate::transfer_commands::arm_native_drop,
                 crate::transfer_commands::disarm_native_drop,
+                #[cfg(windows)]
                 crate::transfer_commands::prepare_native_export,
+                #[cfg(windows)]
                 crate::transfer_commands::native_export_snapshot,
+                #[cfg(windows)]
                 crate::transfer_commands::release_native_export,
+                #[cfg(windows)]
                 crate::transfer_commands::start_native_export,
                 crate::transfer_commands::select_transfer_folder_plan,
                 crate::transfer_commands::select_transfer_folder_download_plan,
@@ -2220,8 +2254,10 @@ pub mod tauri_channel {
                 #[cfg(feature = "m0-benchmarks")]
                 crate::benchmark::m0_finish_report
             ])
-            .on_webview_event(|webview, event| {
-                #[cfg(windows)]
+            .on_webview_event(|_webview, _event| {
+                #[cfg(any(windows, target_os = "macos"))]
+                let (webview, event) = (_webview, _event);
+                #[cfg(any(windows, target_os = "macos"))]
                 if webview.label() == "main" {
                     if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop {
                         paths,
@@ -2403,6 +2439,21 @@ pub mod tauri_channel {
     mod tests {
         use super::*;
         use capstan_terminal::{BackendControl, BackendParts, FrameSink};
+
+        /// `main` holds this context so synchronous commands can start core tasks
+        /// from the AppKit thread, and setup can still block on async work.
+        #[test]
+        fn a_runtime_context_allows_spawning_and_blocking_on_a_plain_thread() {
+            std::thread::spawn(|| {
+                let runtime = tauri::async_runtime::handle();
+                let _context = runtime.inner().enter();
+                let task = tokio::spawn(async { 7 });
+                let value = tauri::async_runtime::block_on(task).expect("task result");
+                assert_eq!(value, 7);
+            })
+            .join()
+            .expect("no panic without an ambient runtime");
+        }
         use std::io::Cursor;
 
         #[test]

@@ -1,5 +1,8 @@
 //! Native theme picker and Rust-owned preview tokens.
-use crate::CommandError;
+use crate::{
+    native_dialog::{pick, Picker},
+    CommandError,
+};
 use capstan_core::themes::{TerminalThemeDefinition, ThemeCatalog, ThemeError, ThemePreview};
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
@@ -47,28 +50,16 @@ pub async fn preview_terminal_themes(
         .0
         .try_lock()
         .map_err(|_| CommandError::new("theme_unavailable"))?;
-    let parent = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
     let catalog = catalog.inner().clone();
-    run(move || {
-        let (title, filter) = if locale == "zh-CN" {
-            ("选择终端配色文件", "终端配色文件")
-        } else {
-            ("Select a terminal color scheme", "Terminal color schemes")
-        };
-        let path = capstan_native_windows::transfer::pick_file_with_pattern(
-            title,
-            filter,
-            "*.json;*.itermcolors",
-            parent,
-            false,
-        )
-        .map_err(|_| ThemeError::Unavailable)?;
-        path.map(|path| catalog.preview(&path)).transpose()
-    })
-    .await
+    let title = if locale == "zh-CN" {
+        "选择终端配色文件"
+    } else {
+        "Select a terminal color scheme"
+    };
+    let path = pick(&window, title, &locale, Picker::Theme)
+        .await
+        .map_err(|_| CommandError::new("theme_unavailable"))?;
+    run(move || path.map(|path| catalog.preview(&path)).transpose()).await
 }
 
 #[tauri::command]

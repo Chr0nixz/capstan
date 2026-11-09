@@ -15,6 +15,7 @@ import { isMultilinePaste, parseOsc52Request } from "./security";
 import type { TerminalTheme } from "./contracts";
 import type { TerminalThemeDefinition } from "../themes/contracts";
 import { subscribeTerminalInput } from "../panes/xtermInput";
+import { isMacOS, macTerminalSequence } from "../window/platform";
 
 export type Disposable = { dispose: () => void };
 
@@ -46,6 +47,8 @@ export interface TerminalLike {
   select?: (column: number, row: number, length: number) => void;
   textarea?: HTMLTextAreaElement;
   paste?: (text: string) => void;
+  clear?: () => void;
+  attachCustomKeyEventHandler?: (handler: (event: KeyboardEvent) => boolean) => void;
   parser?: { registerOscHandler: (identifier: number, callback: (data: string) => boolean | Promise<boolean>) => Disposable };
   options?: { theme?: Record<string, string> };
 }
@@ -92,13 +95,13 @@ export type TerminalSessionOptions = {
   onInputError?: (error: unknown) => void;
   onInputOverflow?: (droppedBytes: number) => void;
   onParsedOutput?: (bytes: Uint8Array) => void;
-  confirmMultilinePaste?: (lineCount: number) => boolean;
+  confirmMultilinePaste?: (lineCount: number) => boolean | Promise<boolean>;
   copyOnSelect?: () => boolean;
   readClipboard?: () => Promise<string>;
   writeSelectionClipboard?: (text: string) => Promise<void>;
   onSelectionCopyFailed?: () => void;
   onActivateLink?: (uri: string) => void;
-  confirmOsc52Write?: (characterCount: number) => boolean;
+  confirmOsc52Write?: (characterCount: number) => boolean | Promise<boolean>;
   writeOsc52Clipboard?: (text: string) => Promise<void>;
   onOsc52ReadBlocked?: () => void;
   onOsc52WriteFailed?: () => void;
@@ -186,11 +189,22 @@ export function terminalPalette(theme: TerminalTheme, themes: readonly TerminalT
   };
 }
 
+/** WKWebView answers asynchronously from an in-app dialog; other platforms return at once. */
+function whenConfirmed(answer: boolean | Promise<boolean> | undefined, run: () => void): void {
+  if (answer instanceof Promise) void answer.then((accepted) => { if (accepted) run(); }, () => undefined);
+  else if (answer) run();
+}
+
 function defaultTerminal({ theme = "graphite", themes, onActivateLink }: TerminalSessionOptions): TerminalLike {
   const terminal = new Terminal({
-    fontFamily: '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace',
+    fontFamily: isMacOS()
+      ? 'Menlo, "PingFang SC", "Apple Color Emoji", monospace'
+      : '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace',
     allowTransparency: false,
     allowProposedApi: true,
+    // Readline and Emacs chords need Meta; Option+click still positions the cursor.
+    macOptionIsMeta: true,
+    macOptionClickForcesSelection: true,
     theme: terminalPalette(theme, themes),
     linkHandler: onActivateLink ? { activate: (_event, uri) => onActivateLink(uri) } : undefined,
   });
@@ -322,6 +336,17 @@ export function createTerminalSession(
     if (mouseReport || origin === "protocol") sendProtocolInput(bytes);
     else enqueueInput(bytes);
   });
+  if (isMacOS()) terminal.attachCustomKeyEventHandler?.((event) => {
+    const clear = event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && event.key.toLocaleLowerCase() === "k";
+    const sequence = clear ? null : macTerminalSequence(event);
+    if (!clear && sequence === null) return true;
+    if (event.type === "keydown") {
+      event.preventDefault();
+      if (clear) terminal.clear?.();
+      else if (sequence !== null && !isDisposed && !queue.isClosed && isVisible) enqueueInput(new TextEncoder().encode(sequence));
+    }
+    return false;
+  });
   const binaryDisposable = terminal.onBinary?.((data) => {
     if (isDisposed || queue.isClosed || !isVisible) return;
     // xterm uses its binary event for legacy mouse encodings. Coordinates
@@ -334,7 +359,13 @@ export function createTerminalSession(
     }
   });
   const pasteText = (text: string): void => {
-    if (text && (!isMultilinePaste(text) || options.confirmMultilinePaste?.(text.split(/\r\n|\r|\n/u).length))) terminal.paste?.(text);
+    if (!text) return;
+    if (!isMultilinePaste(text)) { terminal.paste?.(text); return; }
+    const epoch = inputEpoch;
+    whenConfirmed(options.confirmMultilinePaste?.(text.split(/\r\n|\r|\n/u).length), () => {
+      // The pane may have closed or been reassigned while the dialog was open.
+      if (!isDisposed && !queue.isClosed && epoch === inputEpoch) terminal.paste?.(text);
+    });
   };
   const pasteListener = (event: ClipboardEvent): void => {
     const text = event.clipboardData?.getData("text/plain");
@@ -362,8 +393,9 @@ export function createTerminalSession(
       return true;
     }
     if (request.kind === "write") {
-      if (!options.confirmOsc52Write?.(request.text.length)) return true;
-      void options.writeOsc52Clipboard?.(request.text).catch(() => options.onOsc52WriteFailed?.());
+      whenConfirmed(options.confirmOsc52Write?.(request.text.length), () => {
+        void options.writeOsc52Clipboard?.(request.text).catch(() => options.onOsc52WriteFailed?.());
+      });
     }
     return true;
   });

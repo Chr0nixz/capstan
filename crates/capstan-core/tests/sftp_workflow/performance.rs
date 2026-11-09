@@ -1,6 +1,6 @@
 //! Explicit fixture-only measurements of the production pool/service/native path.
 use super::*;
-use capstan_core::transfer::{TransferService, TransferState, TransferTarget, WindowsDestination};
+use capstan_core::transfer::{NativeDestination, TransferService, TransferState, TransferTarget};
 use sha2::{Digest, Sha256};
 use std::{io::Read, path::PathBuf, time::Instant};
 
@@ -152,7 +152,7 @@ async fn measured() {
         selection = transfers
             .grant_source(
                 &context,
-                Arc::new(capstan_native_windows::transfer::Source::open(&input).unwrap()),
+                Arc::new(capstan_core::native_fs::Source::open(&input).unwrap()),
             )
             .unwrap();
     } else {
@@ -172,8 +172,8 @@ async fn measured() {
         selection = transfers
             .grant_destination(
                 &context,
-                Arc::new(WindowsDestination::new(
-                    capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+                Arc::new(NativeDestination::new(
+                    capstan_core::native_fs::Destination::select(&output).unwrap(),
                 )),
             )
             .unwrap();

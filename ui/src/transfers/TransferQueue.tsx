@@ -11,6 +11,7 @@ import { isFinal, type TransferRecovery } from "./contracts";
 import { createTransferController } from "./controller";
 import { transferCopy } from "./copy";
 import { tauriTransferTransport } from "./transport";
+import { ariaShortcut } from "../window/platform";
 import { selectRecoveredDestination, selectSourceForRetry } from "./selection";
 import { NativeExports } from "./NativeExports";
 import type { SftpSessionId } from "../sftp/contracts";
@@ -206,7 +207,7 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
       <div className="transfer-queue-bar">
         {/* Announces only decisions the user must make, never routine progress. */}
         <span className="sr-only" role="status">{attention.length ? labels.summaryAttention(attention.length) : ""}</span>
-        <button className="transfer-queue-heading" type="button" aria-expanded={expanded} aria-keyshortcuts="Control+Shift+J" onClick={() => setExpanded((value) => !value)}>
+        <button className="transfer-queue-heading" type="button" aria-expanded={expanded} aria-keyshortcuts={ariaShortcut("Ctrl+Shift+J")} onClick={() => setExpanded((value) => !value)}>
           <ChevronRightIcon size={14} /><span>{labels.title}</span><span className="sr-only"> · </span>
           <span className="count-badge" data-attention={attention.length ? "true" : undefined}>{attention.length || active + paused}</span>
           {summary && <><span className="sr-only"> · </span><span className="transfer-summary">{summary}</span></>}

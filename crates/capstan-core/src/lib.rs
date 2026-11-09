@@ -10,6 +10,7 @@ pub mod desktop;
 pub mod forwarding;
 pub mod hotkey;
 pub mod launch;
+pub mod native_fs;
 pub mod remote_edit;
 pub mod server_status;
 pub mod settings;

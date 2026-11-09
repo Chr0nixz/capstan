@@ -1,5 +1,7 @@
 use super::*;
-use capstan_core::transfer::{LocalDestination, WindowsDestination};
+#[cfg(windows)]
+use capstan_core::transfer::LocalDestination;
+use capstan_core::transfer::NativeDestination;
 
 #[tokio::test]
 async fn live_download_retry_reauthorizes_the_original_path_on_a_fresh_scope() {
@@ -26,8 +28,8 @@ async fn live_download_retry_reauthorizes_the_original_path_on_a_fresh_scope() {
         )
         .unwrap();
     let target = local.path().join("returned.bin");
-    let destination = Arc::new(WindowsDestination::new(
-        capstan_native_windows::transfer::Destination::select(&target).unwrap(),
+    let destination = Arc::new(NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&target).unwrap(),
     ));
     let grant = transfers.grant_destination(&context, destination).unwrap();
     remote.stall_read.store(true, Ordering::SeqCst);
@@ -171,6 +173,8 @@ async fn live_download_retry_reauthorizes_the_original_path_on_a_fresh_scope() {
     fixture.close().await;
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
+#[cfg(windows)]
 #[tokio::test]
 async fn download_recovery_requires_fresh_exact_picker_and_identity_then_resumes_or_cleans() {
     for mode in ["resume", "cleanup", "corrupt"] {
@@ -201,8 +205,8 @@ async fn download_recovery_requires_fresh_exact_picker_and_identity_then_resumes
             )
             .unwrap();
         let target = local.path().join("returned.bin");
-        let destination = Arc::new(WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&target).unwrap(),
+        let destination = Arc::new(NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&target).unwrap(),
         ));
         let grant = transfers.grant_destination(&context, destination).unwrap();
         remote.stall_read.store(true, Ordering::SeqCst);
@@ -290,9 +294,8 @@ async fn download_recovery_requires_fresh_exact_picker_and_identity_then_resumes
             .transfer_context_for_recovered_download("main", "one", session, descriptor)
             .await
             .unwrap();
-        let wrong = Arc::new(WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&local.path().join("wrong.bin"))
-                .unwrap(),
+        let wrong = Arc::new(NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&local.path().join("wrong.bin")).unwrap(),
         ));
         assert_eq!(
             restarted
@@ -302,8 +305,8 @@ async fn download_recovery_requires_fresh_exact_picker_and_identity_then_resumes
             SftpError::ResumeMismatch
         );
         assert_eq!(std::fs::metadata(&partial).unwrap().len(), size);
-        let destination: Arc<dyn LocalDestination> = Arc::new(WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&target).unwrap(),
+        let destination: Arc<dyn LocalDestination> = Arc::new(NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&target).unwrap(),
         ));
         let grant = restarted
             .grant_recovered_destination("main", id, &context, destination)
@@ -312,8 +315,8 @@ async fn download_recovery_requires_fresh_exact_picker_and_identity_then_resumes
         // Abandoning an authorized picker must retain the old partial.
         restarted.release_selection("main", grant.token).unwrap();
         assert!(partial.exists());
-        let destination = Arc::new(WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(&target).unwrap(),
+        let destination = Arc::new(NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&target).unwrap(),
         ));
         let grant = restarted
             .grant_recovered_destination("main", id, &context, destination)

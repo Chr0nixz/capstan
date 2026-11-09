@@ -205,6 +205,8 @@ async fn upload_tree_renames_a_conflicting_directory_without_touching_existing_d
     );
     fixture.close().await;
 }
+// Windows reserved names and case-insensitive collisions.
+#[cfg(windows)]
 #[tokio::test]
 async fn download_tree_resolves_windows_names_case_collisions_and_skips_whole_subtrees() {
     let (fixture, session, transfers) = fixture().await;
@@ -493,7 +495,7 @@ async fn missing_tree_parents_are_still_created_in_ancestor_order() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     let id = transfers.enqueue(context, selection.token).unwrap();

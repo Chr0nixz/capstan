@@ -2,8 +2,8 @@
 #![allow(clippy::pedantic)]
 #[cfg(windows)]
 mod windows {
+    use capstan_core::native_fs::{Destination, Source};
     use capstan_core::VaultManager;
-    use capstan_native_windows::transfer::{Destination, Source};
     use capstan_ssh::HostPublicKey;
     use capstan_vault::{Host, KdfParameters, SecretText, TrustRecord};
     use std::{io, os::windows::fs::MetadataExt, path::Path};

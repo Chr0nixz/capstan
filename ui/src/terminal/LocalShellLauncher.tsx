@@ -3,6 +3,7 @@ import { copy } from "../i18n";
 import { invokeTauri } from "./bridge";
 import type { LocalShellProfile, LocalTerminalOptions } from "./contracts";
 import { ChevronDownIcon, FolderIcon, ShellIcon } from "../ui/icons";
+import { shortcutLabel } from "../window/platform";
 
 type Labels = typeof copy.en | typeof copy["zh-CN"];
 
@@ -82,7 +83,7 @@ export function LocalShellLauncher({ labels, onLaunch }: {
     {open && <section ref={panel} className="local-launcher-panel" data-mode={custom ? "custom" : "menu"} aria-label={labels.chooseLocalShell}>
       {!custom ? <div className="launcher-menu" role="menu" aria-label={labels.chooseLocalShell} onKeyDown={menuKeyDown}>
         <button type="button" role="menuitem" onClick={() => launch({})}>
-          <ShellIcon size={14} /><span className="launcher-label">{labels.defaultLocalShell}</span><kbd>Ctrl+Shift+T</kbd>
+          <ShellIcon size={14} /><span className="launcher-label">{labels.defaultLocalShell}</span><kbd>{shortcutLabel("Ctrl+Shift+T")}</kbd>
         </button>
         {profiles.map((profile) => <button key={profile.id} type="button" role="menuitem" onClick={() => launch({ shell_id: profile.id }, profile.name)}>
           <ShellIcon size={14} /><span className="launcher-label">{profile.name}</span>

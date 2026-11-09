@@ -23,6 +23,8 @@ pub async fn load_desktop_preferences(
 ) -> Result<DesktopPreferences, CommandError> {
     source(&window)?;
     desktop.set_locale(&locale);
+    #[cfg(target_os = "macos")]
+    crate::macos_menu::set_locale(window.app_handle(), &locale);
     let settings = settings.inner().clone();
     tauri::async_runtime::spawn_blocking(move || settings.desktop_preferences())
         .await

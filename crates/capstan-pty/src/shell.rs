@@ -10,6 +10,7 @@ pub enum ShellKind {
     PowerShell51,
     PowerShell7,
     Wsl { distribution: String },
+    Posix { profile: String },
     Custom,
 }
 
@@ -170,7 +171,18 @@ impl ShellDetector {
     pub fn detect_all(&self) -> Vec<ShellInfo> {
         let mut found = self.detect_powershells();
         found.extend(self.wsl.clone());
+        #[cfg(unix)]
+        found.extend(posix_profiles(env::var_os("SHELL").map(PathBuf::from)));
         found
+    }
+
+    pub(crate) fn choose_default(&self) -> Result<ShellInfo> {
+        #[cfg(unix)]
+        {
+            posix_login(env::var_os("SHELL").map(PathBuf::from)).ok_or(PtyError::NoShell)
+        }
+        #[cfg(not(unix))]
+        self.choose_powershell(PowerShellPreference::Prefer7)
     }
 
     pub fn choose_powershell(&self, preference: PowerShellPreference) -> Result<ShellInfo> {
@@ -190,6 +202,91 @@ impl ShellDetector {
     pub fn add_wsl(&mut self, distribution: impl Into<String>) {
         self.wsl.push(ShellInfo::wsl(distribution));
     }
+}
+
+#[cfg(unix)]
+fn posix_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.is_absolute()
+        && path
+            .metadata()
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(unix)]
+fn posix_profile(id: &str, path: PathBuf, source: ShellSource) -> ShellInfo {
+    ShellInfo {
+        display_name: path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("sh")
+            .to_owned(),
+        kind: ShellKind::Posix {
+            profile: id.to_owned(),
+        },
+        executable: path,
+        args: vec!["-l".to_owned(), "-i".to_owned()],
+        source,
+    }
+}
+
+#[cfg(unix)]
+fn posix_login(login_shell: Option<PathBuf>) -> Option<ShellInfo> {
+    login_shell
+        .filter(|path| posix_executable(path))
+        .map(|path| posix_profile("login", path, ShellSource::SystemPath))
+        .or_else(|| {
+            ["/bin/zsh", "/bin/bash", "/bin/sh"]
+                .into_iter()
+                .find(|path| posix_executable(Path::new(path)))
+                .map(|path| posix_profile("login", PathBuf::from(path), ShellSource::WellKnownPath))
+        })
+}
+
+#[cfg(unix)]
+fn posix_profiles(login_shell: Option<PathBuf>) -> Vec<ShellInfo> {
+    let mut profiles = posix_login(login_shell).into_iter().collect::<Vec<_>>();
+    for (id, paths) in [
+        (
+            "zsh",
+            [
+                "/bin/zsh",
+                "/opt/homebrew/bin/zsh",
+                "/usr/local/bin/zsh",
+                "/usr/bin/zsh",
+            ],
+        ),
+        (
+            "bash",
+            [
+                "/bin/bash",
+                "/opt/homebrew/bin/bash",
+                "/usr/local/bin/bash",
+                "/usr/bin/bash",
+            ],
+        ),
+        (
+            "fish",
+            [
+                "/opt/homebrew/bin/fish",
+                "/usr/local/bin/fish",
+                "/usr/bin/fish",
+                "/bin/fish",
+            ],
+        ),
+    ] {
+        if let Some(path) = paths
+            .into_iter()
+            .find(|path| posix_executable(Path::new(path)))
+        {
+            let path = PathBuf::from(path);
+            if !profiles.iter().any(|shell| shell.executable == path) {
+                profiles.push(posix_profile(id, path, ShellSource::WellKnownPath));
+            }
+        }
+    }
+    profiles
 }
 
 fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
@@ -283,6 +380,66 @@ mod tests {
         let resolved = super::resolve_executable(&executable).expect("resolve executable");
         assert!(resolved.is_absolute());
         assert_eq!(resolved.file_name(), Some(std::ffi::OsStr::new("pwsh.exe")));
+    }
+
+    #[cfg(unix)]
+    mod posix {
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
+
+        use super::super::{posix_login, posix_profiles, ShellKind, ShellSource};
+
+        fn script(directory: &std::path::Path, name: &str, mode: u32) -> PathBuf {
+            let path = directory.join(name);
+            std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            path
+        }
+
+        #[test]
+        fn login_shell_comes_from_the_environment_and_starts_as_a_login_shell() {
+            let directory = tempfile::tempdir().unwrap();
+            let shell = script(directory.path(), "nu", 0o755);
+            let login = posix_login(Some(shell.clone())).unwrap();
+            assert_eq!(login.executable, shell);
+            assert_eq!(login.args, ["-l", "-i"]);
+            assert_eq!(login.display_name, "nu");
+            assert_eq!(login.source, ShellSource::SystemPath);
+            assert_eq!(
+                login.kind,
+                ShellKind::Posix {
+                    profile: "login".to_owned()
+                }
+            );
+        }
+
+        #[test]
+        fn unusable_login_shells_fall_back_to_a_system_shell() {
+            let directory = tempfile::tempdir().unwrap();
+            for shell in [
+                None,
+                Some(PathBuf::from("zsh")),
+                Some(directory.path().join("missing")),
+                Some(directory.path().to_owned()),
+                Some(script(directory.path(), "not-executable", 0o644)),
+            ] {
+                let login = posix_login(shell).unwrap();
+                assert_eq!(login.source, ShellSource::WellKnownPath);
+                assert!(login.executable.starts_with("/bin"));
+            }
+        }
+
+        #[test]
+        fn the_login_shell_is_not_listed_twice() {
+            let login = posix_login(None).unwrap();
+            let profiles = posix_profiles(Some(login.executable.clone()));
+            assert_eq!(profiles[0].kind, login.kind);
+            let listed = profiles
+                .iter()
+                .filter(|shell| shell.executable == login.executable)
+                .count();
+            assert_eq!(listed, 1);
+        }
     }
 
     #[cfg(windows)]

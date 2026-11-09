@@ -64,6 +64,12 @@
   -webkit-font-smoothing: antialiased;
 }
 
+:root[data-platform="macos"] {
+  --font-ui: -apple-system, "PingFang SC", sans-serif;
+  --font-display: -apple-system, "PingFang SC", sans-serif;
+  --font-mono: Menlo, "PingFang SC", "Apple Color Emoji", monospace;
+}
+
 [data-theme="light"] {
   --frame: #e9e5de;
   --canvas: #f6f4ef;
@@ -225,21 +231,24 @@ input[type="range"] { accent-color: var(--amber-fill); }
   background: var(--canvas);
 }
 
+/* A row of signal lights under the workspace: quiet while healthy, lit only past a threshold. */
 .server-status {
   position: relative;
   color: var(--legend);
-  background: var(--frame);
-  border-top: 1px solid var(--divider-soft);
-  font-size: 11.5px;
+  background: var(--chrome);
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
 }
 .server-status .server-status-summary {
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-start;
-  gap: 2px 14px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  min-height: 27px;
-  padding: 3px 12px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px 0 14px;
+  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -247,28 +256,39 @@ input[type="range"] { accent-color: var(--amber-fill); }
   box-shadow: none;
   text-align: start;
   font-size: inherit;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.server-status .server-status-summary:hover:not(:disabled) { background: var(--face-hover); }
 .server-status .server-status-summary:focus-visible { outline-offset: -2px; }
 .server-status .server-status-summary:active { transform: none; }
 .server-status button { transition: none; }
-.server-status-host { max-width: min(34vw, 28ch); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--legend-strong); }
-.server-status-metrics { display: contents; }
-.server-status-metric { white-space: nowrap; }
+.server-status .led { box-shadow: 0 0 0 2px var(--chrome); }
+.server-status-host { flex: 0 1 auto; min-width: 0; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; color: var(--legend-strong); font-weight: 500; }
+.server-status-metrics { display: flex; flex: 1 1 auto; align-items: center; gap: 14px; min-width: 0; margin-inline-start: 6px; overflow: hidden; }
+.server-status-metric { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.server-status-label { display: inline-flex; align-items: center; color: var(--legend-muted); }
+.server-status-metric[data-level="high"], .server-status-details li[data-level="high"] span { color: var(--red-text); }
+.server-status-metric[data-level="high"] .server-status-label { color: var(--red-text); }
 .server-status-state { color: var(--legend-muted); }
-.server-status-chevron { margin-inline-start: auto; }
+.server-status-chevron { flex: 0 0 auto; margin-inline-start: auto; color: var(--legend-muted); transform: rotate(180deg); transition: transform var(--base) var(--ease-out); }
+.server-status[data-expanded] .server-status-chevron { transform: none; }
 .server-status-details {
   position: absolute;
-  inset: auto 0 100%;
+  inset: auto 8px calc(100% + 6px);
   z-index: 5;
   max-height: min(45vh, 24rem);
   overflow: auto;
   padding: 10px 14px;
-  border: 1px solid var(--divider-soft);
-  background: var(--frame);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-pop);
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
+.server-status-details header strong { display: inline-flex; align-items: center; gap: 8px; color: var(--legend-strong); }
 .server-status-details header, .server-status-details li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 12px; }
 .server-status-details h3 { margin: 8px 0 3px; color: var(--legend-strong); font-size: inherit; }
 .server-status-details ul { margin: 0; padding: 0; list-style: none; }
@@ -288,6 +308,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   user-select: none;
 }
 .titlebar-drag { display: flex; align-items: center; align-self: stretch; flex: 1; min-width: 0; gap: 12px; }
+.titlebar[data-native-titlebar] { padding-inline-start: 88px; }
 .brand { margin: 0; color: var(--legend-strong); font-family: var(--font-display); font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
 .context {
   display: inline-flex;
@@ -557,8 +578,10 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .pane-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .pane-layout { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .pane-slot, .pane-mount { width: 100%; height: 100%; min-width: 0; min-height: 0; }
-.workspace-pane { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; background: var(--terminal-bg); }
-.workspace-pane-terminal { flex: 1; min-width: 0; min-height: 0; }
+.workspace-pane { container: pane / inline-size; position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; background: var(--terminal-bg); }
+.workspace-pane-terminal { position: relative; flex: 1; min-width: 0; min-height: 0; }
+/* The one production mark that lives on the pane: a key-sized red edge along the top of the terminal itself. */
+.workspace-pane[data-prod] > .workspace-pane-terminal::before { content: ""; position: absolute; inset: 0 0 auto; z-index: 3; height: 2px; background: var(--red); pointer-events: none; }
 .workspace-pane-heading { display: flex; align-items: center; gap: 6px; height: 28px; min-height: 28px; padding: 0 4px 0 8px; background: var(--chrome); border-bottom: 1px solid var(--divider); }
 .workspace-pane[data-focused] > .workspace-pane-heading { box-shadow: inset 0 2px var(--amber); }
 /* Broadcast is a toggled tool, so it speaks amber: a dashed frame and a labeled
@@ -636,7 +659,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   z-index: 3;
   inset: auto 14px 12px;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px 10px;
   width: fit-content;
@@ -652,9 +675,13 @@ input[type="range"] { accent-color: var(--amber-fill); }
   animation: rise-in var(--base) var(--ease-out);
 }
 .session-ended[data-state="failed"] { border-color: var(--red-line); }
-.session-ended-text { color: var(--legend-strong); font-weight: 600; }
-.session-ended-hint { margin-right: 4px; color: var(--legend-faint); font-size: 11.5px; }
-.session-ended button { min-height: 28px; }
+.session-ended > * { flex: 0 0 auto; }
+.session-ended-text { color: var(--legend-strong); font-weight: 600; white-space: nowrap; }
+/* The hint is the first thing to give way when the pane is narrow. */
+.session-ended > .session-ended-hint { flex: 0 1 auto; min-width: 0; margin-right: 4px; overflow: hidden; color: var(--legend-faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.session-ended button { min-height: 28px; white-space: nowrap; }
+@container pane (max-width: 520px) { .session-ended-hint { display: none; } }
+@container pane (max-width: 360px) { .session-ended { flex-wrap: wrap; } }
 
 /* ---------- Signal lights ---------- */
 
@@ -814,8 +841,9 @@ input[type="range"] { accent-color: var(--amber-fill); }
   margin-top: auto;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
-  padding: 4px 6px 4px 14px;
+  /* Matches the 32px queue and status rows, so the window's bottom rows line up. */
+  min-height: 33px;
+  padding: 2px 6px 2px 14px;
   border-top: 1px solid var(--divider);
   color: var(--legend-muted);
   font-size: 11.5px;
@@ -864,6 +892,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .inline-notice { border-color: rgb(142 169 129 / 0.4); color: var(--green-text); background: var(--green-wash); }
 .inline-error > .icon, .inline-notice > .icon { margin-top: 1px; }
 .inline-error > span, .inline-notice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.inline-error > .ghost-button { flex: 0 0 auto; gap: 5px; min-height: 24px; height: 24px; margin: -3px -1px; padding: 0 8px; color: inherit; }
 .inline-error .icon-button, .inline-notice .icon-button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; margin: -3px -1px; color: inherit; }
 /* With the host list hidden, messages float over the top of the terminal area
    instead of disappearing with the sidebar. */
@@ -941,10 +970,18 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .snippet-group-create { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 6px; }
 .snippet-group-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px 8px; }
 .snippet-group-list input { min-width: 0; }
-.snippet-list > li { padding: 6px 8px; }
-.snippet-run { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; justify-items: start; min-width: 0; height: auto; min-height: 34px; padding: 3px 5px; border: 0; background: transparent; box-shadow: none; text-align: left; white-space: normal; }
-.snippet-run strong, .snippet-run span { max-width: 100%; overflow-wrap: anywhere; }
-.snippet-run span { color: var(--legend-muted); font-size: 11px; }
+.snippet-destination { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; margin-top: -4px; color: var(--legend-strong); font-size: 12px; }
+.snippet-destination > bdi, .snippet-destination > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snippet-destination-hint { color: var(--legend-muted); }
+.snippet-list > li { padding: 8px 8px 8px 12px; }
+.snippet-main { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.snippet-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.snippet-name strong { min-width: 0; overflow-wrap: anywhere; color: var(--legend-strong); font-size: 12.5px; font-weight: 600; }
+.snippet-name span { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--legend-faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.snippet-command { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.snippet-command code { min-width: 0; overflow: hidden; color: var(--legend-muted); font-size: 11px; text-overflow: ellipsis; white-space: pre; }
+.snippet-command span { flex: 0 0 auto; color: var(--legend-faint); font-size: 11px; }
+.snippet-run { gap: 5px; min-height: 26px; height: 26px; padding: 0 9px 0 7px; }
 .snippet-editor-scrim { position: fixed; inset: 0; z-index: 60; background: var(--scrim); animation: fade-in var(--base) ease-out; }
 .snippet-editor {
   position: fixed;
@@ -1053,8 +1090,10 @@ input[type="range"] { accent-color: var(--amber-fill); }
 }
 .segmented button:hover:not(:disabled) { border-color: transparent; background: var(--face-hover); }
 .segmented button[aria-selected="true"] { border-color: var(--edge); color: var(--legend-strong); background: var(--face); box-shadow: var(--key-top), inset 0 -2px 0 var(--amber); }
-.settings-tabs { flex-wrap: wrap; }
-.settings-tabs button { flex: 1 0 auto; }
+/* One row: tabs share the width, and scroll rather than wrap when a locale runs long. */
+.settings-tabs { overflow-x: auto; scrollbar-width: none; }
+.settings-tabs::-webkit-scrollbar { display: none; }
+.settings-tabs button { flex: 1 0 auto; padding: 0 6px; white-space: nowrap; }
 .theme-preview, .theme-rename { display: grid; gap: 8px; }
 .theme-preview { padding: 12px 0; border-top: 1px solid var(--divider); }
 .theme-preview h5 { margin: 0; color: var(--legend-strong); font: inherit; font-weight: 600; }
@@ -1179,7 +1218,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .credential-list li form { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; }
 .group-list > li { cursor: grab; }
 .group-list > li.is-drop-target { border-color: var(--amber-line); background: var(--amber-wash); }
-.group-list > li .item-main strong { display: flex; align-items: center; gap: 8px; }
+.group-list > li .item-main strong, .trust-manager .item-main strong { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .group-list > li .item-main .icon { color: var(--legend-faint); }
 .trust-manager .item-list > li { flex-wrap: wrap; }
 .trust-manager .item-main { flex-basis: 100%; }

@@ -352,7 +352,7 @@ The light set maps role for role, with Paper Amber, Red, and Green darkened to t
 ### Named Rules
 **The One Accent Key Rule.** Amber marks state only: active, selected, focused, toggled, or in progress. Never use it as a panel wash, a decorative border, a destructive action, or a heading color.
 
-**The Production Red Rule.** Host identity has one color. A production host gets key-sized Safety Red marks (its monogram key, its tab key and icon, a small chip, the title-bar badge), never a tinted panel, and the chip follows the host into every surface that can change it. Broadcast never borrows red: it is a toggled tool, so it speaks amber.
+**The Production Red Rule.** Host identity has one color. A production host gets key-sized Safety Red marks (its monogram key, its tab key and icon, a small chip, the title-bar badge, and a 2px edge along the top of its terminal pane), never a tinted panel. The chip follows the host into every surface that names it or can act on it: the host editor header, the status bar, host-key rows, the snippet destination, and confirmations. Broadcast never borrows red: it is a toggled tool, so it speaks amber.
 
 **The Night Vision Rule.** Chrome avoids saturated blue and extreme black or white; contrast comes from deliberate luminance steps.
 
@@ -397,7 +397,7 @@ Compaction follows the workspace, not the window. Under a 760px workspace the re
 
 Spacing follows an observed 4, 6, 8, 12, 16, 22px rhythm: 4–6px inside control clusters, 8–12px between rows and in gutters, 16px in sheets, 22px in dialogs. Controls are 28px, fields 30px, footer and dialog actions 32px, file rows 28px, host rows 46px.
 
-Not built yet: focus mode and the server status bar. The status bar will be a row of signal lights on Chrome at the 34px row height. Snippets and tunnels open as sheets from two keys in the tab strip, so PLAN's activity bar is not needed and the One Sidebar Job Rule holds.
+The server status bar is the last row of the workspace column, under the queues, at their 32px heading height; it never spans the sidebar. Not built yet: focus mode. Snippets and tunnels open as sheets from two keys in the tab strip, so PLAN's activity bar is not needed and the One Sidebar Job Rule holds.
 
 ### Named Rules
 **The Terminal First Rule.** The first viewport is the active terminal and its context, never an onboarding hero, metric dashboard, or card gallery.
@@ -464,10 +464,17 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Session-ended bar
 - A Panel bar centered 12px above the bottom of an ended terminal (Pop shadow, Safety Red edge on failure) with the tab's light, the production chip, the status, an amber Reconnect key, an "or press Enter" hint, and a ghost Close.
+- It stays on one line: the hint truncates first and disappears in a pane under 520px; only under 360px does the bar wrap.
 
 ### Sheets
 - A 460px Panel column that slides 28px in from the sidebar edge (260ms), with the Sheet shadow over a 38% scrim that leaves the sidebar visible: a 34px header, a 16px-padded body, and a pinned footer of 32px actions, submit first.
-- Settings tabs are a segmented control on a Canvas track; the selected segment is a raised keycap with a 2px amber bottom key, so the focus ring never out-shouts it. Shortcut keys are drawn as 11px mono keycaps.
+- Settings tabs are a segmented control on a Canvas track, always one row (it scrolls rather than wraps); the selected segment is a raised keycap with a 2px amber bottom key, so the focus ring never out-shouts it. Shortcut keys are drawn as 11px mono keycaps.
+- The host editor names a production host with the chip in its header. Inherited production shows as a checked, disabled switch with its source ("through the group Production"). Esc, a scrim click, or the close key on an edited form asks "Discard changes?" with focus on Keep editing; the footer's Cancel discards directly.
+
+### Snippets sheet
+- Under the search row, a destination line names the target pane (host, or host · Pane n) or the broadcast count, with the production chip and "Commands ask before they run here".
+- Cards show the name, its group in Faint, and the first line of the template in Mono Small (with "+n more lines"). Only the Run key sends; the card body never does.
+- A send that can run a command on a production host (any line break) asks first with the danger key, the host and its chip, and the command in a mono well. A one-line snippet without Enter only lands at the prompt, so it goes straight through. A delivered send closes the sheet and returns focus to the terminal.
 
 ### Dialogs
 - Panel with the Pop shadow, rising 10px from 98% scale (260ms) over a 62% scrim. Actions are 32px and right-aligned, and focus opens on the safe action (Cancel, Reject, or Close and keep blocked).
@@ -494,6 +501,10 @@ Every button is a small keycap: tactile, quiet, and confident.
 ### Split panes and broadcast
 - Panes get a 28px heading row (it sits inside the terminal area, so it stays below the 34px chrome row): a signal light, the pane name, and the production chip. The focused pane's heading carries a 2px amber top key.
 - Broadcast is a toggled tool: the toggle key takes Amber Wash and Line, selected panes take a 2px dashed Signal Amber frame and a Broadcast chip, and a wash-and-line status bar names the target count. The first line break to a target set asks once; several lines at once always ask.
+
+### Server status bar
+- A 32px Chrome row at the bottom of the workspace column: the focused pane's signal light, the host (Body Compact at 500), the production chip, then CPU, RAM, Disk, and network rates in tabular figures with Muted labels and authored arrow icons, and a chevron key that opens the details popover (Panel, Pop shadow) above it.
+- Until the first sample it shows one state line ("Checking server status…"), never a row of dashes. A metric at or above 90% turns Safety Red Text and says "high" to screen readers; everything below stays quiet.
 
 ### Messages, chips, and badges
 - Inline errors and notices are 7px wash-and-line strips with a leading icon and a dismiss key, rising 4px into place. Success notices clear themselves after 6 seconds; errors stay until dismissed. Chips are Caption pill outlines in Quiet Divider; count badges are 18px pills on Keycap Face.
@@ -523,4 +534,5 @@ Every button is a small keycap: tactile, quiet, and confident.
 - **Don't** confirm with native `window.confirm`, or style a destructive confirmation with the amber primary.
 - **Don't** add more than three always-visible file keys to the remote-files header; new file actions go into its menus.
 - **Don't** let a single keystroke reconnect or change a production host; on a production host the first Enter only focuses Reconnect.
+- **Don't** let a snippet run a command on a production host without asking, or let a snippet card send on a click outside its Run key.
 - **Don't** light amber for a healthy default such as Follow on or a finished transfer.

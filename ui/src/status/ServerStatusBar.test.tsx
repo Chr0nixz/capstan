@@ -49,3 +49,31 @@ it("offers retry for a failed collector with its current generation", () => {
   act(() => details.querySelector("button")!.click());
   expect(retry).toHaveBeenCalledWith(snapshot);
 });
+
+it("shows one state line instead of empty metrics until the first sample", () => {
+  act(() => root.render(<ServerStatusBar host="devbox" signal="connecting" labels={copy.en.serverStatus} />));
+  const summary = container.querySelector(".server-status-summary")!;
+  expect(summary.textContent).toContain(copy.en.serverStatus.states.probing);
+  expect(summary.textContent).not.toContain(copy.en.serverStatus.missing);
+  expect(summary.querySelector(".led")?.getAttribute("data-state")).toBe("connecting");
+  // The chevron is an authored icon, not a Unicode glyph.
+  expect(summary.querySelector(".server-status-chevron")?.tagName.toLowerCase()).toBe("svg");
+});
+
+it("carries the production chip and lights only metrics past the threshold", () => {
+  const sample = decodeServerStatus(fixture.serverStatus);
+  const disk = sample.disk!;
+  const memory = sample.memory!;
+  const full = {
+    ...sample,
+    memory: { total: "8192" as typeof memory.total, available: "6144" as typeof memory.available },
+    disk: { ...disk, used: String(BigInt(disk.total) * 95n / 100n) as typeof disk.used },
+  };
+  act(() => root.render(<ServerStatusBar host="prod-api-east" snapshot={full} production={copy.en.production} signal="live" labels={copy.en.serverStatus} />));
+  const summary = container.querySelector(".server-status-summary")!;
+  expect(summary.querySelector(".prod-chip")?.textContent).toBe(copy.en.production);
+  const high = [...summary.querySelectorAll(".server-status-metric[data-level='high']")].map((metric) => metric.textContent);
+  expect(high).toHaveLength(1);
+  expect(high[0]).toContain(copy.en.serverStatus.disk);
+  expect(high[0]).toContain(`(${copy.en.serverStatus.high})`);
+});

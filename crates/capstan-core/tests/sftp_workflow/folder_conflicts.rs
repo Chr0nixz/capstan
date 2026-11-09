@@ -1,7 +1,7 @@
 //! Folder policies use production SSH/SFTP, native files and publication checks.
 use super::*;
 use capstan_core::transfer::{
-    FolderSelection, LocalDestination, LocalSource, TransferContext, WindowsDestination,
+    FolderSelection, LocalDestination, LocalSource, NativeDestination, TransferContext,
 };
 use std::path::Path;
 
@@ -44,8 +44,7 @@ async fn selections(
         contexts.push(context.clone());
         items.push((
             context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&path).unwrap())
-                as Arc<dyn LocalSource>,
+            Arc::new(capstan_core::native_fs::Source::open(&path).unwrap()) as Arc<dyn LocalSource>,
         ));
     }
     contexts
@@ -150,8 +149,7 @@ async fn folder_preflight_error_returns_no_grants_and_stops_before_the_next_batc
             .unwrap();
         items.push((
             context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&path).unwrap())
-                as Arc<dyn LocalSource>,
+            Arc::new(capstan_core::native_fs::Source::open(&path).unwrap()) as Arc<dyn LocalSource>,
         ));
     }
     {
@@ -183,7 +181,7 @@ struct SnapshotHold {
     changed: std::sync::Condvar,
 }
 struct SnapshotDestination {
-    inner: WindowsDestination,
+    inner: NativeDestination,
     hold: Arc<SnapshotHold>,
     denied: bool,
 }
@@ -271,8 +269,8 @@ async fn folder_preflight_joins_native_snapshots_after_a_peer_error_without_star
                 .service
                 .transfer_context_for_tree_file("main", "one", session, file)
                 .unwrap();
-            let inner = WindowsDestination::new(
-                capstan_native_windows::transfer::Destination::select_under_folder(
+            let inner = NativeDestination::new(
+                capstan_core::native_fs::Destination::select_under_folder(
                     local.path(),
                     &std::path::PathBuf::from(file.relative()),
                 )
@@ -572,9 +570,8 @@ async fn folder_retry_does_not_inherit_its_original_replace_policy() {
         .unwrap();
     assert_eq!(finished(&transfers, id).await.state, TransferState::Failed);
     remote.deny_write.store(false, Ordering::SeqCst);
-    let source = Arc::new(
-        capstan_native_windows::transfer::Source::open(&local.path().join("file")).unwrap(),
-    );
+    let source =
+        Arc::new(capstan_core::native_fs::Source::open(&local.path().join("file")).unwrap());
     let selection = transfers.grant_source(&context, source).unwrap();
     transfers
         .retry_with_selection("main", id, context, selection.token)
@@ -606,9 +603,9 @@ async fn folder_grants_bind_their_precise_target_and_reject_mixed_or_duplicate_g
         transfers.enqueue(other, item.selection.token),
         Err(SftpError::ScopeExpired)
     );
-    let source = Arc::new(
-        capstan_native_windows::transfer::Source::open(&local.path().join("file")).unwrap(),
-    ) as Arc<dyn LocalSource>;
+    let source =
+        Arc::new(capstan_core::native_fs::Source::open(&local.path().join("file")).unwrap())
+            as Arc<dyn LocalSource>;
     assert!(matches!(
         transfers
             .grant_folder_sources(vec![
@@ -758,7 +755,7 @@ pub(super) async fn openssh_folder_batches(
         contexts.push(context.clone());
         items.push((
             context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&sources.join(file)).unwrap())
+            Arc::new(capstan_core::native_fs::Source::open(&sources.join(file)).unwrap())
                 as Arc<dyn LocalSource>,
         ));
     }
@@ -828,8 +825,7 @@ pub(super) async fn openssh_folder_batches(
             .iter()
             .map(std::path::PathBuf::from)
             .collect::<Vec<_>>();
-        capstan_native_windows::transfer::prepare_destination_folder(&output, &directories)
-            .unwrap();
+        capstan_core::native_fs::prepare_destination_folder(&output, &directories).unwrap();
         for file in &names[..4] {
             std::fs::write(output.join(&name).join("nested").join(file), b"keep local").unwrap();
         }
@@ -852,14 +848,14 @@ pub(super) async fn openssh_folder_batches(
             let context = sftp
                 .transfer_context_for_tree_file("main", "one", session, file)
                 .unwrap();
-            let destination = capstan_native_windows::transfer::Destination::select_under_folder(
+            let destination = capstan_core::native_fs::Destination::select_under_folder(
                 &output,
                 &std::path::PathBuf::from(file.relative()),
             )
             .unwrap();
             items.push((
                 context,
-                Arc::new(WindowsDestination::new(destination)) as Arc<dyn LocalDestination>,
+                Arc::new(NativeDestination::new(destination)) as Arc<dyn LocalDestination>,
             ));
         }
         assert_eq!(
@@ -975,8 +971,7 @@ async fn folder_download_skip_preserves_nested_targets_and_the_selected_root() {
         .iter()
         .map(std::path::PathBuf::from)
         .collect::<Vec<_>>();
-    capstan_native_windows::transfer::prepare_destination_folder(local.path(), &directories)
-        .unwrap();
+    capstan_core::native_fs::prepare_destination_folder(local.path(), &directories).unwrap();
     std::fs::write(local.path().join("tree/nested/existing"), b"keep local").unwrap();
     let items = tree
         .files()
@@ -986,14 +981,14 @@ async fn folder_download_skip_preserves_nested_targets_and_the_selected_root() {
                 .service
                 .transfer_context_for_tree_file("main", "one", session, file)
                 .unwrap();
-            let destination = capstan_native_windows::transfer::Destination::select_under_folder(
+            let destination = capstan_core::native_fs::Destination::select_under_folder(
                 local.path(),
                 &std::path::PathBuf::from(file.relative()),
             )
             .unwrap();
             (
                 context,
-                Arc::new(WindowsDestination::new(destination)) as Arc<dyn LocalDestination>,
+                Arc::new(NativeDestination::new(destination)) as Arc<dyn LocalDestination>,
             )
         })
         .collect();
@@ -1079,11 +1074,9 @@ async fn folder_download_rechecks_native_identity_for_queued_members() {
             .service
             .transfer_context_for_tree_file("main", "one", session, file)
             .unwrap();
-        let destination = WindowsDestination::new(
-            capstan_native_windows::transfer::Destination::select(
-                &local.path().join("tree").join(name),
-            )
-            .unwrap(),
+        let destination = NativeDestination::new(
+            capstan_core::native_fs::Destination::select(&local.path().join("tree").join(name))
+                .unwrap(),
         );
         items.push((context, Arc::new(destination) as Arc<dyn LocalDestination>));
     }

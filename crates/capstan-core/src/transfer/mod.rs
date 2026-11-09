@@ -3,19 +3,19 @@ mod batch;
 mod budget;
 mod engine;
 mod local;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 mod native;
 mod preflight;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 mod tree;
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub use tree::{TreeChoice, TreeDecision, TreePlanSummary, TreeResult};
 mod recovery;
 pub use batch::BatchSummary;
-#[cfg(windows)]
-pub use local::WindowsDestination;
+#[cfg(any(windows, unix))]
+pub use local::NativeDestination;
 pub use local::{LocalDestination, LocalSource, LocalVersion};
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 pub use native::{ExportDrag, ExportSnapshot, NativeDropResult, PreparedExport};
 pub use recovery::{RecoveryState, TransferRecoverySnapshot, TransferRecoveryView};
 
@@ -88,6 +88,12 @@ pub struct TransferContext {
     pub(crate) baseline: Option<Metadata>,
     pub(crate) target: TransferTarget,
     pub(crate) lease: capstan_ssh::ConnectionLease<capstan_ssh::PasswordConnection>,
+}
+impl TransferContext {
+    /// The name a native save panel should suggest for this download.
+    pub fn remote_file_name(&self) -> Option<&str> {
+        self.path.file_name()
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -658,9 +664,9 @@ pub struct TransferService {
     commits: Arc<tokio::sync::Mutex<()>>,
     budget: Arc<budget::Budget>,
     recovery: Mutex<Option<Arc<RecoveryStore>>>,
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     native: Mutex<native::Registry>,
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     trees: Mutex<HashMap<Uuid, tree::PlanHandle>>,
     reaper_started: std::sync::atomic::AtomicBool,
 }
@@ -673,9 +679,9 @@ impl Default for TransferService {
             commits: Arc::new(tokio::sync::Mutex::new(())),
             budget: Arc::new(budget::Budget::default()),
             recovery: Mutex::new(None),
-            #[cfg(windows)]
+            #[cfg(any(windows, unix))]
             native: Mutex::new(native::Registry::default()),
-            #[cfg(windows)]
+            #[cfg(any(windows, unix))]
             trees: Mutex::new(HashMap::new()),
             reaper_started: std::sync::atomic::AtomicBool::new(false),
         }
@@ -1296,7 +1302,7 @@ impl TransferService {
                             .grants
                             .retain(|_, grant| grant.expires > Instant::now());
                     };
-                    #[cfg(windows)]
+                    #[cfg(any(windows, unix))]
                     {
                         if let Ok(mut trees) = service.trees.lock() {
                             trees.retain(|_, handle| handle.expires > Instant::now());
@@ -1798,10 +1804,8 @@ impl TransferService {
         }
         if let Decision::Rename { name } = &decision {
             crate::sftp::RemoteName::from_bytes(name.as_bytes())?;
-            #[cfg(windows)]
-            if status.direction == Direction::Download
-                && !capstan_native_windows::transfer::valid_name(name)
-            {
+            #[cfg(any(windows, unix))]
+            if status.direction == Direction::Download && !crate::native_fs::valid_name(name) {
                 return Err(SftpError::PathInvalid);
             }
         }
@@ -1818,11 +1822,11 @@ impl TransferService {
         Ok(())
     }
     pub fn cancel_window(&self, window: &str) {
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         if let Ok(mut registry) = self.native.lock() {
             registry.revoke(window);
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         if let Ok(mut trees) = self.trees.lock() {
             trees.retain(|_, handle| handle.binding.window != window);
         }
@@ -1838,7 +1842,7 @@ impl TransferService {
         }
     }
     pub fn has_active(&self, window: &str) -> Result<bool, SftpError> {
-        #[cfg(windows)]
+        #[cfg(any(windows, unix))]
         if self
             .trees
             .lock()

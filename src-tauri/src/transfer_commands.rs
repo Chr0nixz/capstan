@@ -1,10 +1,11 @@
 //! Picker/owner validation and forwarding; file bodies stay in native/core I/O.
+use crate::native_dialog::{pick, Picker};
 use crate::{desktop_commands::DesktopState, CommandError};
 use capstan_core::{
     sftp::{ExactU64, RemoteEntryId, RemotePath, SftpService, SftpSessionId},
     transfer::{
-        Decision, LocalSelection, TransferService, TransferSnapshot, TransferTarget,
-        WindowsDestination,
+        Decision, LocalSelection, NativeDestination, TransferService, TransferSnapshot,
+        TransferTarget,
     },
 };
 use capstan_terminal::TerminalSessionId;
@@ -27,6 +28,22 @@ fn local_error(error: std::io::Error) -> CommandError {
         std::io::ErrorKind::InvalidInput => "path_invalid",
         _ => "local_io",
     })
+}
+
+async fn pick_transfer_file<T: Send + 'static>(
+    window: &tauri::WebviewWindow,
+    title: &'static str,
+    locale: &str,
+    picker: Picker,
+    open: impl FnOnce(&std::path::Path) -> std::io::Result<T> + Send + 'static,
+) -> Result<Option<T>, CommandError> {
+    let path = pick(window, title, locale, picker)
+        .await
+        .map_err(local_error)?;
+    tauri::async_runtime::spawn_blocking(move || path.map(|path| open(&path)).transpose())
+        .await
+        .map_err(|_| CommandError::new("local_io"))?
+        .map_err(local_error)
 }
 
 #[tauri::command]
@@ -84,6 +101,7 @@ pub async fn enqueue_native_drop(
     }
     Ok(result)
 }
+#[cfg(windows)]
 #[tauri::command]
 pub async fn prepare_native_export(
     window: tauri::WebviewWindow,
@@ -103,6 +121,7 @@ pub async fn prepare_native_export(
     desktop.update_tree_conflict(&result.plan);
     Ok(result)
 }
+#[cfg(windows)]
 #[tauri::command]
 pub fn native_export_snapshot(
     window: tauri::WebviewWindow,
@@ -110,6 +129,7 @@ pub fn native_export_snapshot(
 ) -> Result<Vec<capstan_core::transfer::ExportSnapshot>, CommandError> {
     transfers.export_snapshot(source(&window)?).map_err(error)
 }
+#[cfg(windows)]
 #[tauri::command]
 pub async fn release_native_export(
     window: tauri::WebviewWindow,
@@ -121,6 +141,7 @@ pub async fn release_native_export(
         .await
         .map_err(error)
 }
+#[cfg(windows)]
 #[tauri::command]
 pub async fn start_native_export(
     window: tauri::WebviewWindow,
@@ -170,23 +191,23 @@ pub async fn select_transfer_source(
         .map_err(error)
     };
     context()?;
-    let parent_window = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
-    let file = tauri::async_runtime::spawn_blocking(move || {
-        let (title, filter) = if locale == "zh-CN" {
-            ("选择上传文件", "所有文件")
-        } else {
-            ("Select file to upload", "All files")
-        };
-        capstan_native_windows::transfer::pick_file(title, filter, parent_window, false)?
-            .map(|path| capstan_native_windows::transfer::Source::open(&path))
-            .transpose()
-    })
-    .await
-    .map_err(|_| CommandError::new("local_io"))?
-    .map_err(local_error)?;
+    let title = if locale == "zh-CN" {
+        "选择上传文件"
+    } else {
+        "Select file to upload"
+    };
+    let picker = Picker::File {
+        save: false,
+        name: None,
+    };
+    let file = pick_transfer_file(
+        &window,
+        title,
+        &locale,
+        picker,
+        capstan_core::native_fs::Source::open,
+    )
+    .await?;
     let Some(file) = file else {
         return Ok(None);
     };
@@ -219,23 +240,14 @@ pub async fn select_transfer_folder_plan(
         },
     )
     .map_err(error)?;
-    let parent_window = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
-    let folder = tauri::async_runtime::spawn_blocking(move || {
-        capstan_native_windows::transfer::pick_folder(
-            if locale == "zh-CN" {
-                "选择上传文件夹"
-            } else {
-                "Select folder to upload"
-            },
-            parent_window,
-        )
-    })
-    .await
-    .map_err(|_| CommandError::new("local_io"))?
-    .map_err(local_error)?;
+    let title = if locale == "zh-CN" {
+        "选择上传文件夹"
+    } else {
+        "Select folder to upload"
+    };
+    let folder = pick(&window, title, &locale, Picker::Folder)
+        .await
+        .map_err(local_error)?;
     let Some(folder) = folder else {
         return Ok(None);
     };
@@ -260,23 +272,14 @@ pub async fn select_transfer_folder_download_plan(
     locale: String,
 ) -> Result<Option<capstan_core::transfer::TreePlanSummary>, CommandError> {
     let label = source(&window)?;
-    let parent_window = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
-    let folder = tauri::async_runtime::spawn_blocking(move || {
-        capstan_native_windows::transfer::pick_folder(
-            if locale == "zh-CN" {
-                "选择下载位置"
-            } else {
-                "Select download folder"
-            },
-            parent_window,
-        )
-    })
-    .await
-    .map_err(|_| CommandError::new("local_io"))?
-    .map_err(local_error)?;
+    let title = if locale == "zh-CN" {
+        "选择下载位置"
+    } else {
+        "Select download folder"
+    };
+    let folder = pick(&window, title, &locale, Picker::Folder)
+        .await
+        .map_err(local_error)?;
     let Some(folder) = folder else {
         return Ok(None);
     };
@@ -357,29 +360,26 @@ pub async fn select_transfer_destination(
         )
         .map_err(error)
     };
-    context()?;
-    let parent = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
-    let file = tauri::async_runtime::spawn_blocking(move || {
-        let (title, filter) = if locale == "zh-CN" {
-            ("保存下载文件", "所有文件")
-        } else {
-            ("Save downloaded file", "All files")
-        };
-        capstan_native_windows::transfer::pick_file(title, filter, parent, true)?
-            .map(|path| capstan_native_windows::transfer::Destination::select(&path))
-            .transpose()
-    })
-    .await
-    .map_err(|_| CommandError::new("local_io"))?
-    .map_err(local_error)?;
+    let name = context()?.remote_file_name().map(str::to_owned);
+    let title = if locale == "zh-CN" {
+        "保存下载文件"
+    } else {
+        "Save downloaded file"
+    };
+    let picker = Picker::File { save: true, name };
+    let file = pick_transfer_file(
+        &window,
+        title,
+        &locale,
+        picker,
+        capstan_core::native_fs::Destination::select,
+    )
+    .await?;
     let Some(file) = file else {
         return Ok(None);
     };
     transfers
-        .grant_destination(&context()?, Arc::new(WindowsDestination::new(file)))
+        .grant_destination(&context()?, Arc::new(NativeDestination::new(file)))
         .map(Some)
         .map_err(error)
 }
@@ -477,23 +477,23 @@ pub async fn select_recovered_transfer_destination(
     sftp.transfer_context_for_recovered_download(&label, &terminal.0, session, descriptor)
         .await
         .map_err(error)?;
-    let parent = window
-        .hwnd()
-        .map_err(|_| CommandError::new("window_source"))?
-        .0 as isize;
-    let destination = tauri::async_runtime::spawn_blocking(move || {
-        let (title, filter) = if locale == "zh-CN" {
-            ("重新选择原下载目标", "所有文件")
-        } else {
-            ("Select the original download destination", "All files")
-        };
-        capstan_native_windows::transfer::pick_file(title, filter, parent, true)?
-            .map(|path| capstan_native_windows::transfer::Destination::select(&path))
-            .transpose()
-    })
-    .await
-    .map_err(|_| CommandError::new("local_io"))?
-    .map_err(local_error)?;
+    let title = if locale == "zh-CN" {
+        "重新选择原下载目标"
+    } else {
+        "Select the original download destination"
+    };
+    let picker = Picker::File {
+        save: true,
+        name: None,
+    };
+    let destination = pick_transfer_file(
+        &window,
+        title,
+        &locale,
+        picker,
+        capstan_core::native_fs::Destination::select,
+    )
+    .await?;
     let Some(destination) = destination else {
         return Ok(None);
     };
@@ -507,7 +507,7 @@ pub async fn select_recovered_transfer_destination(
             &label,
             id,
             &context,
-            Arc::new(WindowsDestination::new(destination)),
+            Arc::new(NativeDestination::new(destination)),
         )
         .await
         .map(Some)

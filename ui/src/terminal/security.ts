@@ -27,7 +27,7 @@ export function isMultilinePaste(text: string): boolean {
 
 export function activateTerminalLink(
   value: string,
-  confirmNonHttp: (url: URL) => boolean,
+  confirmNonHttp: (url: URL) => boolean | Promise<boolean>,
   open: (url: URL) => void,
 ): boolean {
   let url: URL;
@@ -40,7 +40,12 @@ export function activateTerminalLink(
     open(url);
     return true;
   }
-  if (!confirmNonHttp(url)) return false;
+  const answer = confirmNonHttp(url);
+  if (answer instanceof Promise) {
+    void answer.then((accepted) => { if (accepted) open(url); }, () => undefined);
+    return true;
+  }
+  if (!answer) return false;
   open(url);
   return true;
 }

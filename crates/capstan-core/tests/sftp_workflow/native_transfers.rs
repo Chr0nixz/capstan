@@ -1,5 +1,7 @@
 use super::*;
 
+// Dragging staged downloads out to the shell is Windows-only (OLE).
+#[cfg(windows)]
 #[tokio::test]
 async fn concurrent_export_admission_never_leaves_an_orphan_stage() {
     let (fixture, session, transfers) = fixture().await;
@@ -167,7 +169,7 @@ async fn retry_rejects_foreign_hosts_without_changing_the_final_state_then_accep
     let grant = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     assert_eq!(
@@ -180,7 +182,7 @@ async fn retry_rejects_foreign_hosts_without_changing_the_final_state_then_accep
     let grant = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     transfers
@@ -299,6 +301,8 @@ async fn native_receipts_are_owner_bound_single_use_and_upload_files_and_empty_d
     fixture.close().await;
 }
 
+// Dragging staged downloads out to the shell is Windows-only (OLE).
+#[cfg(windows)]
 #[tokio::test]
 async fn export_tokens_bind_generation_retain_until_explicit_cleanup_and_recover_after_restart() {
     let (fixture, session, transfers) = fixture().await;
@@ -458,6 +462,8 @@ async fn file_directory_collisions_allow_save_as_and_never_replace_a_directory()
     fixture.close().await;
 }
 
+// Dragging staged downloads out to the shell is Windows-only (OLE).
+#[cfg(windows)]
 #[tokio::test]
 async fn explorer_export_uses_the_same_name_plan_for_unrepresentable_files_and_directories() {
     use capstan_core::transfer::{TreeChoice, TreeDecision};

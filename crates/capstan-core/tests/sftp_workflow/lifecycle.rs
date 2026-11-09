@@ -307,7 +307,7 @@ async fn explicit_reconnect_retires_dead_pool_aliases_and_rejects_previous_gener
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn peer_transport_loss_interrupts_active_and_queued_jobs_without_publication() {
     let fixture = Fixture::new().await;
@@ -375,10 +375,10 @@ async fn peer_transport_loss_interrupts_active_and_queued_jobs_without_publicati
     assert_eq!(observations.active_subsystems.load(Ordering::SeqCst), 0);
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn transport_loss_during_publication_preserves_admitted_commit_and_drains_exit() {
-    use capstan_core::transfer::{TransferTarget, WindowsDestination};
+    use capstan_core::transfer::{NativeDestination, TransferTarget};
     let fixture = Fixture::new().await;
     fixture
         .observations
@@ -401,8 +401,8 @@ async fn transport_loss_during_publication_preserves_admitted_commit_and_drains_
             .unwrap();
         let output = local.path().join(format!("output-{index}"));
         let destination = transfers::FaultDestination {
-            inner: WindowsDestination::new(
-                capstan_native_windows::transfer::Destination::select(&output).unwrap(),
+            inner: NativeDestination::new(
+                capstan_core::native_fs::Destination::select(&output).unwrap(),
             ),
             fault: 3,
             hold: Some(hold.clone()),
@@ -450,7 +450,7 @@ async fn transport_loss_during_publication_preserves_admitted_commit_and_drains_
     fixture.close().await;
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn cancel_window_clears_unused_native_grants_and_drains_waiting_jobs() {
     let fixture = Fixture::new().await;
@@ -476,11 +476,16 @@ async fn cancel_window_clears_unused_native_grants_and_drains_waiting_jobs() {
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&unused_source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&unused_source).unwrap()),
         )
         .unwrap();
-    assert!(std::fs::write(&active_source, b"blocked").is_err());
-    assert!(std::fs::write(&unused_source, b"blocked").is_err());
+    // Windows share modes deny writes to selected sources; Unix sources are
+    // instead re-verified by identity, size and mtime before use.
+    #[cfg(windows)]
+    {
+        assert!(std::fs::write(&active_source, b"blocked").is_err());
+        assert!(std::fs::write(&unused_source, b"blocked").is_err());
+    }
     // This is the core primitive used by disconnect-on-lock; native lock UI
     // and credentials/policy routing remain a separate desktop acceptance.
     transfers.cancel_window("main");
@@ -502,6 +507,7 @@ async fn cancel_window_clears_unused_native_grants_and_drains_waiting_jobs() {
     fixture.close().await;
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
 #[cfg(windows)]
 #[tokio::test]
 async fn abrupt_tcp_eof_interrupts_upload_and_releases_handles_without_authentication_replay() {
@@ -571,7 +577,7 @@ async fn abrupt_tcp_eof_interrupts_upload_and_releases_handles_without_authentic
     let selection = transfers
         .grant_source(
             &context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     let id = transfers.enqueue(context, selection.token).unwrap();
@@ -735,7 +741,7 @@ async fn abrupt_tcp_eof_interrupts_upload_and_releases_handles_without_authentic
     let retry_selection = restarted_transfers
         .grant_source(
             &retry_context,
-            Arc::new(capstan_native_windows::transfer::Source::open(&source).unwrap()),
+            Arc::new(capstan_core::native_fs::Source::open(&source).unwrap()),
         )
         .unwrap();
     restarted_transfers
@@ -777,7 +783,7 @@ async fn abrupt_tcp_eof_interrupts_upload_and_releases_handles_without_authentic
     assert_eq!(observations.active_subsystems.load(Ordering::SeqCst), 0);
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, unix))]
 #[tokio::test]
 async fn primary_loss_interrupts_its_conflict_while_siblings_and_queued_authority_survive() {
     let fixture = Fixture::new().await;

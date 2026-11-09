@@ -40,6 +40,35 @@ public key. This checkout leaves that key empty, so updates are unavailable.
 Portable builds only announce updates. See [updates and recovery](docs/UPDATES.md)
 for signing, installation and key rotation.
 
+## Build on macOS
+
+Use macOS 14 or later with the Xcode Command Line Tools, Rust 1.96.0, Node.js 22
+and pnpm 10.28.1. Node 25 and later need `NODE_OPTIONS=--no-webstorage` for
+`pnpm -C ui test`.
+
+```bash
+pnpm -C ui install --frozen-lockfile
+```
+
+```bash
+pnpm tauri dev
+```
+
+```bash
+pnpm bundle:mac
+```
+
+Bundles are under `target/release/bundle` and are neither signed nor notarized, so
+macOS asks for confirmation the first time one is opened. The dmg step scripts Finder for
+its window layout; where that is not permitted, run `CI=true pnpm bundle:mac` to skip it. Data is stored in
+`~/Library/Application Support/`, under the app identifier.
+
+macOS provides local login shells, SSH (including the agent at `SSH_AUTH_SOCK`), SFTP
+transfers, drag-in upload, tunnels and the encrypted vault, with Command-based shortcuts
+and Option as Meta. Remote editing,
+drag-out to Finder, resuming interrupted transfers after a restart, system
+notifications, Touch ID and updates are Windows-only for now.
+
 ## Use and protect your data
 
 Local terminals work while the Vault is locked. Creating or unlocking the Vault
@@ -79,6 +108,11 @@ Rust 1.96.0、Node.js 22、pnpm 10.28.1、CMake；生成安装包及内嵌文件
 
 软件更新默认手动检查；当前源码未配置生产更新公钥，功能不可用。便携版只提示新版本。
 签名发布、安装失败恢复与密钥轮换见 [更新说明](docs/UPDATES.md)。
+
+macOS 需要 14 或更高版本、Xcode Command Line Tools、Rust 1.96.0、Node.js 22、pnpm 10.28.1，
+命令见上方的 Build on macOS。macOS 版提供本地登录 Shell、SSH、SFTP 传输、拖入上传、隧道和
+加密库，快捷键以 ⌘ 为主，⌥ 作为 Meta。远程编辑、拖出到访达、重启后续传、系统通知、Touch ID
+和软件更新暂时只有 Windows 版。
 
 本地终端无需解锁加密库；保存的主机与新 SSH 连接需要解锁。首次连接需独立核验主机
 指纹，密钥变化会阻断连接。更新便携程序时保留完整 `data/`；备份导出使用独立口令。

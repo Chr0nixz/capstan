@@ -8,7 +8,7 @@ describe("terminal interaction security", () => {
     expect(parseOsc52Request("c;%%%" )).toEqual({ kind: "invalid" });
   });
 
-  it("detects multi-line paste and gates non-HTTP links separately", () => {
+  it("detects multi-line paste and gates non-HTTP links separately", async () => {
     expect(isMultilinePaste("single line")).toBe(false);
     expect(isMultilinePaste("first\nsecond")).toBe(true);
     const open = vi.fn();
@@ -16,5 +16,15 @@ describe("terminal interaction security", () => {
     expect(activateTerminalLink("mailto:hello@example.test", () => false, open)).toBe(false);
     expect(activateTerminalLink("mailto:hello@example.test", () => true, open)).toBe(true);
     expect(open).toHaveBeenCalledTimes(2);
+    open.mockClear();
+    let answer!: (accepted: boolean) => void;
+    activateTerminalLink("mailto:hello@example.test", () => new Promise((resolve) => { answer = resolve; }), open);
+    expect(open).not.toHaveBeenCalled();
+    answer(true);
+    await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    open.mockClear();
+    activateTerminalLink("mailto:hello@example.test", () => Promise.resolve(false), open);
+    await Promise.resolve();
+    expect(open).not.toHaveBeenCalled();
   });
 });

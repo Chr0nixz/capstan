@@ -30,3 +30,9 @@ russh = { path = "vendor/russh" }
 russh-sftp = { path = "vendor/russh-sftp" }
 
 ssh-key = { path = "vendor/ssh-key" }
+
+# dyld on macOS 27 refuses stripped proc-macro dylibs ("mis-aligned LINKEDIT string
+# pool"), which rustc reports as "can't find crate". Only build-time artifacts are
+# affected; the shipped binary is still stripped.
+[profile.release.build-override]
+strip = false

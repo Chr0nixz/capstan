@@ -128,7 +128,7 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
       const label = paneName(pane.paneId);
       const focus = (): void => { useWorkspace.getState().focusPane(tab.id, pane.paneId); };
       const close = (): void => { useWorkspace.getState().closePane(tab.id, pane.paneId); onRequestFocus(); };
-      return createPortal(<section className="workspace-pane" data-pane-id={pane.paneId} data-focused={focused || undefined} data-broadcast={selected || undefined}
+      return createPortal(<section className="workspace-pane" data-pane-id={pane.paneId} data-focused={focused || undefined} data-broadcast={selected || undefined} data-prod={production || undefined}
         data-theme={theme} aria-label={label} onFocusCapture={focus} onPointerDownCapture={focus}>
         {header && <div className="workspace-pane-heading">
           {tab.broadcastEnabled && <input type="checkbox" aria-label={labels.selectBroadcastPane(label)} title={labels.selectBroadcastPane(label)} checked={tab.broadcastPaneIds.includes(pane.paneId)}

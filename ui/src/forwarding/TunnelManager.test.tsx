@@ -85,6 +85,7 @@ async function mount(): Promise<void> {
     onConnectHost={() => undefined} onClose={() => undefined} /> as ReactElement));
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 }
+function tunnelRouteText(): string { return tunnelRoute(tunnel); }
 function button(label: string): HTMLButtonElement {
   const result = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label);
   if (!result) throw new Error(`Missing button: ${label}`);
@@ -102,6 +103,24 @@ describe("tunnel panel", () => {
     }))).toContain("[::1]");
     const invalid = editDraft(tunnel);
     expect(() => draftConfig({ ...invalid, port: "65536" })).toThrow("forwarding_contract_invalid");
+  });
+
+  it("replaces the empty state with the load error and recovers on Try again", async () => {
+    const list = invocation.getMockImplementation()!;
+    let failures = 1;
+    invocation.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === "list_tunnels" && failures-- > 0) throw { code: "backend" };
+      return list(command, args);
+    });
+    await mount();
+    expect(container.querySelector("[role='alert']")?.textContent).toContain(copy.en.tunnelLoadFailed);
+    expect(container.textContent).not.toContain(copy.en.tunnelEmpty);
+    expect(button(copy.en.tunnelNew).disabled).toBe(true);
+    await act(async () => button(copy.en.tunnelRetryLoad).click());
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(container.querySelector(".tunnel-list")?.textContent).toContain(tunnelRouteText());
+    expect(button(copy.en.tunnelNew).disabled).toBe(false);
   });
 
   it("starts the selected host generation, reflects traffic events, and waits for stop", async () => {

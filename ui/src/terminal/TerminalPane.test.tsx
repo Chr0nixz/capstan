@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { copy } from "../i18n";
 import type { TabId, TerminalLaunch } from "./contracts";
 import type { TerminalSessionOptions } from "./session";
@@ -110,6 +110,63 @@ describe("terminal view ownership", () => {
     expect(mocks.session.writeLocal).toHaveBeenCalledTimes(1);
     expect(mocks.controller.dispose).toHaveBeenCalledTimes(1);
     await act(async () => { root.unmount(); });
+  });
+
+  describe("on macOS", () => {
+    beforeEach(() => { vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel"); });
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    it("opens search on Command+F only", async () => {
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      await act(async () => { root.render(<TerminalPane tabId={tabId} launch={launch} labels={copy.en} visible />); });
+      const pane = container.querySelector(".terminal-pane-root");
+      await act(async () => { pane?.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, shiftKey: true, bubbles: true })); });
+      expect(container.querySelector(".terminal-search-toolbar")).toBeNull();
+      await act(async () => { pane?.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true })); });
+      expect(container.querySelector(".terminal-search-toolbar")).not.toBeNull();
+      await act(async () => { root.unmount(); });
+    });
+
+    it("asks in the app because WKWebView's window.confirm always answers false", async () => {
+      const native = vi.spyOn(window, "confirm").mockReturnValue(false);
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(async () => { root.render(<TerminalPane tabId={tabId} launch={launch} labels={copy.en} visible />); });
+      let answer!: boolean | Promise<boolean> | undefined;
+      await act(async () => { answer = mocks.options?.confirmMultilinePaste?.(3); });
+      expect(native).not.toHaveBeenCalled();
+      const dialog = document.body.querySelector("[role='alertdialog']");
+      expect(dialog?.textContent).toContain(copy.en.confirmMultilinePaste(3));
+      expect(document.activeElement?.textContent).toBe(copy.en.cancelEdit);
+      await act(async () => { [...dialog!.querySelectorAll("button")].find((button) => button.textContent === copy.en.terminalConfirmAccept)?.click(); });
+      await expect(answer).resolves.toBe(true);
+      expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+      await act(async () => { root.unmount(); });
+      container.remove();
+    });
+
+    it("never lets a remote clipboard request replace a question already on screen", async () => {
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(async () => { root.render(<TerminalPane tabId={tabId} launch={launch} labels={copy.en} visible />); });
+      let paste!: boolean | Promise<boolean> | undefined;
+      await act(async () => { paste = mocks.options?.confirmMultilinePaste?.(2); });
+      let remote!: boolean | Promise<boolean> | undefined;
+      await act(async () => { remote = mocks.options?.confirmOsc52Write?.(5); });
+      expect(remote).toBe(false);
+      expect(document.body.querySelector("[role='alertdialog']")?.textContent).toContain(copy.en.confirmMultilinePaste(2));
+      await act(async () => { [...document.body.querySelectorAll("[role='alertdialog'] button")].find((button) => button.textContent === copy.en.cancelEdit)?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+      await expect(paste).resolves.toBe(false);
+      let second!: boolean | Promise<boolean> | undefined;
+      await act(async () => { second = mocks.options?.confirmOsc52Write?.(5); });
+      expect(document.body.querySelector("[role='alertdialog']")?.textContent).toContain(copy.en.confirmOsc52Write(5));
+      await act(async () => { root.unmount(); });
+      expect(second).toBeInstanceOf(Promise);
+      container.remove();
+    });
   });
 
   it("opens terminal search from Ctrl+Shift+F and restores terminal focus on close", async () => {

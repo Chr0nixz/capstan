@@ -23,6 +23,14 @@ impl RemotePath {
         &self.0
     }
 
+    /// The final component, when the path names one rather than a directory form.
+    pub fn file_name(&self) -> Option<&str> {
+        self.0
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+    }
+
     pub fn join(&self, name: &RemoteName) -> Result<Self, SftpError> {
         Self::parse(&format!(
             "{}{}{}",
@@ -68,5 +76,25 @@ impl RemoteName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RemotePath;
+
+    #[test]
+    fn file_name_is_the_last_real_component() {
+        let name = |path: &str| {
+            RemotePath::parse(path)
+                .unwrap()
+                .file_name()
+                .map(str::to_owned)
+        };
+        assert_eq!(name("/srv/report.tar.gz").as_deref(), Some("report.tar.gz"));
+        assert_eq!(name("/中文/名字.txt").as_deref(), Some("名字.txt"));
+        for directory in ["/", "/srv/", "/srv/.", "/srv/.."] {
+            assert_eq!(name(directory), None, "{directory}");
+        }
     }
 }
