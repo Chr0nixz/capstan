@@ -25,6 +25,7 @@ use secrecy::{ExposeSecret, SecretString};
 use std::{
     collections::HashMap,
     future::Future,
+    net::SocketAddr,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -1135,15 +1136,18 @@ async fn connect_with_authentication(
     // for a connection attempt which no longer has a caller.
     let cancel = cancel.child_token();
     let connection_guard = cancel.clone().drop_guard();
-    let target = tokio::select! {
+    let targets: Vec<SocketAddr> = tokio::select! {
         biased;
         () = cancel.cancelled() => return Err(SshError::Canceled),
         result = tokio::time::timeout(Duration::from_secs(15), tokio::net::lookup_host((address.as_str(), port))) => match result {
-            Ok(Ok(mut addresses)) => addresses.next().ok_or(SshError::Connection)?,
+            Ok(Ok(addresses)) => addresses.collect(),
             Ok(Err(_)) => return Err(SshError::Connection),
             Err(_) => return Err(SshError::Timeout),
         },
     };
+    if targets.is_empty() {
+        return Err(SshError::Connection);
+    }
     let failure = Arc::new(Mutex::new(None));
     let agent_tasks = TaskTracker::new();
     let (checking_host_key, host_key_checks) = watch::channel(false);
@@ -1178,7 +1182,13 @@ async fn connect_with_authentication(
         biased;
         () = cancel.cancelled() => return Err(SshError::Canceled),
         result = handshake_with_timeout(async {
-            client::connect(config, target, handler).await.map_err(|_| {
+            // Every resolved address shares the handshake's network budget.
+            let socket = connect_first_reachable(targets, tokio::net::TcpStream::connect)
+                .await
+                .ok_or(SshError::Connection)?;
+            // Best effort, as in russh's own connect: the session works without it.
+            let _ = socket.set_nodelay(true);
+            client::connect_stream(config, socket, handler).await.map_err(|_| {
                 failure.lock().ok().and_then(|mut failure| failure.take()).unwrap_or(SshError::Connection)
             })
         }, host_key_checks) => result?,
@@ -1275,6 +1285,50 @@ async fn connect_with_authentication(
     })
 }
 
+/// Head start each address gets before the next one is tried alongside it.
+const CONNECT_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+/// Connect to the first resolved address that answers, in resolver order.
+/// A failed attempt starts the next address at once and a silent one after
+/// `CONNECT_ATTEMPT_DELAY`, so an unreachable address family (typically IPv6 on
+/// a dual-stack host) cannot spend the whole handshake budget. Dropping the
+/// future aborts every attempt still in flight.
+async fn connect_first_reachable<T, F>(
+    addresses: Vec<SocketAddr>,
+    connect: impl Fn(SocketAddr) -> F,
+) -> Option<T>
+where
+    T: Send + 'static,
+    F: Future<Output = std::io::Result<T>> + Send + 'static,
+{
+    let mut remaining = addresses.into_iter();
+    let mut attempts = tokio::task::JoinSet::new();
+    attempts.spawn(connect(remaining.next()?));
+    let mut exhausted = false;
+    loop {
+        let start_next = tokio::select! {
+            biased;
+            finished = attempts.join_next() => match finished {
+                Some(Ok(Ok(stream))) => return Some(stream),
+                Some(_) => true,
+                None => return None,
+            },
+            () = tokio::time::sleep(CONNECT_ATTEMPT_DELAY), if !exhausted => true,
+        };
+        if start_next && !exhausted {
+            match remaining.next() {
+                Some(address) => {
+                    attempts.spawn(connect(address));
+                }
+                None => exhausted = true,
+            }
+        }
+        if exhausted && attempts.is_empty() {
+            return None;
+        }
+    }
+}
+
 /// Charge only network activity to the handshake deadline. Host-key checking
 /// includes the independently bounded human decision and saving trust before
 /// authentication. Preserve the unused network budget after that check.
@@ -1318,10 +1372,7 @@ mod tests {
         keys::{Algorithm, PrivateKey},
         server::{self, Auth, Msg, Server as _, Session},
     };
-    use std::{
-        net::SocketAddr,
-        sync::atomic::{AtomicU64, AtomicUsize, Ordering},
-    };
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -1561,6 +1612,29 @@ mod tests {
         agent_forward_on_shell: bool,
         agent_forward_on_request: bool,
     ) -> (SocketAddr, PrivateKey, Arc<AtomicUsize>, TestServerGuard) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        start_server_listening(
+            listener,
+            accept_password,
+            close_after_echo,
+            saturate_on_request,
+            accepted_public_key,
+            agent_forward_on_shell,
+            agent_forward_on_request,
+        )
+    }
+
+    fn start_server_listening(
+        listener: TcpListener,
+        accept_password: bool,
+        close_after_echo: bool,
+        saturate_on_request: bool,
+        accepted_public_key: Option<String>,
+        agent_forward_on_shell: bool,
+        agent_forward_on_request: bool,
+    ) -> (SocketAddr, PrivateKey, Arc<AtomicUsize>, TestServerGuard) {
         let host_key =
             PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).expect("test server key");
         let config = server::Config {
@@ -1570,9 +1644,6 @@ mod tests {
             ..server::Config::default()
         };
         let config = Arc::new(config);
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind test server");
         let address = listener.local_addr().expect("test server address");
         let auth_count = Arc::new(AtomicUsize::new(0));
         let agent_forward_count = Arc::new(AtomicUsize::new(0));
@@ -1904,6 +1975,125 @@ mod tests {
         assert!(!task.is_finished());
         tokio::time::advance(Duration::from_secs(2)).await;
         assert_eq!(task.await.unwrap(), Err(SshError::Timeout));
+    }
+
+    fn test_address(last: u8) -> SocketAddr {
+        SocketAddr::from(([192, 0, 2, last], 22))
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_refused_first_address_falls_back_to_the_next_one_at_once() {
+        let started = tokio::time::Instant::now();
+        let connected = connect_first_reachable(
+            vec![test_address(1), test_address(2)],
+            |address| async move {
+                if address == test_address(1) {
+                    Err(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
+                } else {
+                    Ok(address)
+                }
+            },
+        )
+        .await;
+        assert_eq!(connected, Some(test_address(2)));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_first_address_does_not_spend_the_handshake_budget() {
+        let started = tokio::time::Instant::now();
+        let connected = connect_first_reachable(
+            vec![test_address(1), test_address(2)],
+            |address| async move {
+                if address == test_address(1) {
+                    std::future::pending::<()>().await;
+                }
+                Ok(address)
+            },
+        )
+        .await;
+        assert_eq!(connected, Some(test_address(2)));
+        assert_eq!(started.elapsed(), CONNECT_ATTEMPT_DELAY);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_first_address_wins_when_it_answers_within_its_head_start() {
+        let attempted = Arc::new(Mutex::new(Vec::new()));
+        let seen = attempted.clone();
+        let connected =
+            connect_first_reachable(vec![test_address(1), test_address(2)], move |address| {
+                seen.lock().unwrap().push(address);
+                async move {
+                    tokio::time::sleep(CONNECT_ATTEMPT_DELAY / 2).await;
+                    Ok(address)
+                }
+            })
+            .await;
+        assert_eq!(connected, Some(test_address(1)));
+        assert_eq!(*attempted.lock().unwrap(), vec![test_address(1)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connecting_fails_once_every_address_has_failed() {
+        let attempted = Arc::new(AtomicUsize::new(0));
+        let seen = attempted.clone();
+        let connected = connect_first_reachable(
+            vec![test_address(1), test_address(2), test_address(3)],
+            move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                async { Err::<(), _>(std::io::Error::from(std::io::ErrorKind::ConnectionRefused)) }
+            },
+        )
+        .await;
+        assert_eq!(connected, None);
+        assert_eq!(attempted.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            connect_first_reachable(Vec::new(), |address| async move { Ok(address) }).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn a_host_name_connects_when_only_one_of_its_addresses_is_listening() {
+        // Listen only on the address `localhost` resolves to last, so the
+        // connection succeeds only if the earlier addresses are passed over.
+        let resolved: Vec<SocketAddr> = tokio::net::lookup_host(("localhost", 0))
+            .await
+            .expect("resolve localhost")
+            .collect();
+        let (Some(first), Some(last)) = (resolved.first(), resolved.last()) else {
+            panic!("localhost resolved to no address");
+        };
+        if first.ip() == last.ip() {
+            eprintln!("skipped: localhost resolves to a single address on this machine");
+            return;
+        }
+        let Ok(listener) = TcpListener::bind((last.ip(), 0)).await else {
+            eprintln!("skipped: {} cannot be bound on this machine", last.ip());
+            return;
+        };
+        let (address, host_key, auth_count, _server) =
+            start_server_listening(listener, true, true, false, None, false, false);
+        let host_id = Uuid::new_v4();
+        let (broker, _events) = TrustBroker::new();
+        let connection = connect_password(
+            "localhost".into(),
+            address.port(),
+            "alice".into(),
+            SecretString::from("correct-password".to_owned()),
+            AttemptBinding {
+                target: "localhost".into(),
+                ..attempt(address, host_id, 3, 5)
+            },
+            repository(host_id, Some(server_public_key(&host_key))),
+            broker,
+            token(),
+        )
+        .await
+        .expect("connect through the listening address");
+        assert_eq!(auth_count.load(Ordering::SeqCst), 1);
+        let shell = connection.open_shell(80, 30).await.unwrap();
+        shell.control.close().await.unwrap();
     }
 
     #[tokio::test]
