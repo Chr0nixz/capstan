@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Tauri glue for the Capstan M0 terminal slice"
+description = "Tauri commands, events and windows for Capstan"
 
 [lib]
 name = "capstan_app"
@@ -30,9 +30,9 @@ capstan-pty = { path = "../crates/capstan-pty" }
 capstan-core = { path = "../crates/capstan-core" }
 capstan-vault = { path = "../crates/capstan-vault" }
 capstan-ssh = { path = "../crates/capstan-ssh" }
-serde = { version = "1.0.229", features = ["derive"] }
-thiserror = "2.0.17"
-tauri = { version = "2", optional = true , features = [] }
+serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = "=2.0.21"
+tauri = { version = "=2.12.1", optional = true , features = [] }
 tauri-plugin-snap-layout = { version = "=1.0.9", optional = true }
 tauri-plugin-global-shortcut = { version = "=2.3.1", optional = true }
 tauri-plugin-updater = { version = "=2.14.1", optional = true, default-features = false, features = ["native-tls"] }
@@ -58,7 +58,7 @@ objc2-foundation = { version = "=0.3.2", optional = true, default-features = fal
 ] }
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "=2.7.1", features = [] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"
@@ -67,6 +67,3 @@ tokio = { version = "=1.53.3", features = ["test-util"] }
 
 [lints]
 workspace = true
-
-[package.metadata.tauri]
-# Keep packaging disabled for M0; no installer or icon is published here.
