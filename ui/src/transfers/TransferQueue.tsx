@@ -9,6 +9,8 @@ import type { SftpErrorCode } from "../sftp/contracts";
 import type { TerminalTheme } from "../terminal/contracts";
 import { isFinal, type TransferRecovery } from "./contracts";
 import { createTransferController } from "./controller";
+import { onTransfersChanged, transferPollDelay } from "./activity";
+import { usePolling } from "../ui/usePolling";
 import { transferCopy } from "./copy";
 import { tauriTransferTransport } from "./transport";
 import { ariaShortcut } from "../window/platform";
@@ -193,13 +195,15 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
   useEffect(() => {
     if (!isTauriAvailable()) return;
     let disposed = false, unlisten: (() => void) | undefined;
-    void controller.refresh();
-    const interval = window.setInterval(() => void controller.refresh(), 250);
     void listenTauriEvent<{ error?: string } | null>("transfer-exit-requested", (payload) => { setExitError(exitErrorCode(payload?.error)); setExitOpen(true); }).then((listener) => {
       if (disposed) listener(); else unlisten = listener;
     }).catch(() => undefined);
-    return () => { disposed = true; unlisten?.(); window.clearInterval(interval); controller.dispose(); };
+    return () => { disposed = true; unlisten?.(); controller.dispose(); };
   }, [controller]);
+  usePolling(() => controller.refresh(), () => {
+    const current = controller.store.getState();
+    return transferPollDelay(current.tasks, current.pending);
+  }, { enabled: isTauriAvailable(), subscribe: onTransfersChanged });
   if (!isTauriAvailable()) return null;
   return <>
     <NativeExports locale={locale} theme={theme} />

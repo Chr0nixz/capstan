@@ -2,6 +2,7 @@ import { invokeTauri } from "../terminal/bridge";
 import type { TerminalSessionId } from "../terminal/contracts";
 import type { RemoteEntryId, SftpSessionId } from "../sftp/contracts";
 import { decodeTreePlan, type TreePlan } from "./tree";
+import { notifyTransfersChanged } from "./activity";
 export type NativeExport = { token: string; name: string; state: "planning" | "preparing" | "ready" | "dragging" | "retained" | "failed" };
 function invalid(): never { throw { code: "remote_io" }; }
 let dropTargetQueue = Promise.resolve();
@@ -41,6 +42,7 @@ export async function prepareExport(terminal: TerminalSessionId, session: SftpSe
 }
 export async function startExport(terminal: TerminalSessionId, session: SftpSessionId, token: string): Promise<void> {
   await invokeTauri("start_native_export", { terminal, session, token });
+  notifyTransfersChanged();
 }
 export async function releaseExport(token: string): Promise<void> { await invokeTauri("release_native_export", { token }); }
 export type NativeDrop = { token: string; x: number; y: number };
@@ -52,6 +54,7 @@ export function insideNativeDrop(value: unknown, rect: Pick<DOMRect, "left" | "r
 }
 export async function enqueueDrop(terminal: TerminalSessionId, session: SftpSessionId, parent: string, token: string): Promise<TreePlan[]> {
   const result = await invokeTauri("enqueue_native_drop", { terminal, session, parent, token });
+  notifyTransfersChanged();
   if (!result || typeof result !== "object") return invalid();
   const data = result as Record<string, unknown>;
   if (Object.keys(data).length !== 2 || !Array.isArray(data.plans) || data.plans.length > 8 || typeof data.queued !== "number" || !Number.isInteger(data.queued) || data.queued < 0 || data.queued > 256) return invalid();

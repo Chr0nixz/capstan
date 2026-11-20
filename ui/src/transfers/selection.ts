@@ -2,6 +2,7 @@ import { invokeTauri } from "../terminal/bridge";
 import type { TerminalSessionId } from "../terminal/contracts";
 import type { DirectoryPage, RemoteEntryId, SftpSessionId } from "../sftp/contracts";
 import { decodeSelection } from "./contracts";
+import { notifyTransfersChanged } from "./activity";
 
 export async function selectAndEnqueue(
   terminal: TerminalSessionId, session: SftpSessionId, page: DirectoryPage, locale: string,
@@ -17,6 +18,7 @@ export async function selectAndEnqueue(
     await invokeTauri("enqueue_transfer", { terminal, session, selection: selection.token,
       target: entry ? { kind: "download", entry } : { kind: "upload", parent: page.path, name: selection.name } });
     consumed = true;
+    notifyTransfersChanged();
   } finally {
     if (!consumed) await invokeTauri("release_transfer_selection", { token: selection.token }).catch(() => undefined);
   }

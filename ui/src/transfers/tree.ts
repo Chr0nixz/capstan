@@ -1,6 +1,7 @@
 import { invokeTauri } from "../terminal/bridge";
 import { decodeExactU64, type ExactU64, type RemoteEntryId, type SftpSessionId } from "../sftp/contracts";
 import type { TerminalSessionId } from "../terminal/contracts";
+import { notifyTransfersChanged } from "./activity";
 export type TreeConflict = { entry: number; source: string; relative: string; directory: boolean; kind: "directory_exists" | "type_conflict" | "invalid_name" | "name_collision" };
 export type TreePlan = { token: string; revision: ExactU64; name: string; files: number; conflicts: TreeConflict[] };
 export type TreeDecision = { entry: number; decision: { kind: "merge" | "skip" } | { kind: "rename"; name: string } };
@@ -36,6 +37,7 @@ export async function selectTreeDownload(terminal: TerminalSessionId, session: S
 export async function resolveTree(terminal: TerminalSessionId, session: SftpSessionId, plan: TreePlan, decisions: TreeDecision[]): Promise<TreePlan | null> {
   const data = record(await invokeTauri("resolve_transfer_tree_plan", { terminal, session, token: plan.token, revision: plan.revision, decisions }), ["plan", "queued"]);
   if (typeof data.queued !== "number" || !Number.isInteger(data.queued) || data.queued < 0 || data.queued > 1024) return invalid();
+  if (data.queued > 0) notifyTransfersChanged();
   return decodeTreePlan(data.plan);
 }
 export async function releaseTree(plan: TreePlan): Promise<void> { await invokeTauri("release_transfer_tree_plan", { token: plan.token }); }

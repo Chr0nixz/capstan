@@ -33,10 +33,17 @@ export function createTransferController(transport: TransferTransport) {
         return [task.id, old && (BigInt(old.version) >= BigInt(task.version) || isFinal(old.state)) ? old : task];
       }));
       const order = [...previous.keys(), ...next.keys()].filter((id, index, values) => next.has(id) && values.indexOf(id) === index);
-      store.setState({ tasks: order.map((id) => next.get(id)).filter((task): task is Transfer => task !== undefined), recovery: recovery.entries.filter((entry) => {
+      const tasks = order.map((id) => next.get(id)).filter((task): task is Transfer => task !== undefined);
+      const recovered = recovery.entries.filter((entry) => {
         const task = next.get(entry.id);
         return !task || (isFinal(task.state) && (entry.state === "cleanup_required" || entry.state === "manual_inspection"));
-      }), recoveryIncomplete: recovery.incomplete });
+      });
+      // Unchanged rows keep their objects above, so an idle poll leaves the store
+      // (and every subscriber) alone.
+      const current = store.getState();
+      if (tasks.length === current.tasks.length && tasks.every((task, index) => task === current.tasks[index])
+        && recovery.incomplete === current.recoveryIncomplete && JSON.stringify(recovered) === JSON.stringify(current.recovery)) return;
+      store.setState({ tasks, recovery: recovered, recoveryIncomplete: recovery.incomplete });
     } catch (cause) { if (operation === generation) store.setState({ error: sftpError(cause) }); }
     finally { refreshing = false; }
   };

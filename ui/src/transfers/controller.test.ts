@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import fixture from "../../../docs/agent/fixtures/M2-transfer.json";
-import { decodeTransfers, type Transfer } from "./contracts";
+import { decodeTransfers, isFinal, type Transfer } from "./contracts";
 import { createTransferController } from "./controller";
 import type { SftpSessionId } from "../sftp/contracts";
 import type { TerminalSessionId } from "../terminal/contracts";
@@ -9,6 +9,22 @@ function setup(tasks: Transfer[] = decodeTransfers(fixture)) {
   return { transport, controller: createTransferController(transport), tasks };
 }
 describe("transfer queue ownership and late responses", () => {
+  it("leaves subscribers alone when a poll returns nothing new", async () => {
+    const { transport, controller, tasks } = setup();
+    transport.snapshot.mockImplementation(async () => structuredClone(tasks));
+    await controller.refresh();
+    const listener = vi.fn();
+    const stop = controller.store.subscribe(listener);
+    await controller.refresh();
+    await controller.refresh();
+    expect(listener).not.toHaveBeenCalled();
+    const index = tasks.findIndex((task) => !isFinal(task.state));
+    expect(index).toBeGreaterThanOrEqual(0);
+    transport.snapshot.mockResolvedValueOnce(tasks.map((task, position) => position === index ? { ...task, version: "9007199254740999" as Transfer["version"] } : structuredClone(task)));
+    await controller.refresh();
+    expect(listener).toHaveBeenCalledTimes(1);
+    stop();
+  });
   it.each(["cleanup_required", "manual_inspection"] as const)("keeps %s records actionable beside their final current-process task", async (state) => {
     const task = { ...decodeTransfers(fixture)[0], state: "failed" as const, conflict: null, cleanupRequired: true };
     const { transport, controller } = setup([task]);

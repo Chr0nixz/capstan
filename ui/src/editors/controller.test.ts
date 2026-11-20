@@ -13,6 +13,19 @@ function setup() {
   return { transport, controller: createEditorController(transport), setSnapshot: (snapshot: typeof current) => { current = snapshot; } };
 }
 describe("editor controller", () => {
+  it("leaves subscribers alone when a poll returns the same snapshot", async () => {
+    const { controller, setSnapshot } = setup();
+    await controller.refresh();
+    const listener = vi.fn();
+    const stop = controller.store.subscribe(listener);
+    await controller.refresh();
+    expect(listener).not.toHaveBeenCalled();
+    const changed = decodeRemoteEditSnapshot(fixture);
+    setSnapshot({ ...changed, sessions: changed.sessions.map((session, index) => index === 0 ? { ...session, dirty: !session.dirty } : session) });
+    await controller.refresh();
+    expect(listener).toHaveBeenCalledTimes(1);
+    stop();
+  });
   it("keeps a session when the export picker is canceled or cleanup fails", async () => {
     const { controller, transport } = setup();
     await controller.refresh();

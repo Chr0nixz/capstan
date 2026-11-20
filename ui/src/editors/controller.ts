@@ -24,6 +24,8 @@ export function createEditorController(transport: EditorTransport) {
       if (disposed || operation !== generation) return;
       const current = store.getState().snapshot;
       if (current && BigInt(snapshot.revision) < BigInt(current.revision)) return;
+      // An idle poll that returns the same snapshot leaves subscribers alone.
+      if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
       store.setState({ snapshot });
     }).catch((cause: unknown) => {
       if (!disposed && operation === generation) store.setState({ error: sftpError(cause) });

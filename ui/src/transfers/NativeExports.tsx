@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { invokeTauri, isTauriAvailable } from "../terminal/bridge";
 import { sftpError } from "../sftp/controller";
@@ -9,19 +9,25 @@ import { nativeExports, type NativeExport } from "./native";
 import { transferCopy } from "./copy";
 import { ChevronRightIcon, ExportIcon } from "../ui/icons";
 import { supportsNativeExport } from "../window/platform";
+import { usePolling } from "../ui/usePolling";
+import { onTransfersChanged } from "./activity";
 export function NativeExports({ locale, theme }: { locale: "en" | "zh-CN"; theme: TerminalTheme }): ReactElement | null {
   const labels = transferCopy[locale];
   const [items, setItems] = useState<NativeExport[]>([]), [error, setError] = useState<SftpErrorCode | null>(null);
   const [selected, setSelected] = useState<NativeExport | null>(null), [pending, setPending] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    if (!isTauriAvailable() || !supportsNativeExport()) return;
-    let active = true, reading = false;
-    const refresh = async (): Promise<void> => { if (reading) return; reading = true; try { const items = await nativeExports(); if (active) setItems((previous) => [...previous.filter((old) => items.some((item) => item.token === old.token)).map((old) => items.find((item) => item.token === old.token)!), ...items.filter((item) => !previous.some((old) => old.token === item.token))]); } catch (cause) { if (active) setError(sftpError(cause)); } finally { reading = false; } };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 1000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  const count = useRef(0);
+  count.current = items.length;
+  usePolling(async () => {
+    try {
+      const items = await nativeExports();
+      setItems((previous) => {
+        const next = [...previous.filter((old) => items.some((item) => item.token === old.token)).map((old) => items.find((item) => item.token === old.token)!), ...items.filter((item) => !previous.some((old) => old.token === item.token))];
+        // Keep the old list when nothing changed, so an idle poll does not rerender.
+        return JSON.stringify(next) === JSON.stringify(previous) ? previous : next;
+      });
+    } catch (cause) { setError(sftpError(cause)); }
+  }, () => count.current > 0 ? 1_000 : 3_000, { enabled: isTauriAvailable() && supportsNativeExport(), subscribe: onTransfersChanged });
   if (!items.length) return null;
   return <section className="transfer-queue" data-theme={theme} aria-label={labels.exports}>
     <button type="button" className="transfer-queue-heading" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}><ChevronRightIcon size={14} /><span>{labels.exports}</span><span className="sr-only"> · </span><span className="count-badge">{items.length}</span></button>

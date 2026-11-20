@@ -9,6 +9,7 @@ import { transferCopy } from "../transfers/copy";
 import type { RetryBinding } from "./transport";
 import { ChevronRightIcon, ExternalEditIcon } from "../ui/icons";
 import { supportsRemoteEditing } from "../window/platform";
+import { usePolling } from "../ui/usePolling";
 
 export function RemoteEditors({ locale, hosts, theme, sessions: bindings = [], onRetrySessionRequested }: { locale: "en" | "zh-CN"; hosts: Readonly<Record<string, string>>; theme: TerminalTheme; sessions?: readonly RetryBinding[]; onRetrySessionRequested?: (hostId: string) => void }): ReactElement | null {
   const state = useSyncExternalStore(remoteEditors.store.subscribe, remoteEditors.store.getState, remoteEditors.store.getState);
@@ -23,9 +24,11 @@ export function RemoteEditors({ locale, hosts, theme, sessions: bindings = [], o
   useEffect(() => {
     if (!isTauriAvailable() || !supportsRemoteEditing()) return;
     remoteEditors.start();
-    const timer = window.setInterval(() => void remoteEditors.refresh(), 500);
-    return () => { window.clearInterval(timer); remoteEditors.dispose(); };
+    return () => { remoteEditors.dispose(); };
   }, []);
+  // Open edits poll quickly so a save shows up at once; with none open, a slow check is enough.
+  usePolling(() => remoteEditors.refresh(), () => (remoteEditors.store.getState().snapshot?.sessions.length ?? 0) > 0 ? 500 : 3_000,
+    { enabled: isTauriAvailable() && supportsRemoteEditing() });
   useEffect(() => {
     if (!requested) return;
     const edit = state.snapshot?.sessions.find((edit) => edit.id === requested.id);
