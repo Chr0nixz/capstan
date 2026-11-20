@@ -438,10 +438,16 @@ fn publish_new(parent: &File, temporary: &OsStr, target: &OsStr) -> io::Result<(
 /// exFAT, SMB and similar volumes offer neither `RENAME_EXCL` nor hard links.
 fn lacks_exclusive_publish(error: rustix::io::Errno) -> bool {
     use rustix::io::Errno;
-    matches!(
-        error,
-        Errno::NOTSUP | Errno::OPNOTSUPP | Errno::NOSYS | Errno::PERM | Errno::MLINK
-    )
+    // A list, not a match pattern: Linux defines NOTSUP and OPNOTSUPP as the
+    // same value, which would make one pattern unreachable there.
+    [
+        Errno::NOTSUP,
+        Errno::OPNOTSUPP,
+        Errno::NOSYS,
+        Errno::PERM,
+        Errno::MLINK,
+    ]
+    .contains(&error)
 }
 
 /// Best available no-replace publish on those volumes: the target is rechecked
@@ -458,11 +464,11 @@ fn publish_after_check(parent: &File, temporary: &OsStr, target: &OsStr) -> io::
 /// volumes refuse; those still accept a plain `fsync`.
 fn sync_file(file: &File) -> io::Result<()> {
     match file.sync_all() {
+        // As above, ENOTSUP and EOPNOTSUPP are one value on Linux.
         Err(error)
-            if matches!(
-                error.raw_os_error(),
-                Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::EINVAL)
-            ) =>
+            if error.raw_os_error().is_some_and(|code| {
+                [libc::ENOTSUP, libc::EOPNOTSUPP, libc::EINVAL].contains(&code)
+            }) =>
         {
             at::fsync(file).map_err(Into::into)
         }
