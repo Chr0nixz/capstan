@@ -6,6 +6,7 @@ import { activateTerminalLink } from "../src/terminal/security";
 const results: { name: string; passed: boolean; errors: string[] }[] = [];
 const input: Uint8Array[] = [];
 const clipboard: string[] = [];
+const activated: string[] = [];
 let allowWrite = false;
 let allowPaste = false;
 let writePrompts = 0;
@@ -21,7 +22,38 @@ const session = createTerminalSession(container, false, {
   writeOsc52Clipboard: async text => { clipboard.push(text); },
   onOsc52ReadBlocked: () => { blockedReads++; },
   confirmMultilinePaste: () => { pastePrompts++; return allowPaste; },
+  onActivateLink: uri => { activated.push(uri); },
 });
+const frames = async (): Promise<void> => {
+  for (let frame = 0; frame < 3; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+};
+/** Hover, press and release on one rendered character, as a real click would. */
+const clickCharacter = async (rowText: string, character: string): Promise<void> => {
+  await frames();
+  const row = [...container.querySelectorAll<HTMLElement>(".xterm-rows > div")].find(candidate => candidate.textContent?.includes(rowText));
+  const screen = container.querySelector<HTMLElement>(".xterm-screen");
+  if (!row || !screen) throw new Error("Missing rendered link row");
+  let remaining = (row.textContent ?? "").indexOf(character);
+  const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+  let box: DOMRect | undefined;
+  for (let node = walker.nextNode(); node && !box; node = walker.nextNode()) {
+    const length = node.textContent?.length ?? 0;
+    if (remaining < length) {
+      const range = document.createRange();
+      range.setStart(node, remaining);
+      range.setEnd(node, remaining + 1);
+      box = range.getBoundingClientRect();
+    } else remaining -= length;
+  }
+  if (!box) throw new Error("Missing rendered link character");
+  for (const type of ["mousemove", "mousedown", "mouseup"]) {
+    screen.dispatchEvent(new MouseEvent(type, {
+      clientX: box.left + box.width / 2, clientY: box.top + box.height / 2,
+      bubbles: true, cancelable: true, button: 0, buttons: type === "mousedown" ? 1 : 0, detail: 1,
+    }));
+    await frames();
+  }
+};
 function check(name: string, condition: boolean): void {
   results.push({ name, passed: condition, errors: condition ? [] : ["Policy assertion failed"] });
   if (!condition) throw new Error(name);
@@ -107,6 +139,14 @@ try {
   let opened = 0;
   check("non-http-link-denied-before-open", !activateTerminalLink("mailto:synthetic@example.test", () => false, () => { opened++; }) && opened === 0);
   check("approved-non-http-link-opens-once", activateTerminalLink("mailto:synthetic@example.test", () => true, () => { opened++; }) && opened === 1);
+  await write("\r\nplain https://synthetic.example.test/docs. end\r\nother ssh://synthetic.example.test/x end\r\n");
+  const found = session.search("synthetic.example", { caseSensitive: true, regex: false }, 1, -1);
+  check("search-reads-the-real-xterm-buffer", found.count === 2 && found.index === 0);
+  session.clearSearch();
+  await clickCharacter("plain https://", "y");
+  check("plain-text-web-link-activates-without-trailing-punctuation", activated.length === 1 && activated[0] === "https://synthetic.example.test/docs");
+  await clickCharacter("other ssh://", "y");
+  check("plain-text-non-web-scheme-is-not-a-link", activated.length === 1);
   session.dispose();
   paste("first\nsecond", textarea);
   check("disposed-paste-listener-does-not-prompt", pastePrompts === 2);
@@ -116,7 +156,7 @@ try {
 } finally {
   session.dispose();
   const report = {
-    passed: results.length === 14 && results.every(result => result.passed),
+    passed: results.length === 17 && results.every(result => result.passed),
     limitation: "Real browser/xterm policy integration with an isolated clipboard adapter; no host clipboard reads/writes or native WebView2 acceptance.",
     results,
   };

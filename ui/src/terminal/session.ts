@@ -12,12 +12,21 @@ import {
   type TerminalSearchResult,
 } from "./search";
 import { isMultilinePaste, parseOsc52Request } from "./security";
+import { findPlainLinks, type TerminalLink } from "./links";
 import type { TerminalTheme } from "./contracts";
 import type { TerminalThemeDefinition } from "../themes/contracts";
 import { subscribeTerminalInput } from "../panes/xtermInput";
 import { isMacOS, macTerminalSequence } from "../window/platform";
 
 export type Disposable = { dispose: () => void };
+
+type ActivatableLink = TerminalLink & { activate: (event: MouseEvent, text: string) => void };
+export type TerminalLinkProvider = {
+  provideLinks: (row: number, callback: (links: ActivatableLink[] | undefined) => void) => void;
+};
+
+/** Lines kept above the viewport; xterm's own default of 1000 loses a build log or a long `journalctl`. */
+export const SCROLLBACK_LINES = 10_000;
 
 export interface TerminalLike {
   open: (container: HTMLElement) => void;
@@ -33,12 +42,14 @@ export interface TerminalLike {
   buffer?: {
     active?: {
       length: number;
-      get: (row: number) => {
+      getLine: (row: number) => {
         length: number;
+        isWrapped?: boolean;
         getCell: (column: number) => { getWidth: () => number; getChars: () => string } | undefined;
       } | undefined;
     };
   };
+  registerLinkProvider?: (provider: TerminalLinkProvider) => Disposable;
   clearSelection?: () => void;
   getSelection?: () => string;
   onSelectionChange?: (listener: () => void) => Disposable;
@@ -202,6 +213,7 @@ function defaultTerminal({ theme = "graphite", themes, onActivateLink }: Termina
       : '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace',
     allowTransparency: false,
     allowProposedApi: true,
+    scrollback: SCROLLBACK_LINES,
     // Readline and Emacs chords need Meta; Option+click still positions the cursor.
     macOptionIsMeta: true,
     macOptionClickForcesSelection: true,
@@ -403,6 +415,19 @@ export function createTerminalSession(
     if (!isDisposed) options.onRemoteCwd?.(data);
     return true;
   });
+  // xterm asks its own OSC 8 provider first, so an explicit hyperlink keeps
+  // priority over a URL found in the same cells. Both reach the same handler.
+  const onActivateLink = options.onActivateLink;
+  const linkDisposable = onActivateLink ? terminal.registerLinkProvider?.({
+    provideLinks(row, callback) {
+      const links = isDisposed ? [] : findPlainLinks(terminal.buffer?.active, row - 1);
+      callback(links.length === 0 ? undefined : links.map((link) => ({
+        ...link,
+        // A drag that starts and ends inside one URL selects text; it is not a click.
+        activate: (_event, text) => { if (!isDisposed && !terminal.getSelection?.()) onActivateLink(text); },
+      })));
+    },
+  }) : undefined;
 
   const mountRenderer = (): void => {
     if (isDisposed || renderer) {
@@ -528,6 +553,7 @@ export function createTerminalSession(
       terminal.textarea?.removeEventListener("paste", pasteListener, true);
       osc52Disposable?.dispose();
       osc7Disposable?.dispose();
+      linkDisposable?.dispose();
       resizeObserver?.disconnect();
       unmountRenderer();
       queue.close();

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createTerminalSession, terminalPalette, type Disposable, type TerminalLike } from "./session";
+import {
+  createTerminalSession, SCROLLBACK_LINES, terminalPalette,
+  type Disposable, type TerminalLike, type TerminalLinkProvider,
+} from "./session";
 import { InputQueue } from "./inputQueue";
 import fixture from "../../../docs/agent/fixtures/M4-contract.json";
 import { isTerminalTheme, type TerminalThemeDefinition } from "../themes/contracts";
@@ -410,6 +413,59 @@ describe("terminal session lifecycle", () => {
     });
 
     expect(defaultTerminalMock.options?.allowProposedApi).toBe(true);
+    session.dispose();
+  });
+
+  it("keeps more scrollback than xterm's 1000-line default", () => {
+    const session = createTerminalSession(document.createElement("div"), false, {
+      fitAddonFactory: () => ({ fit: () => undefined }),
+    });
+
+    expect(defaultTerminalMock.options?.scrollback).toBe(SCROLLBACK_LINES);
+    expect(SCROLLBACK_LINES).toBeGreaterThanOrEqual(10_000);
+    session.dispose();
+  });
+
+  it("sends plain-text URLs through the same activation handler as OSC 8 links", () => {
+    const terminal = fakeTerminal();
+    const row = "see https://example.test/a.";
+    terminal.buffer = { active: { length: 1, getLine: (index) => index === 0 ? {
+      length: row.length,
+      getCell: (column) => column < row.length ? { getWidth: () => 1, getChars: () => row[column] ?? "" } : undefined,
+    } : undefined } };
+    let provider: TerminalLinkProvider | undefined;
+    const disposeProvider = vi.fn();
+    terminal.registerLinkProvider = (registered) => { provider = registered; return { dispose: disposeProvider }; };
+    const onActivateLink = vi.fn();
+    const session = createTerminalSession(document.createElement("div"), false, { terminal, onActivateLink });
+
+    const provided = vi.fn();
+    provider?.provideLinks(1, provided);
+    const links = provided.mock.calls[0]?.[0] as Parameters<Parameters<TerminalLinkProvider["provideLinks"]>[1]>[0];
+    expect(links?.map((link) => link.text)).toEqual(["https://example.test/a"]);
+    links?.[0]?.activate(new MouseEvent("click"), "https://example.test/a");
+    expect(onActivateLink).toHaveBeenCalledExactlyOnceWith("https://example.test/a");
+
+    // Dragging across part of a URL selects it and must not open it.
+    terminal.getSelection = () => "example.test";
+    links?.[0]?.activate(new MouseEvent("click"), "https://example.test/a");
+    expect(onActivateLink).toHaveBeenCalledTimes(1);
+    terminal.getSelection = () => "";
+
+    provider?.provideLinks(2, provided);
+    expect(provided).toHaveBeenLastCalledWith(undefined);
+
+    session.dispose();
+    expect(disposeProvider).toHaveBeenCalledTimes(1);
+    links?.[0]?.activate(new MouseEvent("click"), "https://example.test/a");
+    expect(onActivateLink).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers no link provider when the pane cannot open links", () => {
+    const terminal = fakeTerminal();
+    terminal.registerLinkProvider = vi.fn(() => ({ dispose: vi.fn() }));
+    const session = createTerminalSession(document.createElement("div"), false, { terminal });
+    expect(terminal.registerLinkProvider).not.toHaveBeenCalled();
     session.dispose();
   });
 

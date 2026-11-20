@@ -15,7 +15,7 @@ function makeLine(cells: Array<{ text: string; width?: number }>) {
 
 function makeTerminal(length: number) {
   return {
-    buffer: { active: { length, get: vi.fn() } },
+    buffer: { active: { length, getLine: vi.fn() } },
     clearSelection: vi.fn(),
     scrollToLine: vi.fn(),
     select: vi.fn(),
@@ -24,7 +24,7 @@ function makeTerminal(length: number) {
 
 describe("terminal search", () => {
   it("finds literal or regular-expression matches and reports invalid patterns", () => {
-    const buffer = { length: 2, get: (row: number) => row === 0 ? makeLine([{ text: "a" }, { text: "." }, { text: "b" }]) : makeLine([{ text: "A" }, { text: "." }, { text: "b" }]) };
+    const buffer = { length: 2, getLine: (row: number) => row === 0 ? makeLine([{ text: "a" }, { text: "." }, { text: "b" }]) : makeLine([{ text: "A" }, { text: "." }, { text: "b" }]) };
     expect(findTerminalMatches(buffer, ".", { caseSensitive: true, regex: false }).matches).toHaveLength(2);
     expect(findTerminalMatches(buffer, "a.b", { caseSensitive: false, regex: true }).matches).toHaveLength(2);
     expect(findTerminalMatches(buffer, "[", { caseSensitive: false, regex: true }).invalidExpression).toBe(true);
@@ -33,7 +33,7 @@ describe("terminal search", () => {
   it("maps wide characters to terminal cells and cycles through wrapped search results", () => {
     const buffer = {
       length: 2,
-      get: (row: number) => row === 0
+      getLine: (row: number) => row === 0
         ? makeLine([{ text: "你", width: 2 }, { text: "", width: 0 }, { text: "x" }])
         : makeLine([{ text: "x" }, { text: "x" }]),
     };

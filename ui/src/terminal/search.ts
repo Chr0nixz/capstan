@@ -9,7 +9,7 @@ export type TerminalSearchResult = {
 
 type SearchCell = { getWidth: () => number; getChars: () => string };
 type SearchLine = { length: number; getCell: (column: number) => SearchCell | undefined };
-type SearchBuffer = { length: number; get: (row: number) => SearchLine | undefined };
+type SearchBuffer = { length: number; getLine: (row: number) => SearchLine | undefined };
 export type SearchTerminal = {
   buffer?: { active?: SearchBuffer };
   clearSelection: () => void;
@@ -60,7 +60,7 @@ export function findTerminalMatches(
   }
   const matches: TerminalMatch[] = [];
   for (let row = 0; row < buffer.length; row += 1) {
-    const line = buffer.get(row);
+    const line = buffer.getLine(row);
     if (!line) continue;
     const content = lineText(line);
     expression.lastIndex = 0;
