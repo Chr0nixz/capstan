@@ -748,10 +748,14 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub fn answer_host_trust(
+        window: tauri::WebviewWindow,
         broker: State<'_, Arc<TrustBroker>>,
         challenge_id: Uuid,
         accepted: bool,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         broker
             .respond(challenge_id, accepted)
             .map_err(|error| CommandError::new(error.code()))
@@ -1735,10 +1739,14 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub async fn write_terminal_input(
+        window: tauri::WebviewWindow,
         manager: State<'_, Arc<TerminalService>>,
         id: TerminalSessionId,
         input: String,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         #[cfg(feature = "m0-benchmarks")]
         crate::benchmark::trace_input(&id, "begin");
         let result = manager
@@ -1753,11 +1761,15 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub async fn resize_terminal(
+        window: tauri::WebviewWindow,
         manager: State<'_, Arc<TerminalService>>,
         id: TerminalSessionId,
         columns: u16,
         rows: u16,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         manager
             .get(&id)?
             .resize(columns, rows)
@@ -1767,21 +1779,29 @@ pub mod tauri_channel {
 
     #[tauri::command]
     pub async fn ack_terminal_output(
+        window: tauri::WebviewWindow,
         manager: State<'_, Arc<TerminalService>>,
         id: TerminalSessionId,
         bytes: usize,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         manager.get(&id)?.ack(bytes).await.map_err(Into::into)
     }
 
     #[tauri::command]
     pub async fn stop_terminal(
+        window: tauri::WebviewWindow,
         vault: State<'_, Arc<VaultManager>>,
         manager: State<'_, Arc<TerminalService>>,
         ssh_sessions: State<'_, SshSessions>,
         sftp: State<'_, Arc<capstan_core::sftp::SftpService>>,
         id: TerminalSessionId,
     ) -> std::result::Result<(), CommandError> {
+        if window.label() != "main" {
+            return Err(CommandError::new("window_source"));
+        }
         let owner = ssh_sessions.remove(&id);
         sftp.revoke_terminal(&id.0);
         let result = manager.close(&id).await.map_err(Into::into);
