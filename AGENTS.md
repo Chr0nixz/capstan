@@ -6,7 +6,7 @@
 
 Capstan 是维护者个人开发的 Windows 优先终端与 SSH 客户端，目标是替代 MobaXterm 日常使用。GitHub 开源，许可证 GPL-3.0-or-later。
 
-- 技术栈：Tauri 2 + Rust（tokio、russh、portable-pty）+ React 19 / TypeScript / Vite / Tailwind 4 / xterm.js
+- 技术栈：Tauri 2 + Rust（tokio、russh、portable-pty）+ React 19 / TypeScript / Vite / 手写 CSS / xterm.js
 - 当前状态和验收进度见 [docs/agent/board.md](docs/agent/board.md)
 - 分工：AI 负责编写代码，维护者负责审核，并通过日常使用验收
 
@@ -84,7 +84,7 @@ pnpm -C ui test
 
 - 代码、注释、标识符、提交信息使用英文；用户可见文字一律走 i18n（`zh-CN` 和 `en`），不在组件里硬编码。
 - Rust：库 crate 用 `thiserror` 定义错误，应用层可用 `anyhow`；库代码不使用 `unwrap()` / `expect()`（测试除外）；异步统一用 tokio。
-- TypeScript：开启 `strict`，不用 `any`；状态管理用 Zustand；样式用 Tailwind，组件基于 Radix UI。
+- TypeScript：开启 `strict`，不用 `any`；状态管理用 Zustand；样式写在 `ui/src/styles.css`（手写 CSS，未引入 Tailwind），组件基于 Radix UI。
 - 新增依赖要固定版本，许可证必须与 GPL-3.0 兼容（MIT、Apache-2.0、BSD、ISC、Zlib、MPL-2.0 等），禁止 GPL-2.0-only。
 
 ## 测试

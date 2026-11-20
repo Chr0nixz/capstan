@@ -28,8 +28,8 @@ Capstan 的差异化：
 | SSH | `russh`（ring 后端）+ `russh-sftp` | 纯 Rust，异步，自带 Pageant/命名管道 agent 支持。ring 在 Windows 上编译比 aws-lc-rs 省事；RSA 私钥运算另用 `aws-lc-rs`（见决策记录） |
 | 本地 PTY | `portable-pty` + 经核验的 ConPTY 运行时 | M0 验证加载、版本选择和系统回退；只有现成实现不满足明确需求时才评估自写封装及其兼容维护成本 |
 | 加密 | `argon2`、`chacha20poly1305`、`zeroize`、`secrecy` | RustCrypto 生态 |
-| 终端渲染 | xterm.js 5 + webgl、search、web-links、unicode11、fit 插件 | VS Code 也用它，兼容性经过验证，AI 也最熟悉 |
-| 前端 | React 19 + TypeScript + Vite + Tailwind 4 + Radix UI | 命令面板 `cmdk`，分屏 `react-resizable-panels`，状态管理 Zustand |
+| 终端渲染 | xterm.js 5 + webgl、unicode11、fit 插件；搜索和纯文本链接识别为自研 | VS Code 也用它，兼容性经过验证，AI 也最熟悉 |
+| 前端 | React 19 + TypeScript + Vite + 手写 CSS（`ui/src/styles.css`）+ Radix UI | 命令面板自研，分屏 `react-resizable-panels`，状态管理 Zustand |
 | 包管理 | pnpm、cargo workspace | |
 
 不自己写 GPU 渲染器。性能假设由 M0 的固定场景基准验证；IPC、终端解析、绘制和 WebView2 内存分别记录，不能预设瓶颈只在 IPC。
@@ -80,7 +80,7 @@ PTY / SSH 通道 ─读取─> 有界合并器（16ms 或 64KB）─Tauri Channe
 |---|---|---|
 | `settings.json` | 界面偏好、字体、主题、快捷键 | 否 |
 | `terminal-themes.json` | 导入的终端配色 | 否 |
-| `vault.cvault` | 主机、分组、凭据、片段、隧道规则 | 整个文件加密 |
+| `vault.capstan` | 主机、分组、凭据、片段、隧道规则 | 整个文件加密 |
 | 信任记录 | SSH 主机指纹、算法和首次信任时间 | 存在加密 Vault 内 |
 
 主机名和 IP 也放在加密库里，这样别人拿到文件也看不出你连过哪些服务器。代价是看主机列表前必须先解锁，不过本地终端不需要解锁就能用。
@@ -298,3 +298,4 @@ Vault 文件使用带 magic 和 schema 版本的封装格式。封装至少记�
 | 2026-11-05 | 补记 M4-4 已获维护者批准的 Hello 方案：使用 Microsoft Passport KSP 的 RSA-2048 非导出解密密钥；独立 sidecar 在 DEK 下认证加密 KEK，修改主密码前原子暂存旧、新 KEK，最多保留两个 slot。主 Vault 格式、DEK 和载荷密文不变。格式见 [VAULT-FORMAT.md](VAULT-FORMAT.md#optional-windows-hello-sidecar)。 |
 | 2026-11-09 | 维护者要求适配 macOS（最低 macOS 14，先支持 Apple Silicon，暂不签名公证）。本地文件能力由 `capstan_core::native_fs` 按平台分派，Unix 实现沿用 Windows 的安全模型：选择器路径的祖先链接只解析一次，之后无符号链接重开并校验身份，先写临时文件再发布。macOS 用 `O_NOFOLLOW_ANY` 和 `RENAME_EXCL`；exFAT、SMB 等不支持的卷退回“复查后 rename”，保留很窄的竞争窗口。默认值：快捷键以 ⌘ 为主，⌃ 全部留给 Shell；⌥ 作 Meta；⌘Q 走窗口关闭流程以保留未完成传输确认；⌘W 关标签，菜单不设 Close Window；文件夹上传跳过 `.DS_Store`。wry 未实现 WKUIDelegate 的 confirm 面板，`window.confirm` 恒为 false，所以 macOS 的终端确认改用应用内对话框，且远程 OSC 52 请求不能替换已显示的确认。macOS 暂不提供：传输恢复台账（现有实现依赖 DPAPI）、远程编辑、拖出到访达、系统通知、Touch ID、更新器。 |
 | 2026-11-10 | 维护者确认设计评审的修复方向：生产主机的终端窗格顶部加 2px Safety Red 边（DESIGN.md 的 Production Red Rule 随之放宽，仍不允许整块染色）；片段发往生产主机且含换行（会执行命令）时先确认，只插入一行不回车的片段不询问；服务器状态栏移入工作区列底部，32px 与队列标题同高，用量 ≥ 90% 才标红。 |
+| 2026-11-13 | 按项目审阅修正：SSH 连接在 15 秒握手预算内按解析顺序尝试全部地址，前一个失败立即换下一个，250 ms 无响应则并行尝试下一个。终端回滚从 xterm 默认的 1000 行调到 10000 行，尚不可配置。纯文本 http(s) URL 用自研 link provider 识别，不引入 web-links 插件；其他协议只有 OSC 8 显式链接可点击，并沿用打开前确认。Vault 文件名以代码和 PORTABLE.md 一直使用的 `vault.capstan` 为准。Unix 下 Vault 及其备份创建时即为 0600。技术栈表按实际改为手写 CSS、自研搜索与命令面板。 |

@@ -6,11 +6,11 @@
 
 web
 
-Tauri 2 desktop app rendered in WebView2. Windows 11 first; macOS/Linux later. Window chrome (title bar, Snap Layouts, Mica) follows native Windows behavior.
+Tauri 2 desktop app. Windows 11 first, rendered in WebView2; macOS 14+ (Apple Silicon) is supported in WKWebView with a reduced feature set (PLAN decision 2026-11-09); Linux later. Window chrome follows each platform: Snap Layouts, Mica, and drawn caption buttons on Windows; native traffic lights on macOS.
 
 ## Stack
 
-Tauri 2 + Rust backend; React 19 + TypeScript + Vite + Tailwind 4 + Radix UI; xterm.js for terminal rendering. Full plan in docs/PLAN.md.
+Tauri 2 + Rust backend; React 19 + TypeScript + Vite + hand-written CSS (`ui/src/styles.css`, no Tailwind) + Radix UI; xterm.js for terminal rendering. Full plan in docs/PLAN.md.
 
 ## Users
 
