@@ -43,8 +43,7 @@ for signing, installation and key rotation.
 ## Build on macOS
 
 Use macOS 14 or later with the Xcode Command Line Tools, Rust 1.96.0, Node.js 22
-and pnpm 10.28.1. Node 25 and later need `NODE_OPTIONS=--no-webstorage` for
-`pnpm -C ui test`.
+and pnpm 10.28.1.
 
 ```bash
 pnpm -C ui install --frozen-lockfile
