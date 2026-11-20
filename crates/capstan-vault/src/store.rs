@@ -747,10 +747,13 @@ fn atomic_write_with_hook(
     temporary.push(format!(".{}.pending", Uuid::new_v4()));
     let temporary = PathBuf::from(temporary);
     let write_result = (|| -> Result<()> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        // Owner-only from creation instead of the umask default; the rename
+        // below carries the mode over to the published file.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&temporary)?;
         hook(AtomicWriteStage::TemporaryCreated)?;
         file.write_all(bytes)?;
         hook(AtomicWriteStage::BytesWritten)?;
@@ -1237,6 +1240,35 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![4, 3, 2]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_files_are_owner_only_from_creation_and_after_every_rewrite() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vault.capstan");
+        let vault = Vault::initialize(&path, &password(), fast()).unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // A vault written by an earlier build may be group- or world-readable.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        vault
+            .transaction(0, |data| {
+                *data = host_data();
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(mode(&path), 0o600);
+        let backup = directory.path().join("portable.cbak");
+        vault
+            .export_backup(
+                &SecretText::new("independent backup phrase".into()),
+                fast(),
+                &backup,
+            )
+            .unwrap();
+        assert_eq!(mode(&backup), 0o600);
     }
 
     #[test]
