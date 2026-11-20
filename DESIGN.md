@@ -12,10 +12,12 @@ colors:
   safety-red: "#d0605e"
   safety-red-text: "#f2a6a2"
   red-wash: "rgb(208 96 94 / 0.12)"
+  red-wash-strong: "rgb(208 96 94 / 0.2)"
   red-line: "rgb(208 96 94 / 0.45)"
   quiet-green: "#8ea981"
   quiet-green-text: "#b3c9a7"
   green-wash: "rgb(142 169 129 / 0.12)"
+  green-line: "rgb(142 169 129 / 0.4)"
   graphite-frame: "#121316"
   graphite-canvas: "#16171a"
   graphite-chrome: "#1d1f23"
@@ -58,10 +60,12 @@ colors:
   paper-red: "#b13f3c"
   paper-red-text: "#9e2f2c"
   paper-red-wash: "rgb(177 63 60 / 0.09)"
+  paper-red-wash-strong: "rgb(177 63 60 / 0.16)"
   paper-red-line: "rgb(177 63 60 / 0.4)"
   paper-green: "#4d7a40"
   paper-green-text: "#3f6a33"
   paper-green-wash: "rgb(77 122 64 / 0.1)"
+  paper-green-line: "rgb(77 122 64 / 0.4)"
   paper-scrim: "rgb(30 28 24 / 0.32)"
   paper-terminal: "#f7f8fa"
 typography:
@@ -356,7 +360,9 @@ The light set maps role for role, with Paper Amber, Red, and Green darkened to t
 
 **The Night Vision Rule.** Chrome avoids saturated blue and extreme black or white; contrast comes from deliberate luminance steps.
 
-**The Wash-and-Line Rule.** Signal states on controls and messages are a 9–16% wash plus a 40–45% hairline in the signal color, with text-grade signal text on top. Solid signal fills are reserved for the primary action, the active transfer badge, signal lights, and progress bars.
+**The Wash-and-Line Rule.** Signal states on controls and messages are a 9–16% wash plus a 40–45% hairline in the signal color, with text-grade signal text on top; a hovered danger key deepens to Red Wash Strong (16–20%). Solid signal fills are reserved for the primary action, the active transfer badge, signal lights, and progress bars.
+
+**The State Token Rule.** Hover, pressed, wash, and line values are tokens too (Signal Amber Hover and Pressed, Red Wash Strong, Green Line), never literals in a rule. Forced colors and the Paper colorway replace them by redefining the token, so a state that skips the token keeps its graphite color in both.
 
 ## Typography
 
@@ -379,6 +385,8 @@ The light set maps role for role, with Paper Amber, Red, and Green darkened to t
 - **Terminal** (Cascadia Mono, 15px, line-height 1): The xterm default; it preserves cell alignment and CJK width.
 
 The half-pixel steps (11.5px, 12.5px) sit very close to their neighbors. New text picks one of these roles instead of adding a size.
+
+**macOS.** The roles and sizes stay; only the families change. UI and Display use `-apple-system` with PingFang SC for Chinese, mono uses Menlo with PingFang SC, and the terminal default is Menlo with PingFang SC and Apple Color Emoji. The stacks switch on `:root[data-platform="macos"]` in CSS and on the platform check in the xterm options.
 
 ### Named Rules
 **The Context Before Decoration Rule.** Every pane names its scope in monospace (the title-bar context, the remote-files host label, the path field) before any decorative label earns space.
@@ -452,6 +460,7 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Terminal tabs
 - Tabs are 188px, shrinking to 112px before the strip scrolls, with short dividers that hide beside the active or hovered tab. Each carries a kind icon with its signal light, an ellipsized label, and a close key on hover or when active; new tabs rise 5px and fade in.
+- The strip scrolls without a scrollbar: the active tab is always brought into view (24px clear of the edge), an edge with tabs past it fades out over 24px, and a vertical wheel scrolls it sideways. Under a 520px strip, the split, broadcast, snippet, and tunnel keys fold into one More key whose menu holds the same actions; while broadcast is on, the More key keeps the amber toggle look.
 - The active tab takes its terminal's background so it merges with the pane, and a 2px amber key slides open along its top (scaleX, 260ms). A production tab's key and icon are Safety Red, and the key stays at 55% when the tab is inactive.
 
 ### Host list (signature)
@@ -478,7 +487,7 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Dialogs
 - Panel with the Pop shadow, rising 10px from 98% scale (260ms) over a 62% scrim. Actions are 32px and right-aligned, and focus opens on the safe action (Cancel, Reject, or Close and keep blocked).
-- **Host key:** A 32px mark beside the Display title (amber shield for a new key; red alert and a red border for a changed one); the saved host and `target:port` with the production chip; fingerprints in 12px mono four-character groups on a Canvas well, where groups that differ from the trusted key take a red wash; and the `ssh-keygen -lf` command in a mono well with a copy key.
+- **Host key:** A 32px mark beside the Display title (amber shield for a new key; red alert and a red border for a changed one); the saved host and `target:port` with the production chip; fingerprints in 12px mono four-character groups on a Canvas well, where groups that differ from the trusted key take a red wash; and the `ssh-keygen -lf` command in a mono well with a copy key. The full public key sits behind a disclosure drawn with the authored chevron (it turns 90° open), like every other disclosure.
 - **Confirmation:** One alert dialog for every irreversible action: a mark (Safety Red when destructive), a question title naming the object and host, a one-sentence consequence, the host line with its chip, the path in a mono well, a ghost Cancel, and a danger key. Remote renames and permission changes use the same layout with the amber primary.
 
 ### Remote-files panel
@@ -508,9 +517,11 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Messages, chips, and badges
 - Inline errors and notices are 7px wash-and-line strips with a leading icon and a dismiss key, rising 4px into place. Success notices clear themselves after 6 seconds; errors stay until dismissed. Chips are Caption pill outlines in Quiet Divider; count badges are 18px pills on Keycap Face.
+- The update notice floats over the bottom-right of the workspace as a Panel with the Pop shadow and 7px corners, like every other floating layer.
 
 ### Title bar
-- A 36px Frame band with the brand, a divider, and the context (mono for `user@host`), plus 46px Windows-convention caption buttons. Close turns system red (#c42b1c) with white glyphs on hover.
+- A 36px Frame band with the brand, a divider, and the context (mono for `user@host`, ellipsized when the window is narrow), plus 46px Windows-convention caption buttons. Close turns system red (#c42b1c) with white glyphs on hover.
+- On macOS the window keeps its native traffic lights: Capstan draws no caption buttons, and the brand starts 88px in to clear them.
 
 ## Do's and Don'ts
 

@@ -3,6 +3,8 @@ import { copy } from "./i18n";
 import { snippetMutationError } from "./snippets/errors";
 import { paneStatus, tabStatus, useWorkspace, type TabStatus, type TerminalTab } from "./workspace";
 import { PaneTools, PaneWorkspace } from "./panes/PaneWorkspace";
+import { TabToolsMenu } from "./panes/TabToolsMenu";
+import { useTabStrip } from "./window/tabStrip";
 import { paneLeaves } from "./panes/tree";
 import { LocalShellLauncher } from "./terminal/LocalShellLauncher";
 import { Titlebar } from "./window/Titlebar";
@@ -104,6 +106,8 @@ export function App(): ReactElement {
   const narrow = useMediaQuery("(max-width: 720px)");
   const compactWindow = useMediaQuery("(max-width: 900px)");
   const shellRef = useRef<HTMLElement>(null);
+  const tabListRef = useRef<HTMLDivElement>(null);
+  useTabStrip(tabListRef, activeTab, tabs.length);
   const [shellWidth, setShellWidth] = useState(0);
   useEffect(() => {
     const element = shellRef.current;
@@ -1488,7 +1492,7 @@ export function App(): ReactElement {
                       <PlusIcon size={14} />{labels.quickAddHost(search.trim())}</button>}
                   </div>)
                   : hostSections.map((section) => <div key={`${section.favorites}:${section.label}`} role="group" aria-label={section.label}>
-                    <h3 className="host-group-label">{section.favorites ? <StarIcon size={11} /> : null}{section.label}<span className="count">{section.hosts.length}</span></h3>
+                    <h3 className="host-group-label">{section.favorites ? <StarIcon size={11} /> : null}{section.label}<span className="count" aria-hidden="true">{section.hosts.length}</span><span className="sr-only"> · {labels.hostCount(section.hosts.length)}</span></h3>
                     {section.hosts.map((host) => {
                       const signal = hostSignals.get(host.id);
                       const production = productionHosts.has(host.id);
@@ -1843,10 +1847,10 @@ export function App(): ReactElement {
             </section>}
           </div>
         </aside>}
-        <section className="workspace" aria-label={labels.title} inert={sheet !== null || (narrow && sidebarOpen)}>
-          <nav className="terminal-tabs" aria-label={labels.terminalTabs}>
+        <section className="workspace" aria-label={labels.workspaceRegion} inert={sheet !== null || (narrow && sidebarOpen)}>
+          <nav className="terminal-tabs" aria-label={labels.tabStrip}>
             <button className="sidebar-toggle" type="button" aria-label={labels.toggleSidebar} aria-expanded={narrow ? sidebarOpen : !sidebarCollapsed} title={labels.shortcut(labels.toggleSidebar, "Ctrl+Shift+B")} onClick={toggleSidebar}><SidebarIcon /></button>
-            <div className="terminal-tab-list" role="tablist" aria-label={labels.terminalTabs}>
+            <div ref={tabListRef} className="terminal-tab-list" role="tablist" aria-label={labels.terminalTabs}>
               {tabs.map((tab) => {
                 const selected = tab.id === activeTab;
                 const tabName = tabNames.get(tab.id) ?? labels.localShell;
@@ -1880,10 +1884,15 @@ export function App(): ReactElement {
               })}
             </div>
             <div className="tab-actions">
-              {activeEntry && <div className="tab-tool-group" role="group" aria-label={labels.workspaceAction}><PaneTools tab={activeEntry} labels={labels} onRequestFocus={() => setFocusRequest((value) => value + 1)} /></div>}
-              {vault.unlocked && <div className="tab-tool-group" role="group" aria-label={labels.toolsGroup}>
+              {activeEntry && <div className="tab-tool-group" data-fold role="group" aria-label={labels.workspaceAction}><PaneTools tab={activeEntry} labels={labels} onRequestFocus={() => setFocusRequest((value) => value + 1)} /></div>}
+              {vault.unlocked && <div className="tab-tool-group" data-fold role="group" aria-label={labels.toolsGroup}>
                 <button className="icon-button snippet-open" type="button" aria-label={labels.openSnippets} title={labels.openSnippets} onClick={() => openSheet("snippets")}><SnippetIcon /></button>
                 <button className="icon-button tunnel-open" type="button" aria-label={labels.openTunnels} title={labels.openTunnels} onClick={() => openSheet("tunnels")}><TunnelIcon /></button>
+              </div>}
+              {/* Shown instead of the two groups above when the strip is too narrow for them. */}
+              {(activeEntry || vault.unlocked) && <div className="tab-tool-group tab-tools-compact" role="group" aria-label={labels.moreTools}>
+                <TabToolsMenu tab={activeEntry} labels={labels} onRequestFocus={() => setFocusRequest((value) => value + 1)}
+                  onOpenSnippets={vault.unlocked ? () => openSheet("snippets") : undefined} onOpenTunnels={vault.unlocked ? () => openSheet("tunnels") : undefined} />
               </div>}
               <div className="tab-tool-group" role="group" aria-label={labels.newTerminal}>
               <button className="new-terminal" type="button" title={labels.shortcut(labels.newTerminal, "Ctrl+Shift+T")} aria-label={labels.newTerminal} onClick={withFocus(addTerminal)}><PlusIcon /></button>
@@ -1965,7 +1974,7 @@ export function App(): ReactElement {
               <button className="icon-button" type="button" title={commandCopied ? labels.commandCopied : labels.copyCommand} aria-label={commandCopied ? labels.commandCopied : labels.copyCommand} onClick={copyVerifyCommand}>{commandCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}</button>
             </div>
           </div></div>
-          <details><summary>{labels.showPublicKey}</summary><code className="public-key">{challenge.publicKey}</code></details>
+          <details className="public-key-details"><summary><ChevronRightIcon size={14} />{labels.showPublicKey}</summary><code className="public-key">{challenge.publicKey}</code></details>
           <div className="dialog-actions">
             {challenge.keyChanged
               ? <>

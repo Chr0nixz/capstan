@@ -22,7 +22,7 @@ export function Titlebar({ labels, context = labels.localShell, badge, mono = fa
   return <header className="titlebar" data-native-titlebar={nativeMac || undefined}>
     <div className="titlebar-drag" data-tauri-drag-region>
       <h1 className="brand" data-tauri-drag-region>{labels.title}</h1>
-      <span className={"context" + (mono ? " is-mono" : "")} data-tauri-drag-region>{badge && <span className="context-badge" data-tauri-drag-region>{badge}</span>}{context}</span>
+      <span className={"context" + (mono ? " is-mono" : "")} data-tauri-drag-region>{badge && <span className="context-badge" data-tauri-drag-region>{badge}</span>}<span className="context-text" data-tauri-drag-region>{context}</span></span>
       {snapFailed && <span className="titlebar-warning" role="status">{labels.snapUnavailable}</span>}
     </div>
     {!nativeMac && <nav className="window-controls" aria-label={labels.windowControls}>

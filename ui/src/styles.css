@@ -27,6 +27,8 @@
   --amber: #d9a441;
   --amber-strong: #e8bf64;
   --amber-fill: #d9a441;
+  --amber-hover: #e6b555;
+  --amber-pressed: #c99536;
   --amber-ink: #1a1408;
   --amber-wash: rgb(217 164 65 / 0.12);
   --amber-line: rgb(217 164 65 / 0.42);
@@ -34,9 +36,11 @@
   --red-text: #f2a6a2;
   --red-wash: rgb(208 96 94 / 0.12);
   --red-line: rgb(208 96 94 / 0.45);
+  --red-wash-strong: rgb(208 96 94 / 0.2);
   --green: #8ea981;
   --green-text: #b3c9a7;
   --green-wash: rgb(142 169 129 / 0.12);
+  --green-line: rgb(142 169 129 / 0.4);
   --terminal-bg: #16171a;
   --scrim: rgb(8 9 11 / 0.62);
   --key-top: inset 0 1px 0 rgb(255 255 255 / 0.05);
@@ -96,9 +100,11 @@
   --red-text: #9e2f2c;
   --red-wash: rgb(177 63 60 / 0.09);
   --red-line: rgb(177 63 60 / 0.4);
+  --red-wash-strong: rgb(177 63 60 / 0.16);
   --green: #4d7a40;
   --green-text: #3f6a33;
   --green-wash: rgb(77 122 64 / 0.1);
+  --green-line: rgb(77 122 64 / 0.4);
   --terminal-bg: #f7f8fa;
   --scrim: rgb(30 28 24 / 0.32);
   --key-top: inset 0 1px 0 rgb(255 255 255 / 0.8);
@@ -161,14 +167,14 @@ button[aria-pressed="true"] { border-color: var(--amber-line); color: var(--ambe
 }
 .primary-action:hover:not(:disabled),
 .sftp-confirm-action:hover:not(:disabled),
-.form-actions button[type="submit"]:hover:not(:disabled) { color: var(--amber-ink); background: #e6b555; border-color: transparent; }
+.form-actions button[type="submit"]:hover:not(:disabled) { color: var(--amber-ink); background: var(--amber-hover); border-color: transparent; }
 .primary-action:active:not(:disabled),
 .sftp-confirm-action:active:not(:disabled),
-.form-actions button[type="submit"]:active:not(:disabled) { background: #c99536; }
+.form-actions button[type="submit"]:active:not(:disabled) { background: var(--amber-pressed); }
 .primary-action:disabled, .sftp-confirm-action:disabled, .form-actions button[type="submit"]:disabled { color: var(--amber-ink); opacity: 0.45; }
 
 .danger-action { color: var(--red-text); border-color: var(--red-line); background: var(--red-wash); box-shadow: none; }
-.danger-action:hover:not(:disabled) { color: var(--red-text); border-color: var(--red); background: rgb(208 96 94 / 0.2); }
+.danger-action:hover:not(:disabled) { color: var(--red-text); border-color: var(--red); background: var(--red-wash-strong); }
 
 .ghost-button { border-color: transparent; background: transparent; box-shadow: none; color: var(--legend-muted); }
 .ghost-button:hover:not(:disabled) { border-color: transparent; background: var(--face-hover); }
@@ -321,6 +327,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   font-size: 12px;
 }
 .context.is-mono { font-family: var(--font-mono); }
+.context-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-badge {
   flex: 0 0 auto;
   padding: 0 6px;
@@ -375,6 +382,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 }
 
 .terminal-tabs {
+  container: tabstrip / inline-size;
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -383,6 +391,11 @@ input[type="range"] { accent-color: var(--amber-fill); }
   box-shadow: inset 0 -1px 0 var(--divider);
 }
 .terminal-tab-list { display: flex; flex: 0 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.terminal-tab-list::-webkit-scrollbar { display: none; }
+/* The scrollbar stays hidden, so a faded edge is what says more tabs sit past it. */
+.terminal-tab-list[data-overflow-start] { mask-image: linear-gradient(to right, transparent, #000 24px); }
+.terminal-tab-list[data-overflow-end] { mask-image: linear-gradient(to left, transparent, #000 24px); }
+.terminal-tab-list[data-overflow-start][data-overflow-end] { mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
 .terminal-tab {
   position: relative;
   display: flex;
@@ -471,6 +484,14 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .tab-tool-group { position: relative; display: flex; align-items: center; gap: 2px; }
 .tab-tool-group + .tab-tool-group { margin-left: 5px; padding-left: 6px; }
 .tab-tool-group + .tab-tool-group::before { content: ""; position: absolute; left: 0; top: 50%; width: 1px; height: 16px; background: var(--divider); transform: translateY(-50%); }
+/* Below two tabs' worth of room, the pane and sheet keys fold into one More key. */
+.tab-tool-group.tab-tools-compact { display: none; }
+.tab-tools-more[data-broadcast], .tab-actions .tab-tools-more[data-broadcast]:hover:not(:disabled) { color: var(--amber-strong); background: var(--amber-wash); box-shadow: inset 0 0 0 1px var(--amber-line); }
+@container tabstrip (max-width: 519px) {
+  .tab-tool-group[data-fold] { display: none; }
+  .tab-tool-group.tab-tools-compact { display: flex; margin-left: 0; padding-left: 0; }
+  .tab-tool-group.tab-tools-compact::before { display: none; }
+}
 /* Toolbar keys rest flat and rise into a keycap on hover or focus, so the strip
    stays quiet while every control still reads as a key when it is reached. */
 .tab-actions .icon-button:hover:not(:disabled), .tab-actions .new-terminal:hover:not(:disabled),
@@ -610,7 +631,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 
 @media (forced-colors: active) {
   .workspace-pane[data-broadcast]::after { border-color: LinkText; }
-  .broadcast-chip, .broadcast-toggle[aria-pressed="true"] { border: 1px solid LinkText; }
+  .broadcast-chip, .broadcast-toggle[aria-pressed="true"], .tab-tools-more[data-broadcast] { border: 1px solid LinkText; }
   .pane-resize-handle::after { background: ButtonText; }
   .broadcast-status, .pane-input-error { border-color: ButtonText; }
 }
@@ -889,7 +910,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   line-height: 1.45;
   animation: rise-in var(--base) var(--ease-out);
 }
-.inline-notice { border-color: rgb(142 169 129 / 0.4); color: var(--green-text); background: var(--green-wash); }
+.inline-notice { border-color: var(--green-line); color: var(--green-text); background: var(--green-wash); }
 .inline-error > .icon, .inline-notice > .icon { margin-top: 1px; }
 .inline-error > span, .inline-notice > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .inline-error > .ghost-button { flex: 0 0 auto; gap: 5px; min-height: 24px; height: 24px; margin: -3px -1px; padding: 0 8px; color: inherit; }
@@ -1066,7 +1087,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .command-empty { padding: 14px 8px; color: var(--legend-muted); font-size: 12px; }
 .command-hint { display: flex; gap: 16px; padding: 0 14px; height: 30px; align-items: center; border-top: 1px solid var(--divider-soft); background: var(--chrome); color: var(--legend-faint); font-size: 11px; }
 .command-hint span { display: inline-flex; align-items: center; gap: 4px; }
-.command-hint kbd { padding: 0 4px; font-size: 10.5px; line-height: 16px; }
+.command-hint kbd { padding: 0 4px; font-size: 11px; line-height: 16px; }
 
 .segmented {
   display: flex;
@@ -1281,7 +1302,10 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .verify-command .icon-button { flex: 0 0 auto; }
 .verify-command .icon-button .icon { margin: 0; color: inherit; }
 .trust-dialog h2 .prod-chip { margin-left: 2px; }
-.trust-dialog details summary { padding: 8px 0; color: var(--legend-muted); font-size: 12.5px; cursor: default; }
+.trust-dialog details summary { display: flex; align-items: center; gap: 6px; padding: 8px 0; color: var(--legend-muted); font-size: 12.5px; cursor: default; list-style: none; }
+.trust-dialog details summary::-webkit-details-marker { display: none; }
+.trust-dialog details summary .icon { transition: transform var(--base) var(--ease-out); }
+.trust-dialog details[open] summary .icon { transform: rotate(90deg); }
 .trust-dialog details summary:hover { color: var(--legend-strong); }
 .public-key { display: block; max-height: 120px; overflow: auto; padding: 10px; border-radius: var(--radius); color: var(--legend-muted); background: var(--canvas); font-size: 11px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .trust-dialog .inline-error { margin-top: 12px; }
@@ -1773,8 +1797,8 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
     --edge: ButtonText; --edge-strong: ButtonText; --divider: GrayText; --divider-soft: GrayText;
     --amber: Highlight; --amber-ink: HighlightText; --amber-line: Highlight; --amber-wash: Canvas;
     --amber-hover: Highlight; --amber-pressed: Highlight; --amber-strong: Highlight;
-    --red: CanvasText; --red-text: CanvasText; --red-line: CanvasText; --red-wash: Canvas;
-    --green: CanvasText; --green-text: CanvasText; --green-wash: Canvas;
+    --red: CanvasText; --red-text: CanvasText; --red-line: CanvasText; --red-wash: Canvas; --red-wash-strong: Canvas;
+    --green: CanvasText; --green-text: CanvasText; --green-wash: Canvas; --green-line: CanvasText;
     --key-top: none; --key-bottom: none;
   }
   button, :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select) { border: 1px solid ButtonText; }
@@ -1792,7 +1816,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
   button:disabled { color: GrayText; }
 }
 
-.update-notice { position: fixed; right: 16px; bottom: 44px; z-index: 7; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: min(440px, calc(100vw - 32px)); padding: 8px 12px; border: 1px solid var(--edge); border-radius: var(--radius); color: var(--legend); background: var(--panel); font-size: 12px; }
+.update-notice { position: fixed; right: 16px; bottom: 44px; z-index: 7; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: min(440px, calc(100vw - 32px)); padding: 8px 12px; border: 1px solid var(--edge); border-radius: var(--radius-lg); color: var(--legend); background: var(--panel); box-shadow: var(--shadow-pop); font-size: 12px; animation: rise-in var(--base) var(--ease-out); }
 .update-settings { margin-top: 24px; }
 .update-notes { max-height: 40vh; margin: 12px 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--legend); }
 .update-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
