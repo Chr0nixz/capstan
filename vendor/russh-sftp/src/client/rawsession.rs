@@ -15,7 +15,7 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 
-use super::{error::Error, runtime, Handler};
+use super::{error::Error, pacing::Ticket, runtime, Handler};
 use crate::{
     client::{run_with_config, Config},
     de,
@@ -32,7 +32,88 @@ use crate::{
 };
 
 pub type SftpResult<T> = Result<T, Error>;
-type SharedRequests = HashMap<Option<u32>, oneshot::Sender<SftpResult<Packet>>>;
+type SharedRequests = HashMap<Option<u32>, PendingReply>;
+
+/// A request's reply slot. A paced file data request also holds its
+/// admission, which is returned when the slot is filled or removed.
+pub(crate) struct PendingReply {
+    sender: oneshot::Sender<SftpResult<Packet>>,
+    ticket: Option<Ticket>,
+}
+
+#[cfg(test)]
+mod pacing_tests {
+    use super::*;
+    use crate::client::Pacer;
+    use std::sync::atomic::AtomicUsize;
+
+    #[derive(Default)]
+    struct Counts {
+        admitted: AtomicUsize,
+        replied: AtomicUsize,
+        returned: AtomicUsize,
+    }
+    impl Pacer for Counts {
+        fn admit(&self, _: u32, _: bool) -> Option<u64> {
+            Some(self.admitted.fetch_add(1, Ordering::SeqCst) as u64)
+        }
+        fn complete(&self, _: u64, _: u32, round_trip: Option<Duration>) {
+            let count = if round_trip.is_some() {
+                &self.replied
+            } else {
+                &self.returned
+            };
+            count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn every_admission_is_returned_once_with_a_round_trip_only_for_a_reply() {
+        let (stream, _peer) = tokio::io::duplex(64 * 1024);
+        let session = RawSftpSession::new(stream);
+        let counts = Arc::new(Counts::default());
+        let pacer: Arc<dyn Pacer> = counts.clone();
+        let mut inner = SessionInner {
+            version: Some(3),
+            requests: session.requests.clone(),
+        };
+
+        let replied = session
+            .read_nowait("h", 0, 10, Ticket::admit(&pacer, 10, false))
+            .unwrap();
+        inner
+            .reply(
+                Some(1),
+                Packet::Status(Status {
+                    id: 1,
+                    status_code: StatusCode::Eof,
+                    error_message: String::new(),
+                    language_tag: String::new(),
+                }),
+            )
+            .unwrap();
+        assert!(matches!(replied.await, Ok(Packet::Status(_))));
+        assert_eq!(counts.replied.load(Ordering::SeqCst), 1);
+
+        let dropped = session
+            .write_nowait_from_slice("h", 0, b"data", Ticket::admit(&pacer, 4, false))
+            .unwrap();
+        drop(dropped);
+        assert_eq!(counts.returned.load(Ordering::SeqCst), 1);
+
+        session.close_session().unwrap();
+        while !session.tx.is_closed() {
+            tokio::task::yield_now().await;
+        }
+        assert!(session
+            .read_nowait("h", 0, 10, Ticket::admit(&pacer, 10, false))
+            .is_err());
+        assert_eq!(counts.returned.load(Ordering::SeqCst), 2);
+        assert_eq!(counts.admitted.load(Ordering::SeqCst), 3);
+        assert_eq!(counts.replied.load(Ordering::SeqCst), 1);
+        assert!(session.requests.is_empty());
+    }
+}
 
 #[cfg(test)]
 mod id_tests {
@@ -100,7 +181,10 @@ pub(crate) struct SessionInner {
 
 impl SessionInner {
     pub fn reply(&mut self, id: Option<u32>, packet: Packet) -> SftpResult<()> {
-        if let Some((_, sender)) = self.requests.remove(&id) {
+        if let Some((_, PendingReply { sender, ticket })) = self.requests.remove(&id) {
+            if let Some(ticket) = ticket {
+                ticket.finish();
+            }
             let validate = if id.is_some() && self.version.is_none() {
                 Err(Error::UnexpectedPacket)
             } else if id.is_none() && self.version.is_some() {
@@ -263,10 +347,15 @@ impl RawSftpSession {
     }
 
     fn send(&self, id: Option<u32>, packet: Packet) -> SftpResult<Request> {
-        self.send_bytes(id, Bytes::try_from(packet)?)
+        self.send_bytes(id, Bytes::try_from(packet)?, None)
     }
 
-    fn send_bytes(&self, id: Option<u32>, bytes: Bytes) -> SftpResult<Request> {
+    fn send_bytes(
+        &self,
+        id: Option<u32>,
+        bytes: Bytes,
+        ticket: Option<Ticket>,
+    ) -> SftpResult<Request> {
         if self.tx.is_closed() {
             return Err(Error::UnexpectedBehavior("session closed".into()));
         }
@@ -287,8 +376,13 @@ impl RawSftpSession {
             timeout: Box::pin(timeout),
             completed: false,
         };
-        self.requests.insert(id, tx);
-        self.tx.send(bytes)?;
+        self.requests
+            .insert(id, PendingReply { sender: tx, ticket });
+        if let Err(error) = self.tx.send(bytes) {
+            // No Request owns this slot yet, so nothing else would remove it.
+            self.requests.remove(&id);
+            return Err(error.into());
+        }
 
         Ok(request)
     }
@@ -438,6 +532,7 @@ impl RawSftpSession {
         handle: &str,
         offset: u64,
         data: &[u8],
+        ticket: Option<Ticket>,
     ) -> SftpResult<Request> {
         if self
             .limits
@@ -456,25 +551,29 @@ impl RawSftpSession {
                 offset,
                 data,
             })?,
+            ticket,
         )
     }
 
-    pub(crate) fn read_nowait(&self, handle: &str, offset: u64, len: u32) -> SftpResult<Request> {
+    pub(crate) fn read_nowait(
+        &self,
+        handle: &str,
+        offset: u64,
+        len: u32,
+        ticket: Option<Ticket>,
+    ) -> SftpResult<Request> {
         if self.limits.read_len.is_some_and(|limit| len as u64 > limit) {
             return Err(Error::Limited("read limit reached".to_owned()));
         }
 
         let id = self.use_next_id()?;
-        self.send(
-            Some(id),
-            Read {
-                id,
-                handle: handle.to_owned(),
-                offset,
-                len,
-            }
-            .into(),
-        )
+        let packet = Packet::from(Read {
+            id,
+            handle: handle.to_owned(),
+            offset,
+            len,
+        });
+        self.send_bytes(Some(id), Bytes::try_from(packet)?, ticket)
     }
 
     pub async fn lstat<P: Into<String>>(&self, path: P) -> SftpResult<Attrs> {

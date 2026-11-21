@@ -23,6 +23,9 @@ mod native_transfers;
 mod remote_edits;
 #[path = "shell_transactions.rs"]
 mod shell_transactions;
+#[cfg(any(windows, unix))]
+#[path = "slow_link.rs"]
+mod slow_link;
 #[path = "tree_delete.rs"]
 mod tree_delete;
 #[cfg(any(windows, unix))]
@@ -555,7 +558,12 @@ pub(super) async fn serve<
 }
 
 async fn fixture() -> (Fixture, SftpSessionId, Arc<TransferService>) {
-    let fixture = Fixture::new().await;
+    fixture_over(None).await
+}
+async fn fixture_over(
+    link: Option<crate::shaped_link::Link>,
+) -> (Fixture, SftpSessionId, Arc<TransferService>) {
+    let fixture = Fixture::over(link).await;
     fixture
         .observations
         .transfer_mode

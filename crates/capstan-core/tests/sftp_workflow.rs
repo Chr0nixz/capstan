@@ -36,6 +36,8 @@ mod performance;
 #[cfg(windows)]
 #[path = "sftp_workflow/relay.rs"]
 mod relay;
+#[path = "sftp_workflow/shaped_link.rs"]
+mod shaped_link;
 #[path = "sftp_workflow/subsystem_pool.rs"]
 mod subsystem_pool;
 #[path = "sftp_workflow/transfers.rs"]
@@ -500,6 +502,10 @@ impl Connector {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::over(None).await
+    }
+    /// Connects through an emulated slow link when one is given.
+    async fn over(link: Option<shaped_link::Link>) -> Self {
         let key =
             russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
                 .unwrap();
@@ -528,6 +534,10 @@ impl Fixture {
         let server_task = tokio::spawn(async move {
             server.run_on_socket(config, &listener).await.unwrap();
         });
+        let port = match link {
+            Some(link) => shaped_link::start(address.port(), link, &tasks, cancel.clone()).await,
+            None => address.port(),
+        };
         let pool = ConnectionPool::new(Duration::from_secs(30));
         let host = Uuid::new_v4();
         let binding = AttemptBinding {
@@ -536,7 +546,7 @@ impl Fixture {
             host_revision: 1,
             vault_epoch: 1,
             target: "127.0.0.1".into(),
-            port: address.port(),
+            port,
         };
         let pool_key = PoolKey {
             target: binding.target.clone(),

@@ -31,7 +31,7 @@ impl Default for SftpPool {
                 transfer: Arc::new(Semaphore::new(1)),
                 unavailable: AtomicBool::new(false),
             }),
-            admission: sftp::Admission::default(),
+            admission: sftp::Admission::paced(),
         }
     }
 }

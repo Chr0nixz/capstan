@@ -6,6 +6,7 @@ mod wire;
 pub(crate) use wire::SftpReaper;
 pub use wire::{SftpWire, MAX_PACKET_BYTES};
 mod client;
+mod pacing;
 pub(crate) use client::Admission;
 pub use client::{
     Attributes, Capabilities, ClientError, PipelinedFile, RemoteDirectory, RemoteFile, SftpClient,

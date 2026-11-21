@@ -1,6 +1,6 @@
 use super::{SftpWire, MAX_PACKET_BYTES};
 use russh_sftp::{
-    client::{error::Error, Config, RawSftpSession},
+    client::{error::Error, Config, Pacer, RawSftpSession},
     protocol::{FileAttributes, OpenFlags, Packet, StatusCode},
 };
 use std::{
@@ -27,6 +27,8 @@ pub(crate) struct Admission {
     slots: Arc<Semaphore>,
     callers: Arc<Semaphore>,
     handles: Arc<Semaphore>,
+    /// Paces file data so that it cannot queue far ahead of shell input.
+    pacer: Option<Arc<dyn Pacer>>,
 }
 impl Default for Admission {
     fn default() -> Self {
@@ -34,6 +36,16 @@ impl Default for Admission {
             slots: Arc::new(Semaphore::new(IN_FLIGHT)),
             callers: Arc::new(Semaphore::new(IN_FLIGHT + WAITING)),
             handles: Arc::new(Semaphore::new(HANDLES)),
+            pacer: None,
+        }
+    }
+}
+impl Admission {
+    /// Admission for a real transport, where shells share the TCP stream.
+    pub(crate) fn paced() -> Self {
+        Self {
+            pacer: Some(Arc::new(super::pacing::TransportPacer::new())),
+            ..Self::default()
         }
     }
 }
@@ -94,6 +106,7 @@ pub struct SftpClient {
     slots: Arc<Semaphore>,
     callers: Arc<Semaphore>,
     handles: Arc<Semaphore>,
+    pacer: Option<Arc<dyn Pacer>>,
     local_handles: Arc<Semaphore>,
     pub(super) pending: tokio_util::task::TaskTracker,
     remaining: AtomicU64,
@@ -211,6 +224,7 @@ impl SftpClient {
             slots: admission.slots.clone(),
             callers: admission.callers.clone(),
             handles: admission.handles.clone(),
+            pacer: admission.pacer.clone(),
             local_handles: Arc::new(Semaphore::new(handles)),
             pending: tokio_util::task::TaskTracker::new(),
             remaining: AtomicU64::new(u64::from(u32::MAX) - used),

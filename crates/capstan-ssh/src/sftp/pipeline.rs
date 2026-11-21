@@ -20,7 +20,7 @@ impl RemoteFile {
             () = owner.closed() => return Err(ClientError::ConnectionLost),
             slots = owner.slots.clone().acquire_many_owned(FILE_REQUESTS as u32) => slots.map_err(|_| ClientError::ConnectionLost)?,
         };
-        let file = File::from_initialized_handle(
+        let mut file = File::from_initialized_handle(
             owner.raw.clone(),
             self.handle.value.clone(),
             Config {
@@ -33,6 +33,9 @@ impl RemoteFile {
             owner.capabilities.request_bytes as u32,
             owner.capabilities.fsync,
         );
+        if let Some(pacer) = &owner.pacer {
+            file = file.with_pacer(pacer.clone());
+        }
         Ok(PipelinedFile {
             file: Some(file),
             handle: self.handle,

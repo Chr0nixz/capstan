@@ -1,11 +1,13 @@
 pub mod error;
 pub mod fs;
 mod handler;
+pub mod pacing;
 pub mod rawsession;
 pub(crate) mod runtime;
 mod session;
 
 pub use handler::Handler;
+pub use pacing::Pacer;
 pub use rawsession::RawSftpSession;
 pub use session::SftpSession;
 

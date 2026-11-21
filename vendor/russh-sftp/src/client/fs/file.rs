@@ -12,6 +12,7 @@ use super::Metadata;
 use crate::{
     client::{
         error::Error,
+        pacing::{Pacer, Ticket},
         rawsession::{Limits, Request, SftpResult},
         session::Features,
         Config, RawSftpSession,
@@ -53,6 +54,7 @@ impl ReadState {
         session: &RawSftpSession,
         handle: &str,
         features: Features,
+        pacer: Option<&Arc<dyn Pacer>>,
     ) -> Poll<io::Result<usize>> {
         if buf.remaining() == 0 {
             return Poll::Ready(Ok(0));
@@ -63,7 +65,7 @@ impl ReadState {
                 return Poll::Ready(Ok(0));
             }
 
-            self.request(session, handle, features)?;
+            self.request(session, handle, features, pacer)?;
 
             let request = self.pending.front_mut().expect("read request is queued");
             let result = ready!(Pin::new(&mut request.rx).poll(cx));
@@ -84,8 +86,9 @@ impl ReadState {
                         // would leave uncounted requests on the transport.
                         let gap = offset + data.len() as u64;
                         let remaining = len - data.len() as u32;
+                        let ticket = pacer.and_then(|pacer| Ticket::admit(pacer, remaining, true));
                         let rx = session
-                            .read_nowait(handle, gap, remaining)
+                            .read_nowait(handle, gap, remaining, ticket)
                             .map_err(io::Error::from)?;
                         self.pending.push_front(PendingRead {
                             offset: gap,
@@ -118,6 +121,7 @@ impl ReadState {
         session: &RawSftpSession,
         handle: &str,
         features: Features,
+        pacer: Option<&Arc<dyn Pacer>>,
     ) -> io::Result<()> {
         let max_len = features.max_packet_len.saturating_sub(READ_OVERHEAD_LENGTH) as u64;
         let max_len = features
@@ -134,8 +138,15 @@ impl ReadState {
             1
         };
         while self.pending.len() < count {
+            // A paced file always keeps its first request; later ones wait
+            // until the transport has room. This file's next reply refills it.
+            let only = self.pending.is_empty();
+            let ticket = pacer.and_then(|pacer| Ticket::admit(pacer, len, only));
+            if pacer.is_some() && ticket.is_none() && !only {
+                break;
+            }
             let rx = session
-                .read_nowait(handle, self.offset, len)
+                .read_nowait(handle, self.offset, len, ticket)
                 .map_err(io::Error::from)?;
             self.pending.push_back(PendingRead {
                 offset: self.offset,
@@ -187,6 +198,7 @@ pub struct File {
     pos: u64,
     closed: bool,
     features: Features,
+    pacer: Option<Arc<dyn Pacer>>,
 }
 
 impl File {
@@ -209,7 +221,15 @@ impl File {
             pos: 0,
             closed: false,
             features,
+            pacer: None,
         }
+    }
+
+    /// Admit this file's read and write requests through `pacer`, which is
+    /// shared by every file on the same transport.
+    pub fn with_pacer(mut self, pacer: Arc<dyn Pacer>) -> Self {
+        self.pacer = Some(pacer);
+        self
     }
 
     /// Adapt an already initialized raw session and an owned handle without a
@@ -374,11 +394,14 @@ impl AsyncRead for File {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let file = self.get_mut();
-        let len =
-            ready!(file
-                .state
-                .read
-                .poll_read(cx, buf, &file.session, &file.handle, file.features,))?;
+        let len = ready!(file.state.read.poll_read(
+            cx,
+            buf,
+            &file.session,
+            &file.handle,
+            file.features,
+            file.pacer.as_ref(),
+        ))?;
         file.pos += len as u64;
         Poll::Ready(Ok(()))
     }
@@ -487,12 +510,29 @@ impl AsyncWrite for File {
                 "configured SFTP packet limit is too small for a write",
             )));
         }
+        // A paced file always keeps its first write; later ones wait for this
+        // file's oldest acknowledgement until the transport has room.
+        let ticket = match self.pacer.clone() {
+            Some(pacer) => loop {
+                let only = self.state.write_acks.is_empty();
+                let ticket = Ticket::admit(&pacer, len as u32, only);
+                if ticket.is_some() || only {
+                    break ticket;
+                }
+                if let Some(poll) = poll_oldest_write(&mut self.state, cx) {
+                    ready!(poll)?;
+                }
+            },
+            None => None,
+        };
         let offset = self.pos;
 
-        match self
-            .session
-            .write_nowait_from_slice(self.handle.as_str(), offset, &buf[..len])
-        {
+        match self.session.write_nowait_from_slice(
+            self.handle.as_str(),
+            offset,
+            &buf[..len],
+            ticket,
+        ) {
             Ok(rx) => {
                 self.pos += len as u64;
                 let pos = self.pos;

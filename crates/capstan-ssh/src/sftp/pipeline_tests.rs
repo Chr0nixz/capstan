@@ -529,3 +529,106 @@ async fn canceling_a_full_pipeline_reclaims_it_without_interrupting_siblings() {
     assert_eq!(peer.client.slots.available_permits(), IN_FLIGHT);
     peer.close().await;
 }
+
+/// Admits at most `limit` requests besides a file's only one.
+struct LimitPacer {
+    limit: usize,
+    outstanding: AtomicUsize,
+    peak: AtomicUsize,
+    replied: AtomicUsize,
+    returned: AtomicUsize,
+}
+impl LimitPacer {
+    fn admission(limit: usize) -> (Arc<Self>, Admission) {
+        let pacer = Arc::new(Self {
+            limit,
+            outstanding: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            replied: AtomicUsize::new(0),
+            returned: AtomicUsize::new(0),
+        });
+        let admission = Admission {
+            pacer: Some(pacer.clone()),
+            ..Admission::default()
+        };
+        (pacer, admission)
+    }
+}
+impl Pacer for LimitPacer {
+    fn admit(&self, _: u32, force: bool) -> Option<u64> {
+        if !force && self.outstanding.load(Ordering::SeqCst) >= self.limit {
+            return None;
+        }
+        let now = self.outstanding.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(now, Ordering::SeqCst);
+        Some(0)
+    }
+    fn complete(&self, _: u64, _: u32, round_trip: Option<Duration>) {
+        self.outstanding.fetch_sub(1, Ordering::SeqCst);
+        let count = if round_trip.is_some() {
+            &self.replied
+        } else {
+            &self.returned
+        };
+        count.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn a_paced_write_waits_for_its_own_ack_once_the_transport_is_full() {
+    let (pacer, admission) = LimitPacer::admission(3);
+    let peer = Peer::with_admission(false, None, &admission).await;
+    let mut file = peer.file("/slow", true).await;
+    let block = vec![0x5a; BLOCK];
+    for _ in 0..3 {
+        file.write(&block, &CancellationToken::new()).await.unwrap();
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while peer.metrics.held_writes.load(Ordering::SeqCst) != 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    {
+        let cancel = CancellationToken::new();
+        let next = file.write(&block, &cancel);
+        tokio::pin!(next);
+        tokio::select! { biased; result = &mut next => panic!("a full transport admitted another write: {result:?}"), () = tokio::time::sleep(Duration::from_millis(50)) => {} }
+        assert_eq!(peer.metrics.held_writes.load(Ordering::SeqCst), 3);
+        peer.release.notify_one();
+        next.await.unwrap();
+    }
+    file.drain(&CancellationToken::new()).await.unwrap();
+    assert_eq!(file.confirmed_bytes(), (4 * BLOCK) as u64);
+    file.close(&CancellationToken::new()).await.unwrap();
+    assert_eq!(pacer.peak.load(Ordering::SeqCst), 3);
+    assert_eq!(pacer.outstanding.load(Ordering::SeqCst), 0);
+    assert_eq!(pacer.replied.load(Ordering::SeqCst), 4);
+    assert_eq!(pacer.returned.load(Ordering::SeqCst), 0);
+    peer.close().await;
+}
+
+#[tokio::test]
+async fn a_paced_read_stays_within_the_transport_limit_and_returns_every_admission() {
+    let (pacer, admission) = LimitPacer::admission(2);
+    let peer = Peer::with_admission(false, None, &admission).await;
+    let mut file = peer.file("/read", false).await;
+    let mut received = Vec::new();
+    loop {
+        let bytes = file.read(BLOCK, &CancellationToken::new()).await.unwrap();
+        if bytes.is_empty() {
+            break;
+        }
+        received.extend_from_slice(&bytes);
+    }
+    assert_eq!(received, body(0, SIZE));
+    file.close(&CancellationToken::new()).await.unwrap();
+    // The short final reply's gap continues an admitted request, so it is
+    // admitted even when the transport is full.
+    assert_eq!(pacer.peak.load(Ordering::SeqCst), 3);
+    assert_eq!(pacer.outstanding.load(Ordering::SeqCst), 0);
+    assert!(pacer.replied.load(Ordering::SeqCst) > SIZE / BLOCK);
+    assert_eq!(peer.client.slots.available_permits(), IN_FLIGHT);
+    peer.close().await;
+}
