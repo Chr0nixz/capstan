@@ -41,7 +41,7 @@ capstan-native-windows = { path = "../../vendor/capstan-native-windows" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.190"
-rustix = { version = "=1.1.4", features = ["fs", "process"] }
+rustix = { version = "=1.1.6", features = ["fs", "process"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

@@ -1,7 +1,5 @@
-use chrono::{DateTime, Utc};
-use std::time::{Duration, UNIX_EPOCH};
-
 use super::FileAttributes;
+use crate::utils::long_time;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct File {
@@ -39,8 +37,7 @@ impl File {
         let size = self.attrs.size.unwrap_or(0);
         let mtime = self.attrs.mtime.unwrap_or(0);
 
-        let datetime = DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(mtime as u64));
-        let delayed = datetime.format("%b %d %Y %H:%M");
+        let delayed = long_time(mtime);
 
         format!(
             "{directory}{permissions} 0 {} {} {size} {delayed} {}",

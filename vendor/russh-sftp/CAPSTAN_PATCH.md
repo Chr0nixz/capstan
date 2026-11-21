@@ -25,3 +25,7 @@ Regression evidence includes four deterministic facade pipeline peers (full wind
 Each admission is a ticket held in the request's reply slot. The reply dispatcher returns it with the measured round trip, even while the file is not being polled. Dropping the request, a timeout or a failed send returns it without a round trip. A failed send now also removes its reply slot, which upstream left in the request map. The delay-based controller is Capstan code in `crates/capstan-ssh/src/sftp/pacing.rs`.
 
 Regression evidence: the vendor test `every_admission_is_returned_once_with_a_round_trip_only_for_a_reply` covers reply, drop and unsent paths. The capstan-ssh paced pipeline tests cover write waiting, read limits and gap admission. The capstan-core `slow_link` tests run transfers over an emulated 1 MiB/s, 80 ms link.
+
+## chrono removed
+
+RUSTSEC-2026-0543 marks `chrono` unmaintained, with no fixed release. Upstream used it in two places. One converts `SystemTime` to protocol seconds; the other formats the server-side `longname` as `%b %d %Y %H:%M` UTC. Both are now plain `std` code in `utils.rs`. The conversion keeps chrono's rounding down before the epoch and its 32-bit truncation. Before removal, the replacements matched chrono on about 41,000 timestamps sampled across the full 32-bit range and on sub-second values either side of the epoch. Fixed-value tests remain in `utils.rs`. Capstan's client path uses neither helper.
