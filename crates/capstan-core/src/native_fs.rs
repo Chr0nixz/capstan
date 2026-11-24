@@ -15,11 +15,23 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-pub type FolderContents = (Vec<PathBuf>, Vec<(PathBuf, Source)>);
+/// What a selected folder upload sends. Links, junctions and special files
+/// are never followed or copied; they are only counted in `skipped`.
+pub struct FolderContents {
+    pub directories: Vec<PathBuf>,
+    pub files: Vec<(PathBuf, Source)>,
+    pub skipped: u32,
+}
 
 #[cfg(windows)]
 pub fn scan_folder(path: &Path) -> io::Result<FolderContents> {
-    Ok((enumerate_folder_directories(path)?, enumerate_folder(path)?))
+    let directories = enumerate_folder_directories(path)?;
+    let (files, skipped) = enumerate_folder(path)?;
+    Ok(FolderContents {
+        directories,
+        files,
+        skipped,
+    })
 }
 
 pub(crate) fn prepare_selected_folder(

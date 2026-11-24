@@ -11,7 +11,7 @@ type SftpCopy = {
   shellIntegration: string; shellIntegrationTitle: string; shellIntegrationHint: string; shell: string; action: string; install: string; uninstall: string;
   preview: string; applyIntegration: string; previewLoading: string; previewSummary: (added: number, removed: number) => string; noChanges: string;
   name: string; size: string; type: string; modified: string; next: string; previous: string; retry: string;
-  page: (number: number) => string; omitted: (count: number) => string;
+  page: (number: number) => string; omitted: (count: number) => string; linksSkipped: (count: number) => string;
   loading: string; empty: string; noVisible: string; chooseName: string; chooseMode: string;
   panelSize: string; createTitle: (directory: boolean) => string; cancel: string; apply: string;
   renameTarget: (name: string) => string; permissionChange: (before: string, after: string) => string; deleteScopeNote: string;
@@ -34,6 +34,7 @@ export const sftpCopy: Record<"en" | "zh-CN", SftpCopy> = {
     preview: "Preview", applyIntegration: "Apply integration", previewLoading: "Reading the remote configuration…", previewSummary: (added, removed) => `Adds ${pluralize(added, "line", "lines")} and removes ${pluralize(removed, "line", "lines")}.`, noChanges: "No changes are needed.",
     name: "Name", size: "Size", type: "Type / mode", modified: "Modified", next: "Next page", previous: "Previous page", retry: "Reconnect SFTP",
     page: (number) => `Page ${number}`, omitted: (count) => `${count} unsupported entries omitted. Supported files remain available; inspect other names in the terminal.`,
+    linksSkipped: (count) => count === 1 ? "Skipped 1 link or special file in the folder. Links are never followed." : `Skipped ${count} links or special files in the folder. Links are never followed.`,
     loading: "Loading remote directory…", empty: "This directory is empty. Create a file or directory to begin.", noVisible: "No visible entries on this page. Show hidden files or open the next page.",
     chooseName: "Name", chooseMode: "Permissions (octal)", panelSize: "Panel size",
     createTitle: (directory) => directory ? "Create directory" : "Create file", cancel: "Cancel", apply: "Confirm",
@@ -75,6 +76,7 @@ export const sftpCopy: Record<"en" | "zh-CN", SftpCopy> = {
     preview: "预览", applyIntegration: "应用集成", previewLoading: "正在读取远程配置…", previewSummary: (added, removed) => `将增加 ${added} 行，删除 ${removed} 行。`, noChanges: "无需修改。",
     name: "名称", size: "大小", type: "类型 / 权限", modified: "修改时间", next: "下一页", previous: "上一页", retry: "重新连接 SFTP",
     page: (number) => `第 ${number} 页`, omitted: (count) => `已略过 ${count} 个不支持的条目。其他文件仍可操作，请在终端中检查这些名称。`,
+    linksSkipped: (count) => `已跳过文件夹中 ${count} 个链接或特殊文件。链接不会被跟随。`,
     loading: "正在读取远程目录…", empty: "目录为空，可新建文件或目录。", noVisible: "本页没有可见条目，可显示隐藏文件或打开下一页。",
     chooseName: "名称", chooseMode: "权限（八进制）", panelSize: "面板尺寸",
     createTitle: (directory) => directory ? "新建目录" : "新建文件", cancel: "取消", apply: "确认",

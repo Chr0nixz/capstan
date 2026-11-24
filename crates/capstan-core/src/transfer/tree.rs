@@ -53,6 +53,8 @@ pub struct TreePlanSummary {
     pub revision: ExactU64,
     pub name: String,
     pub files: u32,
+    /// Local links and special files left out of an upload.
+    pub skipped: u32,
     pub conflicts: Vec<TreeConflict>,
 }
 #[derive(Debug, Serialize)]
@@ -117,6 +119,7 @@ struct Plan {
     parent: Option<RemotePath>,
     destination: Option<Arc<SelectedDirectory>>,
     nodes: Vec<Node>,
+    skipped: u32,
     pending: Vec<Pending>,
     cancel: CancellationToken,
     closed: bool,
@@ -136,6 +139,7 @@ impl Plan {
                 .iter()
                 .filter(|node| !node.directory && !node.skipped)
                 .count() as u32,
+            skipped: self.skipped,
             conflicts: self
                 .pending
                 .iter()
@@ -325,6 +329,7 @@ impl TransferService {
             parent: None,
             destination: Some(Arc::new(destination)),
             nodes,
+            skipped: 0,
             pending: Vec::new(),
             cancel: CancellationToken::new(),
             closed: false,
@@ -352,20 +357,19 @@ impl TransferService {
                 name: "selection".into(),
             },
         )?;
-        let nodes =
+        let (nodes, skipped) =
             local::blocking(move || {
                 let root = path
                     .file_name()
                     .and_then(|name| name.to_str())
                     .ok_or(SftpError::PathInvalid)?
                     .to_owned();
-                let (directories, files) =
-                    crate::native_fs::scan_folder(&path).map_err(local::local_error)?;
+                let contents = crate::native_fs::scan_folder(&path).map_err(local::local_error)?;
                 let mut nodes = vec![node(root.clone(), true, None, None)];
-                nodes.extend(directories.into_iter().map(|relative| {
+                nodes.extend(contents.directories.into_iter().map(|relative| {
                     node(format!("{root}/{}", slash(&relative)), true, None, None)
                 }));
-                nodes.extend(files.into_iter().map(|(relative, source)| {
+                nodes.extend(contents.files.into_iter().map(|(relative, source)| {
                     node(
                         format!("{root}/{}", slash(&relative)),
                         false,
@@ -373,7 +377,7 @@ impl TransferService {
                         None,
                     )
                 }));
-                Ok(nodes)
+                Ok((nodes, contents.skipped))
             })
             .await?;
         let binding = sftp.export_binding(window, terminal, session)?;
@@ -388,6 +392,7 @@ impl TransferService {
             parent: Some(parent),
             destination: None,
             nodes,
+            skipped,
             pending: Vec::new(),
             cancel: CancellationToken::new(),
             closed: false,
@@ -432,6 +437,7 @@ impl TransferService {
             parent: None,
             destination: Some(Arc::new(destination)),
             nodes,
+            skipped: 0,
             pending: Vec::new(),
             cancel: CancellationToken::new(),
             closed: false,

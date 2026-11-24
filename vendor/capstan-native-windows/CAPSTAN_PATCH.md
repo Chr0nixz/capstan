@@ -7,6 +7,15 @@ caller instead of fixed English text, so a Chinese UI shows Chinese filter
 names. `dialog_filter` builds the NUL-separated list and drops any NUL inside
 a label; a unit test checks the layout.
 
+## Folder uploads skip reparse points; diagnostics folder (2026-11-21)
+
+`enumerate_folder` and `enumerate_folder_directories` no longer fail a whole
+folder on a symbolic link, junction, other reparse point or special entry.
+Those entries are still never followed or opened. They are left out, and
+`enumerate_folder` returns how many it skipped so the panel can say so. A
+reparse-point root is still refused. The test creates a junction with
+`mklink /J` and checks that its target's files are not listed.
+
 ## M4-2 theme picker and system notifications (2026-11-04)
 
 The file picker accepts an explicit extension filter for theme import. The

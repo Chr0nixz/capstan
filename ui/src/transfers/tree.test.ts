@@ -14,6 +14,10 @@ describe("reviewed folder plans", () => {
     expect(BigInt(plan.revision)).toBe(9007199254740995n);
     expect(() => decodeTreePlan({ ...fixture, conflicts: [fixture.conflicts[0], fixture.conflicts[0]] })).toThrow();
     expect(() => decodeTreePlan({ ...fixture, localPath: "C:\\private" })).toThrow();
+    expect(decodeTreePlan({ ...fixture, skipped: 3 })?.skipped).toBe(3);
+    for (const skipped of [-1, 1.5, 0x1_0000_0000, "3", null]) expect(() => decodeTreePlan({ ...fixture, skipped })).toThrow();
+    const { skipped: _, ...withoutSkipped } = fixture;
+    expect(() => decodeTreePlan(withoutSkipped)).toThrow();
   });
   it("uses native picker commands and defers copying until a revision-bound decision", async () => {
     mocks.invoke.mockResolvedValue(fixture);

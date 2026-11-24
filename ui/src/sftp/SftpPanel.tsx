@@ -102,6 +102,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
   const transferGeneration = useRef(0);
   const [transferBusy, setTransferBusy] = useState(false);
   const [transferError, setTransferError] = useState<SftpErrorCode | null>(null);
+  const [skippedLinks, setSkippedLinks] = useState(0);
   const [integrationShell, setIntegrationShell] = useState<Shell>("bash");
   const [integrationAction, setIntegrationAction] = useState<ShellAction>("install");
   const [integrationPreview, setIntegrationPreview] = useState<ShellPreview | null>(null);
@@ -204,10 +205,13 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
       const current = controller.store.getState(), rect = panelRef.current?.getBoundingClientRect();
       if (!rect || !insideNativeDrop(payload, rect) || !current.attached || !current.page || current.busy || transferBusy || dialog !== null || deleteEntry !== null || treePlansRef.current.length) return;
       const generation = transferGeneration.current;
-      setTransferBusy(true); setTransferError(null);
+      setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
       const session = current.attached.sessionId;
       void enqueueDrop(terminal, session, current.page.path, payload.token).then((plans) => {
-        if (generation === transferGeneration.current) setTreePlans((current) => [...current, ...plans.map((plan) => ({ plan, session }))]);
+        if (generation === transferGeneration.current) {
+          setTreePlans((current) => [...current, ...plans.map((plan) => ({ plan, session }))]);
+          setSkippedLinks(plans.reduce((total, plan) => total + plan.skipped, 0));
+        }
         else for (const plan of plans) void releaseTree(plan).catch(() => undefined);
       }).catch((cause: unknown) => {
         if (generation === transferGeneration.current) setTransferError(sftpError(cause));
@@ -236,7 +240,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     const generation = transferGeneration.current;
     const session = state.attached.sessionId, page = state.page;
     cwd.setActivity(visible && !layout.collapsed, true);
-    setTransferBusy(true); setTransferError(null);
+    setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
     try {
       await selectAndEnqueue(terminal, session, page, locale, download ? state.selected : null, () => {
         const latest = controller.store.getState();
@@ -251,13 +255,13 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     const generation = transferGeneration.current;
     const session = state.attached.sessionId, page = state.page;
     cwd.setActivity(visible && !layout.collapsed, true);
-    setTransferBusy(true); setTransferError(null);
+    setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
     try {
       const plan = await selectTreeUpload(terminal, session, page.path, locale);
       if (plan) {
         const latest = controller.store.getState();
         if (generation !== transferGeneration.current || latest.attached?.sessionId !== session || latest.page?.requestRevision !== page.requestRevision || latest.page.path !== page.path) await releaseTree(plan);
-        else setTreePlans((plans) => [...plans, { plan, session }]);
+        else { setTreePlans((plans) => [...plans, { plan, session }]); setSkippedLinks(plan.skipped); }
       }
     } catch (cause) { if (generation === transferGeneration.current) setTransferError(sftpError(cause)); }
     finally { if (generation === transferGeneration.current) setTransferBusy(false); }
@@ -267,7 +271,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     const generation = transferGeneration.current;
     const session = state.attached.sessionId, entry = state.selected;
     cwd.setActivity(visible && !layout.collapsed, true);
-    setTransferBusy(true); setTransferError(null);
+    setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
     try {
       const plan = await selectTreeDownload(terminal, session, entry, locale);
       if (plan) {
@@ -425,7 +429,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
   const startRename = (entry = selected): void => { if (!state.busy && entry) openDialog({ kind: "rename" }, entry.name); };
   const prepareNativeExport = (): void => {
     if (!selected || !state.attached) return;
-    setTransferBusy(true); setTransferError(null);
+    setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
     const session = state.attached.sessionId;
     const generation = transferGeneration.current;
     void prepareExport(terminal, session, selected.id).then(async (result) => {
@@ -580,6 +584,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     {transferError && <p className="sftp-error" role="alert">{labels.errors[transferError]}</p>}
     {error && <div className="sftp-error" role="alert"><span>{error}</span><button type="button" disabled={state.busy} onClick={() => void controller.start()}>{labels.retry}</button></div>}
     {!!state.page?.omittedEntries && <p className="sftp-status" role="status">{labels.omitted(state.page.omittedEntries)}</p>}
+    {skippedLinks > 0 && <p className="sftp-status" role="status">{labels.linksSkipped(skippedLinks)}</p>}
     {exportItem && <div className="sftp-export-row">
       <button type="button" className={exportItem.state === "ready" ? "export-ready" : undefined} draggable={exportItem.state === "ready"} disabled={exportItem.state !== "ready"} onDragStart={(event) => {
         event.preventDefault();

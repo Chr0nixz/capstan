@@ -65,7 +65,7 @@ describe("SFTP panel", () => {
     mocks.invoke.mockImplementation(async (command: string, args?: unknown) => {
       if (command === "prepare_native_export") return {
         export: { token: exportToken, name: "notes.txt", state: "planning" },
-        plan: { token: planToken, revision: "0", name: "notes.txt", files: 1, conflicts: [] },
+        plan: { token: planToken, revision: "0", name: "notes.txt", files: 1, skipped: 0, conflicts: [] },
       };
       if (command === "resolve_transfer_tree_plan") return { plan: null, queued: 1 };
       if (command === "native_export_snapshot") return [{ token: exportToken, name: "notes.txt", state: exportState }];
@@ -180,6 +180,22 @@ describe("SFTP panel", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("select_transfer_source", { terminal, session: attached.sessionId, parent: "/home/test", locale: "en" });
   });
 
+  it("queues a folder upload and says how many links and special files it left out", async () => {
+    const previous = mocks.invoke.getMockImplementation();
+    const plan = { token: "00000000-0000-4000-8000-000000000082", revision: "1", name: "project", files: 2, skipped: 3, conflicts: [] };
+    mocks.invoke.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === "select_transfer_folder_plan") return plan;
+      if (command === "resolve_transfer_tree_plan") return { plan: null, queued: 2 };
+      return previous?.(command, args);
+    });
+    await act(async () => button("Upload folder")?.click());
+    expect(mocks.invoke).toHaveBeenCalledWith("resolve_transfer_tree_plan", expect.objectContaining({ token: plan.token, decisions: [] }));
+    expect(container.textContent).toContain("Skipped 3 links or special files in the folder. Links are never followed.");
+    mocks.invoke.mockImplementation(async (command: string, args?: unknown) =>
+      command === "select_transfer_folder_plan" ? { ...plan, token: "00000000-0000-4000-8000-000000000083", skipped: 0 } : previous?.(command, args));
+    await act(async () => button("Upload folder")?.click());
+    expect(container.textContent).not.toContain("Skipped");
+  });
   it("previews and applies shell integration without exposing configuration bytes", async () => {
     const previous = mocks.invoke.getMockImplementation();
     mocks.invoke.mockImplementation(async (command: string, args?: Record<string, unknown>): Promise<unknown> => {

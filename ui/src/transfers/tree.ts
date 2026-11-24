@@ -3,7 +3,8 @@ import { decodeExactU64, type ExactU64, type RemoteEntryId, type SftpSessionId }
 import type { TerminalSessionId } from "../terminal/contracts";
 import { notifyTransfersChanged } from "./activity";
 export type TreeConflict = { entry: number; source: string; relative: string; directory: boolean; kind: "directory_exists" | "type_conflict" | "invalid_name" | "name_collision" };
-export type TreePlan = { token: string; revision: ExactU64; name: string; files: number; conflicts: TreeConflict[] };
+/** `skipped` counts local links and special files an upload leaves out. */
+export type TreePlan = { token: string; revision: ExactU64; name: string; files: number; skipped: number; conflicts: TreeConflict[] };
 export type TreeDecision = { entry: number; decision: { kind: "merge" | "skip" } | { kind: "rename"; name: string } };
 function invalid(): never { throw { code: "remote_io" }; }
 function record(value: unknown, keys: readonly string[]): Record<string, unknown> {
@@ -15,9 +16,11 @@ function record(value: unknown, keys: readonly string[]): Record<string, unknown
 function text(value: unknown): string { if (typeof value !== "string" || !value || value.length > 4096 || /[\u0000-\u001f\u007f]/u.test(value)) return invalid(); return value; }
 export function decodeTreePlan(value: unknown): TreePlan | null {
   if (value === null) return null;
-  const data = record(value, ["token", "revision", "name", "files", "conflicts"]);
+  const data = record(value, ["token", "revision", "name", "files", "skipped", "conflicts"]);
   if (typeof data.token !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(data.token)
-    || typeof data.files !== "number" || !Number.isInteger(data.files) || data.files < 0 || data.files > 1024 || !Array.isArray(data.conflicts) || data.conflicts.length > 4096) return invalid();
+    || typeof data.files !== "number" || !Number.isInteger(data.files) || data.files < 0 || data.files > 1024
+    || typeof data.skipped !== "number" || !Number.isInteger(data.skipped) || data.skipped < 0 || data.skipped > 0xffff_ffff
+    || !Array.isArray(data.conflicts) || data.conflicts.length > 4096) return invalid();
   const ids = new Set<number>();
   const conflicts = data.conflicts.map((value): TreeConflict => {
     const conflict = record(value, ["entry", "source", "relative", "directory", "kind"]);
@@ -26,7 +29,7 @@ export function decodeTreePlan(value: unknown): TreePlan | null {
     ids.add(conflict.entry);
     return { entry: conflict.entry, source: text(conflict.source), relative: text(conflict.relative), directory: conflict.directory, kind: conflict.kind as TreeConflict["kind"] };
   });
-  return { token: data.token, revision: decodeExactU64(data.revision), name: text(data.name), files: data.files, conflicts };
+  return { token: data.token, revision: decodeExactU64(data.revision), name: text(data.name), files: data.files, skipped: data.skipped, conflicts };
 }
 export async function selectTreeUpload(terminal: TerminalSessionId, session: SftpSessionId, parent: string, locale: string): Promise<TreePlan | null> {
   return decodeTreePlan(await invokeTauri("select_transfer_folder_plan", { terminal, session, parent, locale }));

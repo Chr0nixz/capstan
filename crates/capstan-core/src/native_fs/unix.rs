@@ -725,6 +725,7 @@ pub fn scan_folder(path: &Path) -> io::Result<super::FolderContents> {
     let root = selected.checked_root()?;
     let mut files = Vec::new();
     let mut directories = Vec::new();
+    let mut skipped = 0_u32;
     let mut pending = vec![(PathBuf::new(), selected.identity)];
     while let Some((relative, expected)) = pending.pop() {
         let directory = if relative.as_os_str().is_empty() {
@@ -747,6 +748,14 @@ pub fn scan_folder(path: &Path) -> io::Result<super::FolderContents> {
             if cfg!(target_os = "macos") && name == ".DS_Store" {
                 continue;
             }
+            let stat = at::statat(&directory, name, AtFlags::SYMLINK_NOFOLLOW)?;
+            let kind = FileType::from_raw_mode(stat.st_mode);
+            // Links are never followed and sockets, FIFOs and devices have no
+            // content to copy. Neither stops the rest of the folder.
+            if !matches!(kind, FileType::Directory | FileType::RegularFile) {
+                skipped = skipped.saturating_add(1);
+                continue;
+            }
             if files.len() + directories.len() >= MAX_TREE_ENTRIES - 1 {
                 return Err(invalid());
             }
@@ -754,23 +763,18 @@ pub fn scan_folder(path: &Path) -> io::Result<super::FolderContents> {
                 return Err(invalid());
             }
             let child = relative.join(name);
-            let stat = at::statat(&directory, name, AtFlags::SYMLINK_NOFOLLOW)?;
-            match FileType::from_raw_mode(stat.st_mode) {
-                FileType::Directory => {
-                    pending.push((child.clone(), identity(&stat)));
-                    directories.push(child);
-                }
-                FileType::RegularFile => {
-                    valid_relative_components(&child)?;
-                    let anchor = AnchoredPath {
-                        path: base.join(name),
-                        parent_identity: expected,
-                    };
-                    let source =
-                        Source::from_snapshot(anchor, version_of(&stat, FileType::RegularFile)?);
-                    files.push((child, source));
-                }
-                _ => return Err(invalid()),
+            if matches!(kind, FileType::Directory) {
+                pending.push((child.clone(), identity(&stat)));
+                directories.push(child);
+            } else {
+                valid_relative_components(&child)?;
+                let anchor = AnchoredPath {
+                    path: base.join(name),
+                    parent_identity: expected,
+                };
+                let source =
+                    Source::from_snapshot(anchor, version_of(&stat, FileType::RegularFile)?);
+                files.push((child, source));
             }
         }
     }
@@ -781,7 +785,11 @@ pub fn scan_folder(path: &Path) -> io::Result<super::FolderContents> {
             .cmp(&right.components().count())
             .then_with(|| left.cmp(right))
     });
-    Ok((directories, files))
+    Ok(super::FolderContents {
+        directories,
+        files,
+        skipped,
+    })
 }
 
 #[cfg(test)]
@@ -888,8 +896,36 @@ mod tests {
         fs::create_dir(&selected).unwrap();
         symlink(&elsewhere, selected.join("escape")).unwrap();
         assert!(Destination::select_under_folder(&selected, Path::new("escape/file.txt")).is_err());
-        assert!(scan_folder(&selected).is_err());
         assert!(fs::read_dir(&elsewhere).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn folder_scans_skip_links_and_special_files_without_failing() {
+        let (_guard, root) = temp();
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        fs::write(elsewhere.join("secret.txt"), b"secret").unwrap();
+        let selected = root.join("selected");
+        fs::create_dir_all(selected.join("nested")).unwrap();
+        fs::write(selected.join("kept.txt"), b"kept").unwrap();
+        symlink(&elsewhere, selected.join("escape")).unwrap();
+        symlink(
+            elsewhere.join("secret.txt"),
+            selected.join("nested/link.txt"),
+        )
+        .unwrap();
+        // A dangling link is a link too, and an invalid name on it is moot.
+        symlink(root.join("missing"), selected.join("dangling\\name")).unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(selected.join("socket")).unwrap();
+        let contents = scan_folder(&selected).unwrap();
+        assert_eq!(contents.skipped, 4);
+        assert_eq!(contents.directories, [PathBuf::from("nested")]);
+        let names: Vec<_> = contents
+            .files
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
+        assert_eq!(names, [PathBuf::from("kept.txt")]);
     }
 
     #[test]
@@ -985,7 +1021,12 @@ mod tests {
         fs::write(selected.join("README"), b"r").unwrap();
         fs::write(selected.join("src/main.rs"), b"m").unwrap();
         fs::write(selected.join("src/nested/a.txt"), b"a").unwrap();
-        let (directories, files) = scan_folder(&selected).unwrap();
+        let super::super::FolderContents {
+            directories,
+            files,
+            skipped,
+        } = scan_folder(&selected).unwrap();
+        assert_eq!(skipped, 0);
         let names: Vec<_> = files.iter().map(|(path, _)| path.clone()).collect();
         assert_eq!(
             names,
@@ -1060,8 +1101,13 @@ mod tests {
         let (_guard, root) = temp();
         fs::write(root.join(".DS_Store"), b"view state").unwrap();
         fs::write(root.join(".env"), b"kept").unwrap();
-        let (_, files) = scan_folder(&root).unwrap();
-        let names: Vec<_> = files.iter().map(|(path, _)| path.clone()).collect();
+        let contents = scan_folder(&root).unwrap();
+        assert_eq!(contents.skipped, 0);
+        let names: Vec<_> = contents
+            .files
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
         assert_eq!(names, [PathBuf::from(".env")]);
     }
 

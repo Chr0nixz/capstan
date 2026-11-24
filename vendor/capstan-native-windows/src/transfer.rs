@@ -161,7 +161,11 @@ pub struct Source {
 /// A bounded, reparse-point-free snapshot of regular files beneath a selected
 /// directory. Each returned Source keeps its ancestor handles pinned, so the
 /// source remains tied to the directory tree selected by the user.
-pub fn enumerate_folder(path: &Path) -> io::Result<Vec<(PathBuf, Source)>> {
+///
+/// Symbolic links, junctions, other reparse points and special entries are
+/// never followed or opened. They are left out and counted in the returned
+/// number, so one link does not fail the whole folder.
+pub fn enumerate_folder(path: &Path) -> io::Result<(Vec<(PathBuf, Source)>, u32)> {
     if !path.is_absolute() {
         return Err(invalid());
     }
@@ -171,6 +175,7 @@ pub fn enumerate_folder(path: &Path) -> io::Result<Vec<(PathBuf, Source)>> {
         return Err(invalid());
     }
     let mut files = Vec::new();
+    let mut skipped = 0_u32;
     let mut pending = vec![(root.clone(), 0usize)];
     while let Some((directory, depth)) = pending.pop() {
         if depth >= 64 {
@@ -180,8 +185,11 @@ pub fn enumerate_folder(path: &Path) -> io::Result<Vec<(PathBuf, Source)>> {
             let entry = entry?;
             let path = entry.path();
             let metadata = std::fs::symlink_metadata(&path)?;
-            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return Err(invalid());
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                || !(metadata.is_dir() || metadata.is_file())
+            {
+                skipped = skipped.saturating_add(1);
+                continue;
             }
             if metadata.is_dir() {
                 pending.push((path, depth + 1));
@@ -200,11 +208,12 @@ pub fn enumerate_folder(path: &Path) -> io::Result<Vec<(PathBuf, Source)>> {
         }
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
+    Ok((files, skipped))
 }
 
 /// Return the regular directory entries beneath a selected folder.
 ///
+/// Reparse points and special entries are skipped as in [`enumerate_folder`].
 /// The selected root itself is deliberately omitted. Callers can create it
 /// at the remote destination and then create these entries in parent-before-
 /// child order so an empty local folder is preserved as well.
@@ -228,7 +237,7 @@ pub fn enumerate_folder_directories(path: &Path) -> io::Result<Vec<PathBuf>> {
             let child = entry.path();
             let metadata = std::fs::symlink_metadata(&child)?;
             if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-                return Err(invalid());
+                continue;
             }
             if metadata.is_dir() {
                 if directories.len() >= 4096 {
@@ -242,8 +251,6 @@ pub fn enumerate_folder_directories(path: &Path) -> io::Result<Vec<PathBuf>> {
                 }
                 directories.push(relative);
                 pending.push((child, depth + 1));
-            } else if !metadata.is_file() {
-                return Err(invalid());
             }
         }
     }
@@ -846,7 +853,8 @@ mod tests {
         std::fs::create_dir(root.path().join("nested")).unwrap();
         std::fs::write(root.path().join("中文.txt"), b"one").unwrap();
         std::fs::write(root.path().join("nested").join("two.txt"), b"two").unwrap();
-        let files = enumerate_folder(root.path()).unwrap();
+        let (files, skipped) = enumerate_folder(root.path()).unwrap();
+        assert_eq!(skipped, 0);
         let names: Vec<_> = files
             .iter()
             .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
@@ -921,6 +929,34 @@ mod tests {
         assert!(result.status.success());
         assert!(Source::open(&link.join("file")).is_err());
         assert!(Destination::select(&link.join("file")).is_err());
+        std::fs::remove_dir(&link).unwrap();
+    }
+    #[test]
+    fn folder_enumeration_skips_junctions_without_failing() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        let selected = root.path().join("selected");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret"), b"outside").unwrap();
+        std::fs::create_dir_all(selected.join("nested")).unwrap();
+        std::fs::write(selected.join("kept"), b"kept").unwrap();
+        let link = selected.join("nested").join("junction");
+        let result = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        let (files, skipped) = enumerate_folder(&selected).unwrap();
+        assert_eq!(skipped, 1);
+        let names: Vec<_> = files
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(names, vec!["kept"]);
+        let directories = enumerate_folder_directories(&selected).unwrap();
+        assert_eq!(directories, vec![PathBuf::from("nested")]);
         std::fs::remove_dir(&link).unwrap();
     }
     #[test]
