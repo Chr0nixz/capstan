@@ -44,7 +44,7 @@
       "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
       "../docs/PORTABLE.md": "PORTABLE-README.md"
     },
-    "icon": [],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
