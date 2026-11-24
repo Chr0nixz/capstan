@@ -139,6 +139,28 @@ async function openSettings(tab?: string): Promise<void> {
 }
 
 describe("App host workflows", () => {
+  it("quick connects a typed target by saving it once and opening a terminal", async () => {
+    const created = { ...host, id: "host-quick", name: "ops@new.example.test", address: "new.example.test", username: "ops", credential_id: "credential-ask" };
+    let saved = false;
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "quick_connect_host") { saved = true; return { hostId: "host-quick", created: true }; }
+      if (command === "list_hosts") return saved ? [{ ...host }, created] : [{ ...host }];
+      return defaultInvoke(command, args);
+    });
+    const search = container.querySelector<HTMLInputElement>(".sidebar-search input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "ops@new.example.test");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const connect = bodyButton(copy.en.quickConnect("ops@new.example.test"));
+    expect(connect).toBeDefined();
+    expect(bodyButton(copy.en.quickAddHost("ops@new.example.test"))).toBeDefined();
+    await act(async () => { connect!.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(invoke).toHaveBeenCalledWith("quick_connect_host", { text: "ops@new.example.test", credentialName: copy.en.interactiveCredentialName });
+    expect(lifecycle.started.some((launch) => launch.kind === "ssh" && launch.host_id === "host-quick")).toBe(true);
+    expect(container.textContent).toContain(copy.en.quickConnectSaved("ops@new.example.test"));
+  });
+
   it("enables and disables Hello with native-only authentication arguments", async () => {
     let enabled = false;
     invoke.mockImplementation(async (command, args) => {

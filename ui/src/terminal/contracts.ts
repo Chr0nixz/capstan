@@ -47,6 +47,14 @@ export type HostView = {
   jump_host_id: HostId | null;
 };
 export type CredentialView = { id: CredentialId; name: string; revision: number; kind: string };
+export type SshConfigNote = "local_user" | "default_identity" | "identity_unavailable" | "proxy_unsupported";
+export type SshConfigHost = {
+  index: number; alias: string; address: string; port: number; username: string;
+  identityFile: string | null; encrypted: boolean; notes: SshConfigNote[]; saved: boolean;
+  /** Index of the host this one is reached through; importing this host imports that one too. */
+  jump: number | null;
+};
+export type SshConfigPreview = { token: string | null; hosts: SshConfigHost[]; skipped: ("invalid_host" | "match_block" | "include")[] };
 export type GroupView = { id: GroupId; name: string; parent_id: GroupId | null; production: boolean };
 export type VaultStatus = { exists: boolean; unlocked: boolean; revision: number | null; epoch: number };
 export type VaultRecoveryCandidate = { token: string; kind: "pending" | "backup"; revision: number };
@@ -239,6 +247,12 @@ export type Commands = {
   import_private_key_credential: { args: { name: string; locale: string }; result: CredentialId };
   add_private_key_file_credential: { args: { name: string; locale: string }; result: CredentialId };
   create_interactive_credential: { args: { name: string }; result: CredentialId };
+  quick_connect_host: { args: { text: string; credentialName: string }; result: { hostId: HostId; created: boolean } };
+  preview_ssh_config_import: { args: undefined; result: SshConfigPreview };
+  import_ssh_config: {
+    args: { token: string; indices: number[]; locale: string; credentialName: string; groupName: string };
+    result: { created: number; existing: number };
+  };
   rename_credential: { args: { id: CredentialId; name: string; expectedRevision: number }; result: CredentialId };
   update_password_credential: { args: { id: CredentialId; expectedRevision: number; locale: string }; result: CredentialId };
   delete_credential: { args: { id: CredentialId; expectedRevision: number }; result: number };

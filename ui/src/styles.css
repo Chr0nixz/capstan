@@ -1345,6 +1345,24 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .launch-choice-list > button { display: grid; justify-items: start; width: 100%; min-width: 0; gap: 3px; min-height: 48px; padding: 7px 10px; text-align: left; }
 .launch-choice-list > button > span { max-width: 100%; overflow-wrap: anywhere; }
 
+.ssh-import-dialog { width: min(600px, calc(100vw - 28px)); }
+.ssh-import-list { display: grid; gap: 2px; max-height: min(46vh, 340px); margin: 0; padding: 0; overflow: auto; list-style: none; }
+.ssh-import-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ssh-import-row:hover { background: var(--face); }
+.ssh-import-row.saved { cursor: default; opacity: 0.7; }
+.ssh-import-row > input { align-self: center; margin: 0; }
+.ssh-import-name { min-width: 0; overflow-wrap: anywhere; color: var(--legend); }
+.ssh-import-target { color: var(--legend-muted); font-size: 12px; overflow-wrap: anywhere; text-align: right; }
+.ssh-import-detail { grid-column: 2 / -1; color: var(--legend-muted); font-size: 11.5px; }
+
 /* ---------- Remote files ---------- */
 
 .sftp-panel {

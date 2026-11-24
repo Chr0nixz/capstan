@@ -5,7 +5,7 @@ import { readRecentCommands, rememberCommand, searchCommands, type PaletteAction
 import type { CommandAction } from "./contracts";
 import { shortcutLabel } from "../window/platform";
 import {
-  BroadcastIcon, CloseIcon, DownloadIcon, FolderIcon, LockIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShellIcon,
+  BroadcastIcon, CloseIcon, DownloadIcon, FolderIcon, ArrowRightIcon, LockIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShellIcon,
   SidebarIcon, SnippetIcon, SplitDownIcon, SplitRightIcon, ThemeIcon, TunnelIcon,
 } from "../ui/icons";
 
@@ -14,6 +14,8 @@ type Props = {
   open: boolean;
   labels: Labels;
   actions: readonly PaletteAction[];
+  /** An action made from the query itself, such as quick connect, listed first. */
+  queryAction?: (query: string) => PaletteAction | null;
   onOpenChange: (open: boolean) => void;
   onExecute: (action: PaletteAction["action"]) => void;
 };
@@ -23,7 +25,7 @@ const RECENT_SHOWN = 5;
 
 function sectionOf(action: CommandAction): Exclude<Section, "recent"> {
   switch (action.id) {
-    case "connect_host": return "hosts";
+    case "connect_host": case "quick_connect": case "import_ssh_config": return "hosts";
     case "run_snippet": return "snippets";
     case "open_shell": return "shells";
     case "workspace": return "workspace";
@@ -35,6 +37,8 @@ function sectionOf(action: CommandAction): Exclude<Section, "recent"> {
 function iconOf(action: CommandAction): ReactElement {
   switch (action.id) {
     case "connect_host": return <ServerIcon size={14} />;
+    case "quick_connect": return <ArrowRightIcon size={14} />;
+    case "import_ssh_config": return <DownloadIcon size={14} />;
     case "run_snippet": return <SnippetIcon size={14} />;
     case "open_shell": return <ShellIcon size={14} />;
     case "set_theme": return <ThemeIcon size={14} />;
@@ -59,7 +63,7 @@ function iconOf(action: CommandAction): ReactElement {
  * (combobox pattern); the active option is announced through
  * aria-activedescendant and kept in view while arrowing.
  */
-export function CommandPalette({ open, labels, actions, onOpenChange, onExecute }: Props): ReactElement {
+export function CommandPalette({ open, labels, actions, queryAction, onOpenChange, onExecute }: Props): ReactElement {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -70,14 +74,17 @@ export function CommandPalette({ open, labels, actions, onOpenChange, onExecute 
   const listId = useId();
   const recentKeys = useMemo(() => open ? readRecentCommands() : [], [open]);
   const sections = useMemo(() => {
-    if (query.trim()) return [{ id: "results", label: null, items: searchCommands(actions, query) }];
+    if (query.trim()) {
+      const typed = queryAction?.(query);
+      return [{ id: "results", label: null, items: [...(typed ? [typed] : []), ...searchCommands(actions, query)] }];
+    }
     const recent = recentKeys.flatMap((key) => actions.filter((action) => action.key === key)).slice(0, RECENT_SHOWN);
     const rest = actions.filter((action) => !recent.includes(action));
     return [
       { id: "recent", label: labels.paletteSections.recent, items: recent },
       ...sectionOrder.map((section) => ({ id: section, label: labels.paletteSections[section], items: rest.filter((action) => sectionOf(action.action) === section) })),
     ].filter((section) => section.items.length > 0);
-  }, [actions, labels, query, recentKeys]);
+  }, [actions, labels, query, queryAction, recentKeys]);
   const matches = useMemo(() => sections.flatMap((section) => section.items), [sections]);
   const optionId = (index: number): string => `${listId}-option-${index}`;
 
@@ -98,7 +105,8 @@ export function CommandPalette({ open, labels, actions, onOpenChange, onExecute 
     if (!open || chosenRef.current || !selected) return;
     chosenRef.current = true;
     handOffRef.current = true;
-    rememberCommand(selected.key);
+    // Typed targets are not kept in the recent list.
+    if (selected.action.id !== "quick_connect") rememberCommand(selected.key);
     onOpenChange(false);
     onExecute(selected.action);
   };

@@ -11,6 +11,9 @@ export const workspaceCommands = [
 export type WorkspaceCommand = (typeof workspaceCommands)[number];
 export type CommandAction =
   | (ActionMetadata & { id: "connect_host"; hostId: HostId })
+  /** Built from the typed query, never stored; see `parseQuickConnect`. */
+  | (ActionMetadata & { id: "quick_connect"; text: string })
+  | (ActionMetadata & { id: "import_ssh_config" })
   | (ActionMetadata & { id: "run_snippet"; snippetId: SnippetId; connectionId?: ConnectionId })
   | (ActionMetadata & { id: "set_theme"; theme: TerminalTheme })
   | (ActionMetadata & { id: "toggle_panel"; panel: "sessions" | "sftp" | "forwarding" | "snippets" })

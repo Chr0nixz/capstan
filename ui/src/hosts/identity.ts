@@ -78,3 +78,27 @@ export function parseQuickHost(query: string): QuickHost | null {
   if (portNumber < 1 || portNumber > 65535) return null;
   return { username, address: address.replace(/^\[|\]$/gu, ""), port: String(portNumber) };
 }
+
+/**
+ * Recognizes quick connect text: `user@host[:port]`, `ssh user@host -p 2222` or
+ * `ssh://user@host:port`. A user is required. This only decides whether to
+ * offer the action; the backend parses `text` again and has the final say.
+ */
+export function parseQuickConnect(query: string): (QuickHost & { text: string }) | null {
+  const text = query.trim();
+  let rest = text.replace(/^ssh\s+/u, "");
+  let flagPort: string | null = null;
+  const flag = /(?:^|\s)-p\s+(\d{1,5})(?=\s|$)/u.exec(rest);
+  if (flag) {
+    flagPort = flag[1];
+    rest = (rest.slice(0, flag.index) + " " + rest.slice(flag.index + flag[0].length)).trim();
+  }
+  const host = parseQuickHost(rest.replace(/^ssh:\/\//u, ""));
+  if (!host?.username) return null;
+  if (flagPort !== null) {
+    const port = Number(flagPort);
+    if (port < 1 || port > 65535 || (host.port !== "22" && host.port !== String(port))) return null;
+    host.port = String(port);
+  }
+  return { ...host, text };
+}

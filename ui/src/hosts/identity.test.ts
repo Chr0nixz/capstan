@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickHost, productionSource } from "./identity";
+import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickConnect, parseQuickHost, productionSource } from "./identity";
 import type { GroupId } from "../terminal/contracts";
 
 describe("host identity", () => {
@@ -47,5 +47,15 @@ describe("host identity", () => {
     expect(parseQuickHost("build")).toBeNull();
     expect(parseQuickHost("prod api")).toBeNull();
     expect(parseQuickHost("ops@host:70000")).toBeNull();
+  });
+
+  it("offers quick connect only for targets with a user", () => {
+    expect(parseQuickConnect(" deploy@web-01 ")).toEqual({ username: "deploy", address: "web-01", port: "22", text: "deploy@web-01" });
+    expect(parseQuickConnect("ssh deploy@web-01 -p 2222")).toMatchObject({ username: "deploy", address: "web-01", port: "2222" });
+    expect(parseQuickConnect("-p 2200 ops@10.0.0.5")).toMatchObject({ address: "10.0.0.5", port: "2200" });
+    expect(parseQuickConnect("ssh://root@[2001:db8::1]:2022")).toMatchObject({ username: "root", address: "2001:db8::1", port: "2022" });
+    for (const text of ["web-01", "web-01:2222", "deploy@web-01 -i key", "deploy@web-01:2200 -p 2222", "deploy@web-01 -p 70000", "ssh"]) {
+      expect(parseQuickConnect(text), text).toBeNull();
+    }
   });
 });

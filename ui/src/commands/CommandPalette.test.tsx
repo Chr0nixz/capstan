@@ -69,4 +69,27 @@ describe("command palette activation boundaries", () => {
     await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     expect(onExecute).toHaveBeenCalledExactlyOnceWith(actions[0].action);
   });
+
+  it("lists a quick connect target first and keeps it out of the recent list", async () => {
+    localStorage.removeItem("capstan.palette-recent");
+    const queryAction = (query: string): PaletteAction | null => query.includes("@") ? {
+      key: "quick-connect", label: `Connect to ${query}`, keywords: [],
+      action: { id: "quick_connect", labelKey: "quickConnect", keywordKeys: [], text: query },
+    } : null;
+    await act(async () => root.render(<StrictMode><CommandPalette open labels={copy.en} actions={actions} queryAction={queryAction}
+      onExecute={onExecute} onOpenChange={onOpenChange} /></StrictMode>));
+    const search = document.body.querySelector<HTMLInputElement>(".command-search input")!;
+    const type = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, value);
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await type("light");
+    expect([...document.body.querySelectorAll(".command-result")].map((option) => option.textContent)).toEqual(["Light"]);
+    await type("deploy@light");
+    const options = [...document.body.querySelectorAll(".command-result")].map((option) => option.textContent);
+    expect(options[0]).toBe("Connect to deploy@light");
+    await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    expect(onExecute).toHaveBeenCalledExactlyOnceWith({ id: "quick_connect", labelKey: "quickConnect", keywordKeys: [], text: "deploy@light" });
+    expect(localStorage.getItem("capstan.palette-recent")).toBeNull();
+  });
 });

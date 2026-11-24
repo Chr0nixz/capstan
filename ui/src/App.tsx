@@ -20,7 +20,8 @@ import type { SftpSessionId } from "./sftp/contracts";
 import { AlertIcon, CheckIcon, ChevronRightIcon, CloseIcon, CommandIcon, CopyIcon, DownloadIcon, FolderIcon, KeyIcon, LockIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShieldIcon, SidebarIcon, SnippetIcon, StarIcon, TerminalIcon, TunnelIcon, UnlockIcon, UploadIcon } from "./ui/icons";
 import { useConfirm } from "./ui/ConfirmDialog";
 import { useMediaQuery } from "./ui/useMediaQuery";
-import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickHost, productionSource } from "./hosts/identity";
+import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickConnect, parseQuickHost, productionSource } from "./hosts/identity";
+import { SshConfigImportDialog, type ImportSummary } from "./hosts/SshConfigImport";
 import { fingerprintChunks, hostKeyFile } from "./hosts/fingerprint";
 import { effectiveLayout, resolveLayoutChange } from "./sftp/compactLayout";
 import { filesFocusTarget } from "./sftp/focus";
@@ -184,6 +185,7 @@ export function App(): ReactElement {
   const [pendingHostChoice, setPendingHostChoice] = useState<{
     requestId: string; display: string; hosts: HostView[];
   } | null>(null);
+  const [sshImportOpen, setSshImportOpen] = useState(false);
   const handledLaunchRequests = useRef(new Set<string>());
   const launchContinuations = useRef(new Map<string, () => void>());
   const focusAfterShow = useCallback(() => setFocusRequest((value) => value + 1), []);
@@ -904,6 +906,27 @@ export function App(): ReactElement {
       setForm((current) => ({ ...current, credentialId: id }));
     } catch (cause) { showError(cause); }
   };
+  /** Opens the saved host for `text`, saving one that asks at connect time if there is none. */
+  const quickConnect = async (text: string): Promise<void> => {
+    setError(null);
+    try {
+      const result = await invokeTauri("quick_connect_host", { text, credentialName: labels.interactiveCredentialName });
+      await refreshVault();
+      const host = (await invokeTauri("list_hosts")).find((candidate) => candidate.id === result.hostId);
+      if (!host) return;
+      if (result.created) setNotice(labels.quickConnectSaved(host.name));
+      setSearch("");
+      openHost(host);
+    } catch (cause) {
+      if (errorCode(cause) === "invalid_input") setError(labels.quickConnectInvalid);
+      else showError(cause);
+    }
+  };
+  const finishSshImport = (summary: ImportSummary): void => {
+    setSshImportOpen(false);
+    setNotice(labels.sshConfigDone(summary.created, summary.existing));
+    void refreshVault();
+  };
   const loadAgentIdentities = async (): Promise<void> => {
     setError(null);
     try {
@@ -1363,6 +1386,12 @@ export function App(): ReactElement {
       detail: labels.changeThemeScope,
       keywords: [labels.changeTheme, name, id],
     })),
+    ...(vault.unlocked && isTauriAvailable() ? [{
+      key: "hosts:import-ssh-config",
+      action: { id: "import_ssh_config", labelKey: "importSshConfig", keywordKeys: ["ssh", "import"] } as CommandAction,
+      label: labels.importSshConfig,
+      keywords: [labels.importSshConfig, labels.hosts, "ssh", "config", "openssh", "import"],
+    }] : []),
     ...(vault.unlocked ? [{
       key: "panel:snippets",
       action: { id: "toggle_panel", labelKey: "showSnippets", keywordKeys: ["snippet", "panel"], panel: "snippets" } as CommandAction,
@@ -1405,6 +1434,18 @@ export function App(): ReactElement {
     if (moveFocus) requestAnimationFrame(() => { if (!moveFocus()) setFocusRequest((request) => request + 1); });
     else if (focusTerminal) requestAnimationFrame(() => setFocusRequest((request) => request + 1));
   };
+  /** A saved host with the same target opens instead of a new one. */
+  const paletteQueryAction = (query: string): PaletteAction | null => {
+    const target = vault.unlocked ? parseQuickConnect(query) : null;
+    if (!target) return null;
+    const display = `${target.username}@${target.address.includes(":") ? `[${target.address}]` : target.address}${target.port === "22" ? "" : `:${target.port}`}`;
+    return {
+      key: "quick-connect",
+      action: { id: "quick_connect", labelKey: "quickConnect", keywordKeys: [], text: target.text },
+      label: labels.quickConnect(display),
+      keywords: [],
+    };
+  };
   const executePaletteAction = (action: CommandAction): void => {
     // Opened from a sheet, an action that works in the workspace closes the
     // sheet first; actions that open a sheet replace it.
@@ -1417,6 +1458,10 @@ export function App(): ReactElement {
     } else if (action.id === "connect_host") {
       const host = hosts.find((candidate) => candidate.id === action.hostId);
       if (host) openHost(host);
+    } else if (action.id === "quick_connect") {
+      void quickConnect(action.text);
+    } else if (action.id === "import_ssh_config") {
+      setSshImportOpen(true);
     } else if (action.id === "run_snippet") {
       setSnippetRequest({ requestId: crypto.randomUUID(), snippetId: action.snippetId });
       openSheet("snippets");
@@ -1473,6 +1518,8 @@ export function App(): ReactElement {
         hosts={pendingHostChoice?.hosts ?? []} title={labels.sshChooseHostTitle}
         body={labels.sshChooseHostBody(pendingHostChoice?.hosts.length ?? 0)} cancel={labels.cancelEdit}
         onChoose={chooseLaunchHost} onCancel={cancelLaunchHostChoice} />
+      <SshConfigImportDialog open={sshImportOpen} labels={labels} locale={locale}
+        onClose={() => setSshImportOpen(false)} onImported={finishSshImport} />
       <Titlebar labels={labels} context={titleContext} mono={!!activeHost} badge={activeHost && productionHosts.has(activeHost.id) ? labels.production : undefined} />
       <div className={"app-layout" + (sidebarCollapsed ? " sidebar-hidden" : "")}>
         {narrow && sidebarOpen && <div className="sidebar-scrim" aria-hidden="true" onClick={() => setSidebarOpen(false)} />}
@@ -1480,6 +1527,7 @@ export function App(): ReactElement {
           <header className="sidebar-heading">
             <h2>{labels.hosts}</h2>
             <div className="sidebar-heading-actions">
+              {vault.unlocked && isTauriAvailable() && <button className="icon-button" type="button" aria-label={labels.importSshConfig} title={labels.importSshConfig} onClick={() => setSshImportOpen(true)}><DownloadIcon /></button>}
               {vault.unlocked && <button className="icon-button" type="button" aria-label={labels.addHost} title={labels.addHost} onClick={() => addHost()}><PlusIcon /></button>}
               {narrow && <button className="icon-button sidebar-close" type="button" aria-label={labels.closeSidebar} title={labels.closeSidebar} onClick={() => setSidebarOpen(false)}><CloseIcon /></button>}
             </div>
@@ -1500,13 +1548,17 @@ export function App(): ReactElement {
                     if (event.key !== "Enter") return;
                     const first = visibleHosts[0];
                     if (first) openHost(first, primaryModifier(event));
+                    else if (quickHost?.username) void quickConnect(search.trim());
                     else if (quickHost) addHost({ name: quickHost.address, address: quickHost.address, port: quickHost.port, username: quickHost.username });
                   }} />
               </div>
               <section className="host-list" aria-label={labels.hostSearchLabel}>
                 {visibleHosts.length === 0 ? (hosts.length === 0
-                  ? <div className="sidebar-empty"><p>{labels.noHosts}</p><button className="primary-action" type="button" onClick={() => addHost()}><PlusIcon size={14} />{labels.addHost}</button></div>
+                  ? <div className="sidebar-empty"><p>{labels.noHosts}</p><button className="primary-action" type="button" onClick={() => addHost()}><PlusIcon size={14} />{labels.addHost}</button>
+                    {isTauriAvailable() && <button type="button" onClick={() => setSshImportOpen(true)}><DownloadIcon size={14} />{labels.importSshConfig}</button>}</div>
                   : <div className="sidebar-empty"><p>{labels.noHostMatches(search.trim())}</p>
+                    {quickHost?.username && <button className="primary-action" type="button" onClick={() => { void quickConnect(search.trim()); }}>
+                      <ServerIcon size={14} />{labels.quickConnect(search.trim())}</button>}
                     {quickHost && <button type="button" onClick={() => addHost({ name: quickHost.address, address: quickHost.address, port: quickHost.port, username: quickHost.username })}>
                       <PlusIcon size={14} />{labels.quickAddHost(search.trim())}</button>}
                   </div>)
@@ -2041,7 +2093,8 @@ export function App(): ReactElement {
           </div>
         </>}
       </dialog>
-      <CommandPalette open={commandPaletteOpen} labels={labels} actions={paletteActions} onOpenChange={setCommandPaletteOpen} onExecute={executePaletteAction} />
+      <CommandPalette open={commandPaletteOpen} labels={labels} actions={paletteActions} queryAction={paletteQueryAction}
+        onOpenChange={setCommandPaletteOpen} onExecute={executePaletteAction} />
       {confirmElement}
     </main>
   );

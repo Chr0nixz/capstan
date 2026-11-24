@@ -1943,6 +1943,7 @@ pub mod tauri_channel {
             ))
             .manage(Arc::new(capstan_core::transfer::TransferService::default()))
             .manage(BackupImportSessions::default())
+            .manage(crate::host_import_commands::SshConfigImports::default())
             .manage(UserActivity::default())
             .setup(|app| {
                 #[cfg(windows)]
@@ -2184,6 +2185,9 @@ pub mod tauri_channel {
                 crate::settings_commands::save_terminal_font,
                 crate::diagnostics_commands::open_diagnostics_folder,
                 crate::host_import_commands::create_interactive_credential,
+                crate::host_import_commands::quick_connect_host,
+                crate::host_import_commands::preview_ssh_config_import,
+                crate::host_import_commands::import_ssh_config,
                 crate::theme_commands::list_terminal_themes,
                 crate::theme_commands::preview_terminal_themes,
                 crate::theme_commands::save_terminal_theme_preview,
