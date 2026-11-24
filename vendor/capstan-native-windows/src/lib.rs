@@ -382,6 +382,45 @@ pub fn atomic_replace(source: &Path, target: &Path, replace: bool) -> io::Result
     Ok(())
 }
 
+/// Show an application-owned directory in Explorer. The path comes from
+/// Rust, never from the WebView, and must be an absolute plain directory.
+#[cfg(windows)]
+pub fn open_folder(path: &Path) -> io::Result<()> {
+    use std::os::windows::{ffi::OsStrExt, fs::MetadataExt};
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT,
+        UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+    };
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !path.is_absolute()
+        || !metadata.is_dir()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "folder to open is not a plain directory",
+        ));
+    }
+    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let folder: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: both NUL-terminated UTF-16 arguments live for the synchronous ShellExecuteW call.
+    let result = unsafe {
+        ShellExecuteW(
+            0 as HWND,
+            operation.as_ptr(),
+            folder.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 pub fn open_external_url(url: &str) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;

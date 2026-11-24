@@ -684,6 +684,7 @@ async fn visible_snapshot_and_retry_follow_the_current_transport_generation() {
                 state: ConnectionState::Online,
                 error_code: None,
             },
+            trace: crate::ConnectionTrace::new(),
             host_id: Uuid::new_v4(),
             host_revision: 1,
             policy: old.lease.policy().clone(),

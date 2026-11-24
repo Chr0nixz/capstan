@@ -15,6 +15,20 @@ pub enum ConnectionState {
     Failed,
 }
 
+impl ConnectionState {
+    /// The serialized name, for diagnostics.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Authenticating => "authenticating",
+            Self::Online => "online",
+            Self::Reconnecting => "reconnecting",
+            Self::Disconnected => "disconnected",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionErrorCode {
@@ -281,5 +295,19 @@ mod tests {
             ConnectionErrorCode::from(&crate::SshError::Canceled).code(),
             "canceled"
         );
+    }
+
+    #[test]
+    fn state_codes_match_the_wire_names() {
+        for state in [
+            ConnectionState::Connecting,
+            ConnectionState::Authenticating,
+            ConnectionState::Online,
+            ConnectionState::Reconnecting,
+            ConnectionState::Disconnected,
+            ConnectionState::Failed,
+        ] {
+            assert_eq!(serde_json::to_value(state).unwrap(), state.code());
+        }
     }
 }

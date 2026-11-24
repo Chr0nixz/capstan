@@ -113,6 +113,7 @@ export type Commands = {
   match_launch_hosts: { args: { requestId: string }; result: string[] };
   dismiss_launch_request: { args: { requestId: string }; result: void };
   clear_recent_hosts: { args: undefined; result: void };
+  open_diagnostics_folder: { args: undefined; result: void };
   list_terminal_themes: { args: undefined; result: TerminalThemeDefinition[] };
   preview_terminal_themes: { args: { locale: string }; result: ThemePreview | null };
   save_terminal_theme_preview: { args: { token: string }; result: TerminalThemeDefinition[] };

@@ -101,6 +101,14 @@ pub enum Direction {
     Upload,
     Download,
 }
+impl Direction {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Upload => "upload",
+            Self::Download => "download",
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferState {

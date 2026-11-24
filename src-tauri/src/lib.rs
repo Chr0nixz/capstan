@@ -11,6 +11,8 @@ pub mod data_directory;
 #[cfg(feature = "tauri-runtime")]
 mod desktop_commands;
 #[cfg(feature = "tauri-runtime")]
+mod diagnostics_commands;
+#[cfg(feature = "tauri-runtime")]
 mod forwarding_commands;
 #[cfg(feature = "tauri-runtime")]
 mod launch_commands;
@@ -1956,6 +1958,18 @@ pub mod tauri_channel {
                 )?;
                 #[cfg(target_os = "macos")]
                 app.manage(crate::data_directory::lock_instance(&data_directory)?);
+                // After the instance lock, so a second instance never writes here.
+                let diagnostics = data_directory.join(capstan_diagnostics::DIRECTORY);
+                // A log that cannot start must not stop the application.
+                let _ = capstan_diagnostics::install(&diagnostics);
+                capstan_diagnostics::event("app_start")
+                    .code("version", env!("CARGO_PKG_VERSION"))
+                    .code("os", std::env::consts::OS)
+                    .flag("portable", data_directory != roaming_data_directory)
+                    .record();
+                app.manage(crate::diagnostics_commands::DiagnosticsDirectory(
+                    diagnostics,
+                ));
                 #[cfg(windows)]
                 app.state::<Arc<capstan_core::transfer::TransferService>>()
                     .configure_recovery_directory(data_directory.clone())
@@ -2159,6 +2173,7 @@ pub mod tauri_channel {
                 crate::settings_commands::load_desktop_preferences,
                 crate::settings_commands::save_desktop_preference,
                 crate::settings_commands::save_terminal_font,
+                crate::diagnostics_commands::open_diagnostics_folder,
                 crate::theme_commands::list_terminal_themes,
                 crate::theme_commands::preview_terminal_themes,
                 crate::theme_commands::save_terminal_theme_preview,

@@ -420,6 +420,7 @@ name = "capstan-app"
 version = "0.1.0"
 dependencies = [
  "capstan-core",
+ "capstan-diagnostics",
  "capstan-native-windows",
  "capstan-pty",
  "capstan-ssh",
@@ -451,6 +452,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "capstan-diagnostics",
  "capstan-native-windows",
  "capstan-ssh",
  "capstan-terminal",
@@ -475,6 +477,13 @@ dependencies = [
  "tokio-util",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "capstan-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]
@@ -506,6 +515,7 @@ name = "capstan-ssh"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "capstan-diagnostics",
  "capstan-terminal",
  "rand",
  "russh",
@@ -526,6 +536,7 @@ dependencies = [
 name = "capstan-terminal"
 version = "0.1.0"
 dependencies = [
+ "capstan-diagnostics",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

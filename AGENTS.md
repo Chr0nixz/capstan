@@ -20,6 +20,7 @@ Capstan 是维护者个人开发的 Windows 优先终端与 SSH 客户端，目�
 ## 目录结构
 
 ```
+crates/capstan-diagnostics/ 有界本地诊断日志，只记录静态代码、数字和耗时
 crates/capstan-vault/     加密库
 crates/capstan-ssh/       SSH 连接池、通道、SFTP 协议、端口转发、Agent
 crates/capstan-pty/       本地 Shell 探测、ConPTY、WSL

@@ -16,6 +16,10 @@ Those entries are still never followed or opened. They are left out, and
 reparse-point root is still refused. The test creates a junction with
 `mklink /J` and checks that its target's files are not listed.
 
+`open_folder` shows an application-owned directory in Explorer through
+`ShellExecuteW`. It accepts only an absolute plain directory, not a reparse
+point. Capstan uses it for the diagnostic log folder, whose path stays in Rust.
+
 ## M4-2 theme picker and system notifications (2026-11-04)
 
 The file picker accepts an explicit extension filter for theme import. The

@@ -154,9 +154,15 @@ pub struct AckResult {
     pub resumed: bool,
 }
 
+/// A pause at least this long means the frontend stopped parsing output,
+/// which a user sees as a frozen terminal. Shorter ones are routine
+/// backpressure under heavy output.
+const LONG_PAUSE: Duration = Duration::from_secs(1);
+
 #[derive(Debug, Default)]
 struct GateState {
     paused: bool,
+    paused_at: Option<Instant>,
     finishing: bool,
     closed: bool,
     metrics: OutputMetrics,
@@ -229,6 +235,7 @@ impl BackpressureGate {
         state.metrics.max_outstanding_bytes = state.metrics.max_outstanding_bytes.max(outstanding);
         if outstanding > ACK_SUSPEND_THRESHOLD && !state.paused {
             state.paused = true;
+            state.paused_at = Some(Instant::now());
             state.metrics.pause_count += 1;
         }
     }
@@ -268,6 +275,14 @@ impl BackpressureGate {
         if resumed {
             state.paused = false;
             state.metrics.resume_count += 1;
+            if let Some(paused) = state.paused_at.take().map(|since| since.elapsed()) {
+                if paused >= LONG_PAUSE {
+                    capstan_diagnostics::event("terminal_output")
+                        .code("phase", "resumed")
+                        .millis("paused_ms", paused)
+                        .record();
+                }
+            }
         }
         self.notify.notify_waiters();
         Ok(AckResult {
@@ -286,6 +301,7 @@ impl BackpressureGate {
         let mut state = self.lock();
         state.closed = true;
         state.paused = false;
+        state.paused_at = None;
         state.metrics.canceled |= canceled;
         state.metrics.channel_closed = true;
         state.metrics.queued_bytes = 0;

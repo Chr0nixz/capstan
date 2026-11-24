@@ -633,8 +633,41 @@ struct ManagedConnection {
     tasks: TaskTracker,
     changed: tokio::sync::watch::Sender<u64>,
 }
+/// Diagnostics name a logical connection by a process-local number, never by
+/// its host, and time how long it stayed in each state.
+struct ConnectionTrace {
+    id: u32,
+    entered: Instant,
+}
+impl ConnectionTrace {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        Self {
+            id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            entered: Instant::now(),
+        }
+    }
+    fn record(&mut self, snapshot: &ConnectionSnapshot, previous: Option<ConnectionState>) {
+        let now = Instant::now();
+        let mut event = capstan_diagnostics::event("connection")
+            .number("connection", u64::from(self.id))
+            .number("generation", snapshot.generation)
+            .code("state", snapshot.state.code());
+        if let Some(previous) = previous {
+            event = event
+                .code("from", previous.code())
+                .millis("after_ms", now.saturating_duration_since(self.entered));
+        }
+        if let Some(error) = snapshot.error_code {
+            event = event.code("error", error.code());
+        }
+        event.record();
+        self.entered = now;
+    }
+}
 struct ConnectionRecord {
     snapshot: ConnectionSnapshot,
+    trace: ConnectionTrace,
     host_id: Uuid,
     host_revision: u64,
     policy: PoolKey,
@@ -670,6 +703,9 @@ impl ConnectionSupervisor {
             ..record.snapshot.clone()
         };
         if capstan_ssh::connection_state::validate_successor(&record.snapshot, &next).is_ok() {
+            if record.snapshot != next {
+                record.trace.record(&next, Some(record.snapshot.state));
+            }
             record.snapshot = next.clone();
             let _ = self.events.send(next);
         }
@@ -685,8 +721,10 @@ impl ConnectionSupervisor {
             .generation
             .checked_add(1)
             .ok_or(CoreError::InvalidInput)?;
+        let previous = record.snapshot.state;
         record.snapshot.state = ConnectionState::Connecting;
         record.snapshot.error_code = None;
+        record.trace.record(&record.snapshot, Some(previous));
         record.operation = CancellationToken::new();
         record.attempt = Some(attempt);
         let _ = self.events.send(record.snapshot.clone());
@@ -909,6 +947,11 @@ impl VaultManager {
         let entry = Arc::new(ManagedConnection {
             record: Mutex::new(ConnectionRecord {
                 snapshot: snapshot.clone(),
+                trace: {
+                    let mut trace = ConnectionTrace::new();
+                    trace.record(&snapshot, None);
+                    trace
+                },
                 host_id,
                 host_revision: host.revision,
                 policy,

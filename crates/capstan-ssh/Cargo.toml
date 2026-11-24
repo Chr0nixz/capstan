@@ -8,6 +8,7 @@ description = "Async SSH trust, authentication, connection leases and channels"
 
 [dependencies]
 async-trait = "=0.1.89"
+capstan-diagnostics = { path = "../capstan-diagnostics" }
 capstan-terminal = { path = "../capstan-terminal" }
 russh = { version = "=0.61.2", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "=3.0.1"

@@ -8,7 +8,7 @@ manifest and MIT license. Copying only the executable omits this runtime.
 
 The portable archive contains `Capstan.exe`, `capstan.portable`, the GPL license, third-party notices, and this guide. On first launch, Capstan creates a `data` directory beside the executable and checks that it can write and remove a temporary file there. If that check fails, startup stops with an error. The process working directory and an incidental `data` folder never select portable mode; the exact sibling marker is required.
 
-The encrypted vault is stored at `data/vault.capstan`. Keep the complete `data` directory when moving or backing up a portable copy. For recovery, copy the directory while Capstan is closed, or use the in-app `.cbak` export. The `.cbak` password is independent of the vault master password.
+The encrypted vault is stored at `data/vault.capstan`. A small diagnostic log in `data/logs/` holds only error codes, connection states and timings, never hosts, paths or terminal content. Keep the complete `data` directory when moving or backing up a portable copy. For recovery, copy the directory while Capstan is closed, or use the in-app `.cbak` export. The `.cbak` password is independent of the vault master password.
 
 The NSIS installation uses `%APPDATA%\Capstan` and does not place the vault under the program directory. Upgrading or uninstalling Capstan does not intentionally remove that directory. Back up the vault before manually deleting application data.
 
@@ -31,7 +31,7 @@ Artifacts are written under `target/release/bundle/nsis` and `target/bundle/port
 
 便携压缩包包含 `Capstan.exe`、`capstan.portable`、GPL 许可证、第三方声明和本说明。首次启动时，Capstan 会在程序旁创建 `data` 目录，并实际验证能否在其中写入和删除临时文件；验证失败时启动报错。只有程序同目录下内容完全匹配的标记文件才会启用便携模式，当前工作目录或碰巧存在的 `data` 文件夹不会改变模式。
 
-加密库保存在 `data/vault.capstan`。移动或备份便携版时，请在 Capstan 关闭后保留完整 `data` 目录；也可使用应用内 `.cbak` 导出恢复。`.cbak` 口令独立于 Vault 主密码。
+加密库保存在 `data/vault.capstan`。`data/logs/` 里的诊断日志只记录错误码、连接状态和耗时，不含主机、路径和终端内容。移动或备份便携版时，请在 Capstan 关闭后保留完整 `data` 目录；也可使用应用内 `.cbak` 导出恢复。`.cbak` 口令独立于 Vault 主密码。
 
 NSIS 安装版把数据放在 `%APPDATA%\Capstan`，不会放进程序目录。升级或卸载不会主动删除该目录；手动删除应用数据前请先备份 Vault。
 

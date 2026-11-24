@@ -126,6 +126,28 @@ pub enum SftpError {
     ResourceLimit,
 }
 
+impl SftpError {
+    /// The serialized code, for diagnostics.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::SftpUnavailable => "sftp_unavailable",
+            Self::PermissionDenied => "permission_denied",
+            Self::PathInvalid => "path_invalid",
+            Self::NotFound => "not_found",
+            Self::UnsupportedFileType => "unsupported_file_type",
+            Self::TargetConflict => "target_conflict",
+            Self::ResumeMismatch => "resume_mismatch",
+            Self::LocalIo => "local_io",
+            Self::RemoteIo => "remote_io",
+            Self::EditorUnavailable => "editor_unavailable",
+            Self::ConnectionLost => "connection_lost",
+            Self::OperationCanceled => "operation_canceled",
+            Self::ScopeExpired => "scope_expired",
+            Self::ResourceLimit => "resource_limit",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileKind {

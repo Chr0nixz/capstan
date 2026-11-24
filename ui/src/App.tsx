@@ -40,6 +40,7 @@ import { terminalThemeId } from "./themes/contracts";
 import { useDesktopPreferences, useTerminalThemes } from "./themes/store";
 import { ThemeSettings } from "./themes/ThemeSettings";
 import { UpdateCenter, UpdateSettings } from "./update/UpdateSettings";
+import { DiagnosticsSettings } from "./themes/DiagnosticsSettings";
 import { LaunchRequests } from "./launch/LaunchRequests";
 import { useWindowVisibility } from "./window/useWindowVisibility";
 import { ariaShortcut, isMacOS, primaryModifier, shortcutLabel, workspaceShortcut } from "./window/platform";
@@ -1717,7 +1718,7 @@ export function App(): ReactElement {
           </div>
           {messages}
           <div className="sheet-body" id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${settingsTab}`}>
-            {settingsTab === "desktop" && <><ThemeSettings locale={locale} /><UpdateSettings locale={locale} /></>}
+            {settingsTab === "desktop" && <><ThemeSettings locale={locale} /><UpdateSettings locale={locale} /><DiagnosticsSettings locale={locale} /></>}
             {settingsTab === "security" && <section className="settings-section vault-settings">
               <h3>{labels.vaultSettings}</h3>
               {!isMacOS() && <div className="settings-group" aria-busy={vaultBusy}>

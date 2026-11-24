@@ -93,7 +93,7 @@ pub async fn prompt_secret(
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{open_url, pick, prompt_secret, ModalDialog};
+pub use macos::{open_folder, open_url, pick, prompt_secret, ModalDialog};
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -239,6 +239,14 @@ mod macos {
     pub fn open_url(url: &str) -> bool {
         NSURL::URLWithString(&NSString::from_str(url))
             .is_some_and(|url| NSWorkspace::sharedWorkspace().openURL(&url))
+    }
+
+    /// Show an application-owned directory in Finder.
+    pub fn open_folder(path: &std::path::Path) -> bool {
+        path.to_str().is_some_and(|path| {
+            let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(path), true);
+            NSWorkspace::sharedWorkspace().openURL(&url)
+        })
     }
 }
 

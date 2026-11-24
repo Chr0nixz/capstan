@@ -2,6 +2,7 @@
 resolver = "2"
 exclude = ["vendor/portable-pty", "vendor/tauri-plugin-snap-layout", "vendor/capstan-native-windows", "vendor/ssh-key"]
 members = [
+    "crates/capstan-diagnostics",
     "crates/capstan-terminal",
     "crates/capstan-pty",
     "crates/capstan-vault",

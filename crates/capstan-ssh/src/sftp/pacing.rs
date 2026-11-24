@@ -156,6 +156,7 @@ impl Controller {
             .unwrap_or(MAX_WINDOW);
         self.window = needed.clamp(MIN_WINDOW, self.window.max(MIN_WINDOW));
         self.enter_steady(now);
+        trace("slow_start_end", base, round_trip, self.window);
         true
     }
 
@@ -223,6 +224,7 @@ impl Controller {
         }
         match self.phase {
             Phase::Probe { saved } => {
+                trace("probe", base, sample, saved);
                 // The pipe is empty now; refilling it with the whole window
                 // at once would queue that burst ahead of the next keystroke.
                 self.window = (2 * MIN_WINDOW).min(saved);
@@ -232,6 +234,7 @@ impl Controller {
                 // Close to the target: grow gently from here.
                 self.enter_steady(now);
                 self.hold = false;
+                trace("slow_start_end", base, sample, self.window);
             }
             Phase::SlowStart { ceiling } => {
                 if used {
@@ -265,6 +268,17 @@ impl Controller {
             self.window = self.window.saturating_add(room).min(MAX_WINDOW);
         }
     }
+}
+
+/// At most about once a minute per busy connection: enough to see what the
+/// controller learned about a real link.
+fn trace(phase: &'static str, base: Duration, round_trip: Duration, window: u64) {
+    capstan_diagnostics::event("sftp_pacing")
+        .code("phase", phase)
+        .millis("base_rtt_ms", base)
+        .millis("round_trip_ms", round_trip)
+        .number("window_kib", window / 1024)
+        .record();
 }
 
 /// One controller shared by every SFTP subsystem on a transport.

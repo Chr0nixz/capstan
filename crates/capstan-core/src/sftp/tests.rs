@@ -527,3 +527,26 @@ fn rust_types_consume_the_shared_typescript_contract_fixture() {
         serde_json::from_str::<serde_json::Value>(fixture).unwrap()
     );
 }
+
+#[test]
+fn error_codes_match_the_wire_and_display_names() {
+    for error in [
+        SftpError::SftpUnavailable,
+        SftpError::PermissionDenied,
+        SftpError::PathInvalid,
+        SftpError::NotFound,
+        SftpError::UnsupportedFileType,
+        SftpError::TargetConflict,
+        SftpError::ResumeMismatch,
+        SftpError::LocalIo,
+        SftpError::RemoteIo,
+        SftpError::EditorUnavailable,
+        SftpError::ConnectionLost,
+        SftpError::OperationCanceled,
+        SftpError::ScopeExpired,
+        SftpError::ResourceLimit,
+    ] {
+        assert_eq!(serde_json::to_value(error).unwrap(), error.code());
+        assert_eq!(error.to_string(), error.code());
+    }
+}

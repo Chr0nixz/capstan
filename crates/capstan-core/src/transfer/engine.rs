@@ -1266,6 +1266,7 @@ pub(super) async fn run(
         commits,
         budget,
     };
+    let started = std::time::Instant::now();
     let result = match (&permit, &data_lease) {
         (Ok(_), Some(Ok(_))) => job.execute().await,
         (Err(error), _) => Err(*error),
@@ -1343,6 +1344,20 @@ pub(super) async fn run(
         status.conflict = None;
         status.cleanup_required = cleanup_required;
     });
+    if let Ok(status) = task.status.lock() {
+        let outcome = match result {
+            Ok(()) => "completed",
+            Err(_) if task.cancel.is_cancelled() => "canceled",
+            Err(error) => error.code(),
+        };
+        capstan_diagnostics::event("transfer")
+            .code("direction", status.direction.code())
+            .code("outcome", outcome)
+            .number("bytes", status.processed.0)
+            .millis("duration_ms", started.elapsed())
+            .flag("cleanup_required", cleanup_required)
+            .record();
+    }
     // Cancellation is visible promptly. The worker and data assignment remain
     // reserved until all owned protocol cleanup finishes; exit joins the pool.
     // Cleanup owns no task or recovery ledger, so a completed service can be
