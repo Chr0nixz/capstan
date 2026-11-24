@@ -43,6 +43,8 @@ export type HostView = {
   working_directory: string | null; startup_command: string | null; encoding: string; theme: string; agent_forwarding: boolean;
   /** Explicit production mark; groups can also pass it down (see hosts/identity). */
   production: boolean;
+  /** The saved host this one is reached through, like OpenSSH ProxyJump. */
+  jump_host_id: HostId | null;
 };
 export type CredentialView = { id: CredentialId; name: string; revision: number; kind: string };
 export type GroupView = { id: GroupId; name: string; parent_id: GroupId | null; production: boolean };
@@ -122,7 +124,7 @@ export type Commands = {
   delete_terminal_theme: { args: { id: CustomThemeId }; result: TerminalThemeDefinition[] };
   acknowledge_transfer_failure: { args: { id: string; version: string }; result: undefined };
   connection_snapshots: { args: undefined; result: ConnectionSnapshot[] };
-  reconnect_connection: { args: { connectionId: ConnectionId; expectedGeneration: ExactGeneration; attemptId: string }; result: ConnectionSnapshot };
+  reconnect_connection: { args: { connectionId: ConnectionId; expectedGeneration: ExactGeneration; attemptId: string; locale: string }; result: ConnectionSnapshot };
   disconnect_connection: { args: { connectionId: ConnectionId; expectedGeneration: ExactGeneration }; result: ConnectionSnapshot };
   load_sftp_panel_preferences: { args: undefined; result: unknown };
   save_sftp_panel_preferences: { args: { layout: import("../sftp/panelPreferences").PanelLayout; session: string; sequence: import("../sftp/contracts").ExactU64 }; result: void };
@@ -199,7 +201,7 @@ export type Commands = {
     result: StartedTerminal;
   };
   start_ssh_terminal: {
-    args: { hostId: HostId; attemptId: string; reconnect?: { connectionId: ConnectionId; expectedGeneration: ExactGeneration }; onOutput: TauriChannel<ArrayBuffer>; onStatus: TauriChannel<TerminalSnapshot> };
+    args: { hostId: HostId; attemptId: string; reconnect?: { connectionId: ConnectionId; expectedGeneration: ExactGeneration }; locale: string; onOutput: TauriChannel<ArrayBuffer>; onStatus: TauriChannel<TerminalSnapshot> };
     result: StartedTerminal;
   };
   cancel_ssh_attempt: { args: { attemptId: string }; result: void };
@@ -236,6 +238,7 @@ export type Commands = {
   create_agent_credential: { args: { name: string; agent: AgentProvider; fingerprint: string }; result: CredentialId };
   import_private_key_credential: { args: { name: string; locale: string }; result: CredentialId };
   add_private_key_file_credential: { args: { name: string; locale: string }; result: CredentialId };
+  create_interactive_credential: { args: { name: string }; result: CredentialId };
   rename_credential: { args: { id: CredentialId; name: string; expectedRevision: number }; result: CredentialId };
   update_password_credential: { args: { id: CredentialId; expectedRevision: number; locale: string }; result: CredentialId };
   delete_credential: { args: { id: CredentialId; expectedRevision: number }; result: number };

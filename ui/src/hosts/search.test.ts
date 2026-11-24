@@ -6,7 +6,7 @@ const host: HostView = {
   id: "host-1" as HostView["id"], name: "Build Server", address: "build.example.test", port: 22,
   username: "deploy", credential_id: "credential-1" as HostView["credential_id"], group_id: "group-1" as NonNullable<HostView["group_id"]>,
   tags: ["production", "linux"], favorite: false, revision: 0, working_directory: null,
-  startup_command: null, encoding: "utf-8", theme: "graphite", agent_forwarding: false, production: false,
+  startup_command: null, encoding: "utf-8", theme: "graphite", agent_forwarding: false, production: false, jump_host_id: null,
 };
 
 describe("host search", () => {

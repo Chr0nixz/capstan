@@ -46,6 +46,7 @@ import { useWindowVisibility } from "./window/useWindowVisibility";
 import { ariaShortcut, isMacOS, primaryModifier, shortcutLabel, workspaceShortcut } from "./window/platform";
 import { HostChoiceDialog } from "./launch/HostChoiceDialog";
 import { sshAuthority } from "./launch/authority";
+import { jumpChoices } from "./hosts/jump";
 import type { HelloStatus } from "./terminal/contracts";
 
 type Locale = keyof typeof copy;
@@ -54,7 +55,7 @@ const initialPreferences: VaultPreferences = { auto_lock_minutes: 30, disconnect
 const emptyHostForm = () => ({
   name: "", address: "", port: "22", username: "", credentialId: "" as CredentialId | "",
   tags: "", favorite: false, groupId: "" as GroupId | "", workingDirectory: "", startupCommand: "",
-  encoding: "utf-8", theme: "graphite", agentForwarding: false, production: false,
+  encoding: "utf-8", theme: "graphite", agentForwarding: false, production: false, jumpHostId: "" as HostId | "",
 });
 type SftpSessionBinding = { terminal: TerminalSessionId; hostId: HostId; session: SftpSessionId };
 type Sheet = "host" | "settings" | "snippets" | "tunnels" | null;
@@ -763,6 +764,7 @@ export function App(): ReactElement {
     imported_key: labels.credentialKindImportedKey,
     key_file: labels.credentialKindKeyFile,
     agent: labels.credentialKindAgent,
+    interactive: labels.credentialKindInteractive,
   }[kind] ?? kind);
   const showError = (cause: unknown): void => {
     const code = errorCode(cause);
@@ -780,6 +782,9 @@ export function App(): ReactElement {
     else if (code === "ssh_private_key_invalid") setError(labels.privateKeyInvalid);
     else if (code === "ssh_agent_unavailable") setError(labels.agentUnavailable);
     else if (code === "ssh_agent_identity_unavailable") setError(labels.agentIdentityUnavailable);
+    else if (code === "ssh_interaction_required") setError(labels.interactionRequired);
+    else if (code === "ssh_jump_unreachable") setError(labels.jumpUnreachable);
+    else if (code === "host_in_use") setError(labels.hostInUse);
     else if (code === "trust_conflict") setError(labels.backupTrustConflict);
     else if (code === "backup_import_expired") setError(labels.backupPreviewExpired);
     else if (code === "credential_file") setError(labels.credentialFileInvalid);
@@ -890,6 +895,15 @@ export function App(): ReactElement {
       setForm((current) => ({ ...current, credentialId: id }));
     } catch (cause) { showError(cause); }
   };
+  const addInteractiveCredential = async (): Promise<void> => {
+    setError(null);
+    try {
+      const id = await invokeTauri("create_interactive_credential", { name: credentialName.trim() || labels.interactiveCredentialName });
+      setCredentialName("");
+      await refreshVault();
+      setForm((current) => ({ ...current, credentialId: id }));
+    } catch (cause) { showError(cause); }
+  };
   const loadAgentIdentities = async (): Promise<void> => {
     setError(null);
     try {
@@ -985,6 +999,7 @@ export function App(): ReactElement {
       working_directory: form.workingDirectory.trim() || null,
       startup_command: form.startupCommand.trim() || null,
       encoding: form.encoding, theme: form.theme, agent_forwarding: form.agentForwarding, production: form.production,
+      jump_host_id: form.jumpHostId || null,
     };
     setError(null);
     try {
@@ -1015,6 +1030,7 @@ export function App(): ReactElement {
       groupId: host.group_id ?? "",
       workingDirectory: host.working_directory ?? "", startupCommand: host.startup_command ?? "",
       encoding: host.encoding, theme: host.theme, agentForwarding: host.agent_forwarding, production: host.production,
+      jumpHostId: host.jump_host_id ?? "",
     };
     hostFormBaseline.current = JSON.stringify(next);
     setForm(next);
@@ -1606,6 +1622,15 @@ export function App(): ReactElement {
                   <label>{labels.hostPort}<input className="mono" inputMode="numeric" value={form.port} onChange={(event) => { clearFieldError("port"); setForm({ ...form, port: event.currentTarget.value }); }} required {...invalid("port")} />{fieldError("port")}</label>
                 </div>
                 <label>{labels.hostUsername}<input className="mono" value={form.username} onChange={(event) => { clearFieldError("username"); setForm({ ...form, username: event.currentTarget.value }); }} required maxLength={256} spellCheck={false} {...invalid("username")} />{fieldError("username")}</label>
+                <label>{labels.jumpHost}
+                  <select value={form.jumpHostId} onChange={(event) => setForm({ ...form, jumpHostId: event.currentTarget.value as HostId | "" })} aria-describedby="host-jump-hint">
+                    <option value="">{labels.jumpHostNone}</option>
+                    {jumpChoices(hosts, editingHost?.id ?? null).map((host) => <option value={host.id} key={host.id}>
+                      {host.name} · {sshAuthority(host.username, host.address, host.port)}
+                    </option>)}
+                  </select>
+                </label>
+                <p className="quiet-copy" id="host-jump-hint">{labels.jumpHostHint}</p>
                 {/* A host that is production through its group or tag shows it as on and locked; its own switch stays off. */}
                 <label className="check-row production-row"><input type="checkbox" checked={form.production || !!inheritedProduction} disabled={!!inheritedProduction}
                   onChange={(event) => setForm({ ...form, production: event.currentTarget.checked })} aria-describedby="host-production-hint" />{labels.productionHost}</label>
@@ -1634,6 +1659,7 @@ export function App(): ReactElement {
                       <button type="button" disabled={!credentialName.trim()} onClick={() => { void createCredential(); }}>{labels.createCredential}</button>
                       <button type="button" disabled={!credentialName.trim()} onClick={() => { void importPrivateKey(); }}>{labels.importPrivateKey}</button>
                       <button type="button" disabled={!credentialName.trim()} onClick={() => { void linkPrivateKeyFile(); }}>{labels.linkPrivateKeyFile}</button>
+                      <button type="button" onClick={() => { void addInteractiveCredential(); }}>{labels.createInteractiveCredential}</button>
                     </div>
                     <div className="agent-row">
                       <label>{labels.sshAgent}

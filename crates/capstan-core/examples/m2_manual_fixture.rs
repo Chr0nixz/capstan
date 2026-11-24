@@ -106,6 +106,7 @@ mod windows {
                 theme: if index == 0 { "graphite" } else { "light" }.into(),
                 agent_forwarding: false,
                 production: false,
+                jump_host_id: None,
             };
             vault.save_host(host, vault.revision()?).await?;
         }

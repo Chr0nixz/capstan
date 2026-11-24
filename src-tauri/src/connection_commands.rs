@@ -2,7 +2,7 @@
 use crate::CommandError;
 use capstan_core::{sftp::ExactU64, VaultManager};
 use capstan_ssh::{
-    connection_state::{ConnectionSnapshot, CONNECTION_STATE_CHANGED_EVENT},
+    connection_state::{ConnectionSnapshot, ConnectionState, CONNECTION_STATE_CHANGED_EVENT},
     TrustBroker,
 };
 use std::sync::Arc;
@@ -73,9 +73,17 @@ pub async fn reconnect_connection(
     connection_id: Uuid,
     expected_generation: ExactU64,
     attempt_id: Uuid,
+    locale: Option<String>,
 ) -> Result<ConnectionSnapshot, CommandError> {
     source(window.label())?;
-    vault
+    // The reconnect runs after this returns; the user who asked for it may
+    // answer the server's prompts until its first attempt settles.
+    let permit = broker.allow_prompts(
+        attempt_id,
+        crate::host_import_commands::NativePrompter::new(window.clone(), locale),
+    );
+    let mut events = vault.subscribe_connections();
+    let snapshot = vault
         .reconnect_connection(
             connection_id,
             expected_generation.0,
@@ -83,8 +91,35 @@ pub async fn reconnect_connection(
             broker.inner().clone(),
         )
         .await
-        .map_err(Into::into)
+        .map_err(CommandError::from)?;
+    let generation = snapshot.generation;
+    tauri::async_runtime::spawn(async move {
+        let _permit = permit;
+        let _ = tokio::time::timeout(RECONNECT_PROMPT_WINDOW, async {
+            loop {
+                match events.recv().await {
+                    Ok(next)
+                        if next.connection_id == connection_id
+                            && (next.generation != generation
+                                || !matches!(
+                                    next.state,
+                                    ConnectionState::Connecting | ConnectionState::Authenticating
+                                )) =>
+                    {
+                        break
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        })
+        .await;
+    });
+    Ok(snapshot)
 }
+
+/// Covers the prompt timeout and the network steps around it.
+const RECONNECT_PROMPT_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[tauri::command]
 pub async fn disconnect_connection(

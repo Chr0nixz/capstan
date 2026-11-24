@@ -16,7 +16,7 @@ const host: HostView = {
   id: hostId as HostView["id"], name: "Ops host", address: "ops.example.test", port: 22,
   username: "operator", credential_id: "23456789-1234-4234-8234-123456789abc" as HostView["credential_id"],
   group_id: null, tags: [], favorite: false, revision: 0, working_directory: null, startup_command: null,
-  encoding: "utf-8", theme: "graphite", agent_forwarding: false, production: false,
+  encoding: "utf-8", theme: "graphite", agent_forwarding: false, production: false, jump_host_id: null,
 };
 const tunnel = decodeTunnelConfig(fixture.tunnels[0]);
 const stopped: TunnelRuntimeSnapshot = {

@@ -40,6 +40,8 @@ pub enum ConnectionErrorCode {
     SshPrivateKeyInvalid,
     SshAgentUnavailable,
     SshAgentIdentityUnavailable,
+    SshInteractionRequired,
+    SshJumpUnreachable,
     HostKeyUnknown,
     HostKeyChanged,
     HostKeyRejected,
@@ -61,6 +63,8 @@ impl ConnectionErrorCode {
             Self::SshPrivateKeyInvalid => "ssh_private_key_invalid",
             Self::SshAgentUnavailable => "ssh_agent_unavailable",
             Self::SshAgentIdentityUnavailable => "ssh_agent_identity_unavailable",
+            Self::SshInteractionRequired => "ssh_interaction_required",
+            Self::SshJumpUnreachable => "ssh_jump_unreachable",
             Self::HostKeyUnknown => "host_key_unknown",
             Self::HostKeyChanged => "host_key_changed",
             Self::HostKeyRejected => "host_key_rejected",
@@ -89,6 +93,8 @@ impl From<&crate::SshError> for ConnectionErrorCode {
             crate::SshError::InvalidPrivateKey => Self::SshPrivateKeyInvalid,
             crate::SshError::AgentUnavailable => Self::SshAgentUnavailable,
             crate::SshError::AgentIdentityUnavailable => Self::SshAgentIdentityUnavailable,
+            crate::SshError::InteractionRequired => Self::SshInteractionRequired,
+            crate::SshError::JumpUnreachable => Self::SshJumpUnreachable,
         }
     }
 }
@@ -294,6 +300,16 @@ mod tests {
         assert_eq!(
             ConnectionErrorCode::from(&crate::SshError::Canceled).code(),
             "canceled"
+        );
+        for error in [
+            crate::SshError::InteractionRequired,
+            crate::SshError::JumpUnreachable,
+        ] {
+            assert_eq!(ConnectionErrorCode::from(&error).code(), error.code());
+        }
+        assert_eq!(
+            serde_json::to_value(ConnectionErrorCode::SshInteractionRequired).unwrap(),
+            "ssh_interaction_required"
         );
     }
 

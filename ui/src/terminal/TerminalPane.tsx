@@ -37,6 +37,8 @@ export type TerminalPaneLabels = {
   credentialFileInvalid: string;
   agentUnavailable: string;
   agentIdentityUnavailable: string;
+  interactionRequired: string;
+  jumpUnreachable: string;
   vaultLocked: string;
   invalidInput: string;
   workingDirectoryInvalid: string;

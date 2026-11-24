@@ -185,6 +185,7 @@ impl Fixture {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         };
         vault
             .save_host(host.clone(), vault.revision().unwrap())

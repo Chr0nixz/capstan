@@ -25,6 +25,7 @@ m0-benchmarks = ["tauri-runtime", "capstan-pty/m0-benchmarks", "capstan-core/ben
 custom-protocol = ["tauri-runtime", "tauri/custom-protocol"]
 
 [dependencies]
+async-trait = "=0.1.89"
 capstan-diagnostics = { path = "../crates/capstan-diagnostics" }
 capstan-terminal = { path = "../crates/capstan-terminal" }
 capstan-pty = { path = "../crates/capstan-pty" }

@@ -1,6 +1,7 @@
 //! Async SSH trust, authentication, connection leases and channels.
 #![deny(unsafe_code)]
 #![allow(clippy::pedantic)]
+mod auth;
 pub mod connection_state;
 pub mod exec;
 pub mod forwarding;
@@ -9,6 +10,7 @@ pub mod forwarding_runtime;
 mod pool;
 pub mod sftp;
 mod sftp_pool;
+pub use auth::{AuthPrompt, AuthPrompter, PromptField};
 pub use pool::{ConnectionLease, ConnectionPool, PoolKey};
 pub use sftp_pool::SftpTransferLease;
 
@@ -17,11 +19,11 @@ use russh::{
     client,
     keys::{
         agent::{client::AgentClient, AgentIdentity},
-        HashAlg, PrivateKey, PrivateKeyWithHashAlg, PublicKey,
+        HashAlg, PrivateKey, PublicKey,
     },
     Disconnect,
 };
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 use std::{
     collections::HashMap,
     future::Future,
@@ -69,6 +71,10 @@ pub enum SshError {
     AgentUnavailable,
     #[error("selected SSH agent identity is unavailable")]
     AgentIdentityUnavailable,
+    #[error("the server asked for input that was not given")]
+    InteractionRequired,
+    #[error("the jump host could not open a connection to the target")]
+    JumpUnreachable,
 }
 impl SshError {
     pub fn code(&self) -> &'static str {
@@ -86,6 +92,8 @@ impl SshError {
             Self::InvalidPrivateKey => "ssh_private_key_invalid",
             Self::AgentUnavailable => "ssh_agent_unavailable",
             Self::AgentIdentityUnavailable => "ssh_agent_identity_unavailable",
+            Self::InteractionRequired => "ssh_interaction_required",
+            Self::JumpUnreachable => "ssh_jump_unreachable",
         }
     }
 }
@@ -223,6 +231,8 @@ enum AuthenticationMethod {
         provider: AgentProvider,
         fingerprint: String,
     },
+    /// Answer the server's password or keyboard-interactive prompts.
+    Interactive,
 }
 
 pub fn validate_private_key(content: &str, passphrase: Option<&str>) -> Result<()> {
@@ -302,6 +312,24 @@ struct PendingTrust {
 pub struct TrustBroker {
     events: mpsc::Sender<TrustChallenge>,
     pending: Mutex<HashMap<Uuid, PendingTrust>>,
+    prompters: Mutex<HashMap<Uuid, Arc<dyn AuthPrompter>>>,
+}
+
+/// Lets one attempt ask the user for authentication input; see
+/// [`TrustBroker::allow_prompts`].
+#[must_use = "prompts are allowed only while the permit lives"]
+pub struct PromptPermit {
+    broker: std::sync::Weak<TrustBroker>,
+    attempt_id: Uuid,
+}
+impl Drop for PromptPermit {
+    fn drop(&mut self) {
+        if let Some(broker) = self.broker.upgrade() {
+            if let Ok(mut prompters) = broker.prompters.lock() {
+                prompters.remove(&self.attempt_id);
+            }
+        }
+    }
 }
 impl TrustBroker {
     pub fn new() -> (Arc<Self>, mpsc::Receiver<TrustChallenge>) {
@@ -310,6 +338,7 @@ impl TrustBroker {
             Arc::new(Self {
                 events,
                 pending: Mutex::new(HashMap::new()),
+                prompters: Mutex::new(HashMap::new()),
             }),
             receiver,
         )
@@ -326,6 +355,25 @@ impl TrustBroker {
             .response
             .send(accepted)
             .map_err(|_| SshError::Canceled)
+    }
+    /// Lets `attempt_id` put server prompts to `prompter` until the permit
+    /// drops. Attempts without a permit, such as automatic reconnects, fail
+    /// with [`SshError::InteractionRequired`] instead of waiting for input.
+    pub fn allow_prompts(
+        self: &Arc<Self>,
+        attempt_id: Uuid,
+        prompter: Arc<dyn AuthPrompter>,
+    ) -> PromptPermit {
+        if let Ok(mut prompters) = self.prompters.lock() {
+            prompters.insert(attempt_id, prompter);
+        }
+        PromptPermit {
+            broker: Arc::downgrade(self),
+            attempt_id,
+        }
+    }
+    fn prompter(&self, attempt_id: Uuid) -> Option<Arc<dyn AuthPrompter>> {
+        self.prompters.lock().ok()?.get(&attempt_id).cloned()
     }
     pub fn cancel_attempt(&self, attempt_id: Uuid) {
         if let Ok(mut pending) = self.pending.lock() {
@@ -577,6 +625,9 @@ pub struct PasswordConnection {
     agent_tasks: TaskTracker,
     algorithms: Arc<Mutex<Option<NegotiatedAlgorithms>>>,
     sftp: sftp_pool::SftpPool,
+    /// The jump host's connection this one tunnels through, held so the jump
+    /// stays open for as long as this connection does.
+    via: Option<ConnectionLease<PasswordConnection>>,
 }
 impl Drop for PasswordConnection {
     fn drop(&mut self) {
@@ -817,7 +868,36 @@ impl PasswordConnection {
         self.connection_generation
     }
     pub fn is_closed(&self) -> bool {
-        self.cancel.is_cancelled() || self.transport_closed.is_cancelled()
+        self.cancel.is_cancelled()
+            || self.transport_closed.is_cancelled()
+            || self
+                .via
+                .as_ref()
+                .is_some_and(|via| via.connection().is_closed())
+    }
+
+    /// A `direct-tcpip` stream to `host:port` that this server resolves and
+    /// opens, for the next hop's SSH handshake.
+    async fn open_jump_stream(
+        &self,
+        host: &str,
+        port: u16,
+    ) -> Result<russh::ChannelStream<client::Msg>> {
+        if self.is_closed() {
+            return Err(SshError::Connection);
+        }
+        let handle = self.handle.lock().await.clone();
+        let channel = tokio::select! {
+            biased;
+            () = self.transport_closed.cancelled() => return Err(SshError::Connection),
+            result = handle.channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0) => result,
+        };
+        channel
+            .map(russh::Channel::into_stream)
+            .map_err(|error| match error {
+                russh::Error::ChannelOpenFailure(_) => SshError::JumpUnreachable,
+                _ => SshError::Connection,
+            })
     }
     pub async fn closed(&self) {
         tokio::select! {
@@ -1025,6 +1105,73 @@ impl capstan_terminal::AsyncBackendControl for SshChannelControl {
     }
 }
 
+/// How [`connect`] authenticates to the server.
+pub struct Login {
+    method: AuthenticationMethod,
+    agent_forwarding: Option<AgentConnector>,
+}
+impl Login {
+    pub fn password(password: SecretString) -> Self {
+        Self {
+            method: AuthenticationMethod::Password(password),
+            agent_forwarding: None,
+        }
+    }
+    pub fn private_key(content: &str, passphrase: Option<&str>) -> Result<Self> {
+        let key = russh::keys::decode_secret_key(content, passphrase)
+            .map_err(|_| SshError::InvalidPrivateKey)?;
+        Ok(Self {
+            method: AuthenticationMethod::PrivateKey(Arc::new(key)),
+            agent_forwarding: None,
+        })
+    }
+    pub fn agent(
+        provider: AgentProvider,
+        identity_fingerprint: String,
+        agent_forwarding: bool,
+    ) -> Result<Self> {
+        if !identity_fingerprint.starts_with("SHA256:") || identity_fingerprint.len() > 256 {
+            return Err(SshError::InvalidInput);
+        }
+        Ok(Self {
+            method: AuthenticationMethod::Agent {
+                provider,
+                fingerprint: identity_fingerprint,
+            },
+            agent_forwarding: agent_forwarding.then(|| system_agent_connector(provider)),
+        })
+    }
+    /// Nothing stored: the server's password or keyboard-interactive prompts
+    /// go to the attempt's prompter (see [`TrustBroker::allow_prompts`]).
+    pub fn interactive() -> Self {
+        Self {
+            method: AuthenticationMethod::Interactive,
+            agent_forwarding: None,
+        }
+    }
+}
+
+/// Connects directly, or through `via`, the authenticated connection of a jump
+/// host: that server opens the TCP connection to `address`, resolving the name
+/// itself as OpenSSH `ProxyJump` does, and this host's key is verified as usual.
+#[allow(clippy::too_many_arguments)] // Keep the attempt, secret and trust services explicit at the library boundary.
+pub async fn connect(
+    address: String,
+    port: u16,
+    username: String,
+    login: Login,
+    via: Option<ConnectionLease<PasswordConnection>>,
+    attempt: AttemptBinding,
+    repository: Arc<dyn TrustRepository>,
+    broker: Arc<TrustBroker>,
+    cancel: CancellationToken,
+) -> Result<PasswordConnection> {
+    connect_with_authentication(
+        address, port, username, login, via, attempt, repository, broker, cancel,
+    )
+    .await
+}
+
 #[allow(clippy::too_many_arguments)] // Keep the attempt, secret and trust services explicit at the library boundary.
 pub async fn connect_password(
     address: String,
@@ -1036,16 +1183,16 @@ pub async fn connect_password(
     broker: Arc<TrustBroker>,
     cancel: CancellationToken,
 ) -> Result<PasswordConnection> {
-    connect_with_authentication(
+    connect(
         address,
         port,
         username,
-        AuthenticationMethod::Password(password),
+        Login::password(password),
+        None,
         attempt,
         repository,
         broker,
         cancel,
-        None,
     )
     .await
 }
@@ -1062,18 +1209,16 @@ pub async fn connect_private_key(
     broker: Arc<TrustBroker>,
     cancel: CancellationToken,
 ) -> Result<PasswordConnection> {
-    let key = russh::keys::decode_secret_key(content, passphrase)
-        .map_err(|_| SshError::InvalidPrivateKey)?;
-    connect_with_authentication(
+    connect(
         address,
         port,
         username,
-        AuthenticationMethod::PrivateKey(Arc::new(key)),
+        Login::private_key(content, passphrase)?,
+        None,
         attempt,
         repository,
         broker,
         cancel,
-        None,
     )
     .await
 }
@@ -1091,22 +1236,42 @@ pub async fn connect_agent(
     broker: Arc<TrustBroker>,
     cancel: CancellationToken,
 ) -> Result<PasswordConnection> {
-    if !identity_fingerprint.starts_with("SHA256:") || identity_fingerprint.len() > 256 {
-        return Err(SshError::InvalidInput);
-    }
-    connect_with_authentication(
+    connect(
         address,
         port,
         username,
-        AuthenticationMethod::Agent {
-            provider,
-            fingerprint: identity_fingerprint,
-        },
+        Login::agent(provider, identity_fingerprint, agent_forwarding)?,
+        None,
         attempt,
         repository,
         broker,
         cancel,
-        agent_forwarding.then(|| system_agent_connector(provider)),
+    )
+    .await
+}
+
+/// Connects with nothing stored: the server's password or keyboard-interactive
+/// prompts go to the attempt's prompter (see [`TrustBroker::allow_prompts`]).
+#[allow(clippy::too_many_arguments)]
+pub async fn connect_interactive(
+    address: String,
+    port: u16,
+    username: String,
+    attempt: AttemptBinding,
+    repository: Arc<dyn TrustRepository>,
+    broker: Arc<TrustBroker>,
+    cancel: CancellationToken,
+) -> Result<PasswordConnection> {
+    connect(
+        address,
+        port,
+        username,
+        Login::interactive(),
+        None,
+        attempt,
+        repository,
+        broker,
+        cancel,
     )
     .await
 }
@@ -1116,13 +1281,17 @@ async fn connect_with_authentication(
     address: String,
     port: u16,
     username: String,
-    authentication: AuthenticationMethod,
+    login: Login,
+    via: Option<ConnectionLease<PasswordConnection>>,
     attempt: AttemptBinding,
     repository: Arc<dyn TrustRepository>,
     broker: Arc<TrustBroker>,
     cancel: CancellationToken,
-    agent_forwarding: Option<AgentConnector>,
 ) -> Result<PasswordConnection> {
+    let Login {
+        method: authentication,
+        agent_forwarding,
+    } = login;
     if port == 0
         || username.is_empty()
         || username.len() > 256
@@ -1136,16 +1305,22 @@ async fn connect_with_authentication(
     // for a connection attempt which no longer has a caller.
     let cancel = cancel.child_token();
     let connection_guard = cancel.clone().drop_guard();
-    let targets: Vec<SocketAddr> = tokio::select! {
-        biased;
-        () = cancel.cancelled() => return Err(SshError::Canceled),
-        result = tokio::time::timeout(Duration::from_secs(15), tokio::net::lookup_host((address.as_str(), port))) => match result {
-            Ok(Ok(addresses)) => addresses.collect(),
-            Ok(Err(_)) => return Err(SshError::Connection),
-            Err(_) => return Err(SshError::Timeout),
-        },
+    let prompter = broker.prompter(attempt.attempt_id);
+    // A jump host resolves the target name itself, so internal names work.
+    let targets: Vec<SocketAddr> = if via.is_some() {
+        Vec::new()
+    } else {
+        tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(SshError::Canceled),
+            result = tokio::time::timeout(Duration::from_secs(15), tokio::net::lookup_host((address.as_str(), port))) => match result {
+                Ok(Ok(addresses)) => addresses.collect(),
+                Ok(Err(_)) => return Err(SshError::Connection),
+                Err(_) => return Err(SshError::Timeout),
+            },
+        }
     };
-    if targets.is_empty() {
+    if targets.is_empty() && via.is_none() {
         return Err(SshError::Connection);
     }
     let failure = Arc::new(Mutex::new(None));
@@ -1182,13 +1357,20 @@ async fn connect_with_authentication(
         biased;
         () = cancel.cancelled() => return Err(SshError::Canceled),
         result = handshake_with_timeout(async {
-            // Every resolved address shares the handshake's network budget.
-            let socket = connect_first_reachable(targets, tokio::net::TcpStream::connect)
-                .await
-                .ok_or(SshError::Connection)?;
-            // Best effort, as in russh's own connect: the session works without it.
-            let _ = socket.set_nodelay(true);
-            client::connect_stream(config, socket, handler).await.map_err(|_| {
+            let handle = if let Some(jump) = &via {
+                // Opening the jump channel shares the handshake's network budget.
+                let stream = jump.connection().open_jump_stream(&address, port).await?;
+                client::connect_stream(config, stream, handler).await
+            } else {
+                // Every resolved address shares the handshake's network budget.
+                let socket = connect_first_reachable(targets, tokio::net::TcpStream::connect)
+                    .await
+                    .ok_or(SshError::Connection)?;
+                // Best effort, as in russh's own connect: the session works without it.
+                let _ = socket.set_nodelay(true);
+                client::connect_stream(config, socket, handler).await
+            };
+            handle.map_err(|_| {
                 failure.lock().ok().and_then(|mut failure| failure.take()).unwrap_or(SshError::Connection)
             })
         }, host_key_checks) => result?,
@@ -1203,40 +1385,10 @@ async fn connect_with_authentication(
     let auth = tokio::select! {
         biased;
         () = cancel.cancelled() => { let _ = handle.disconnect(Disconnect::ByApplication, "canceled", "en").await; return Err(SshError::Canceled); },
-        result = tokio::time::timeout(Duration::from_secs(30), async {
-            match authentication {
-                AuthenticationMethod::Password(password) => handle.authenticate_password(username, password.expose_secret().to_owned()).await
-                    .map(|result| result.success())
-                    .map_err(|_| SshError::Authentication),
-                AuthenticationMethod::PrivateKey(key) => {
-                    let hash = handle
-                        .best_supported_rsa_hash()
-                        .await
-                        .ok()
-                        .flatten()
-                        .flatten()
-                        .or(Some(HashAlg::Sha512));
-                    handle.authenticate_publickey(username, PrivateKeyWithHashAlg::new(key, hash)).await
-                        .map(|result| result.success())
-                        .map_err(|_| SshError::Authentication)
-                }
-                AuthenticationMethod::Agent { provider, fingerprint } => {
-                    let mut agent = open_agent_client(provider).await?;
-                    let identities = agent.request_identities().await
-                        .map_err(|_| SshError::AgentUnavailable)?;
-                    let key = select_agent_identity(&identities, &fingerprint)?;
-                    let hash = handle
-                        .best_supported_rsa_hash()
-                        .await
-                        .ok()
-                        .flatten()
-                        .flatten()
-                        .or(Some(HashAlg::Sha512));
-                    handle.authenticate_publickey_with(username, key, hash, &mut agent).await
-                        .map(|result| result.success())
-                        .map_err(|_| SshError::Authentication)
-                }
-            }
+        result = auth::authenticate(&mut handle, &username, authentication, auth::Prompts {
+            prompter,
+            attempt: &attempt,
+            cancel: &cancel,
         }) => result,
     };
     // russh also returns an unsuccessful AuthResult when its reply stream ends.
@@ -1248,11 +1400,7 @@ async fn connect_with_authentication(
     if handle.is_closed() || transport_closed.is_cancelled() {
         return Err(SshError::Connection);
     }
-    let authenticated = match auth {
-        Ok(Ok(authenticated)) => authenticated,
-        Ok(Err(error)) => return Err(error),
-        Err(_) => return Err(SshError::Timeout),
-    };
+    let authenticated = auth?;
     if !repository.is_current(&attempt).await || cancel.is_cancelled() {
         let _ = handle
             .disconnect(Disconnect::ByApplication, "canceled", "en")
@@ -1264,6 +1412,18 @@ async fn connect_with_authentication(
             .disconnect(Disconnect::ByApplication, "authentication failed", "en")
             .await;
         return Err(SshError::Authentication);
+    }
+    if let Some(jump) = &via {
+        // Losing the jump host ends this transport too; report it at once
+        // instead of waiting for keepalives through a closed channel.
+        let jump_closed = jump.connection().transport_close_token();
+        let target_closed = transport_closed.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                () = jump_closed.cancelled() => target_closed.cancel(),
+                () = target_closed.cancelled() => {}
+            }
+        });
     }
     Ok(PasswordConnection {
         remote_forwards,
@@ -1282,6 +1442,7 @@ async fn connect_with_authentication(
         agent_tasks,
         algorithms,
         sftp: sftp_pool::SftpPool::default(),
+        via,
     })
 }
 
@@ -2286,12 +2447,17 @@ mod tests {
             address.ip().to_string(),
             address.port(),
             "alice".into(),
-            AuthenticationMethod::Password(SecretString::from("correct-password".to_owned())),
+            Login {
+                method: AuthenticationMethod::Password(SecretString::from(
+                    "correct-password".to_owned(),
+                )),
+                agent_forwarding: Some(connector),
+            },
+            None,
             attempt(address, host_id, 3, 5),
             repository,
             broker,
             token(),
-            Some(connector),
         )
         .await
         .expect("connected with forwarding enabled");

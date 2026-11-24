@@ -69,6 +69,8 @@ describe("terminal controller contracts", () => {
     ["credential_file", "credentialFileInvalid"],
     ["ssh_agent_unavailable", "agentUnavailable"],
     ["ssh_agent_identity_unavailable", "agentIdentityUnavailable"],
+    ["ssh_interaction_required", "interactionRequired"],
+    ["ssh_jump_unreachable", "jumpUnreachable"],
     ["vault_locked", "vaultLocked"],
     ["invalid_input", "invalidInput"],
     ["ssh_connection", "connectionFailed"],

@@ -708,6 +708,48 @@ async fn deleting_host_removes_its_tunnel_runtime_binding() {
 }
 
 #[tokio::test]
+async fn a_refused_jump_host_delete_leaves_its_tunnels_running() {
+    let fixture = Fixture::new().await;
+    let port = free_port().await;
+    let config = fixture.save(local(port, 8000), false).await;
+    let (_shell, _lease, connection) = fixture.connect(Uuid::new_v4()).await;
+    fixture
+        .vault
+        .start_tunnel(config.id, connection.connection_id, connection.generation)
+        .await
+        .unwrap();
+    let behind = capstan_vault::Host {
+        id: Uuid::new_v4(),
+        name: "Behind".into(),
+        address: "db.internal".into(),
+        jump_host_id: Some(fixture.host.id),
+        ..fixture.host.clone()
+    };
+    fixture
+        .vault
+        .save_host(behind, fixture.vault.revision().unwrap())
+        .await
+        .unwrap();
+
+    let refused = fixture
+        .vault
+        .delete_host(fixture.host.id, fixture.vault.revision().unwrap())
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), "host_in_use");
+    assert_eq!(fixture.vault.tunnels().unwrap().len(), 1);
+    assert!(fixture
+        .vault
+        .tunnel_runtime_snapshots()
+        .unwrap()
+        .iter()
+        .any(|snapshot| snapshot.id == config.id && snapshot.state == TunnelRuntimeState::Running));
+    // The listener is still bound.
+    assert!(TcpListener::bind(("127.0.0.1", port)).await.is_err());
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn tunnel_encryption_old_payload_and_backup_host_remapping() {
     let fixture = Fixture::new().await;
     let config = fixture.save(local(free_port().await, 8000), true).await;

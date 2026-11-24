@@ -46,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 theme: "graphite".into(),
                 agent_forwarding: false,
                 production: false,
+                jump_host_id: None,
             },
             manager.revision()?,
         )

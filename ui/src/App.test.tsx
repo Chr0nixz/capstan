@@ -26,6 +26,7 @@ const host = {
   id: "host-1", name: "Build Server", address: "build.example.test", port: 22, username: "deploy",
   credential_id: "credential-1", group_id: null, tags: [], favorite: false, revision: 0,
   working_directory: null, startup_command: null, encoding: "utf-8", theme: "graphite", agent_forwarding: false, production: false,
+  jump_host_id: null,
 };
 const group = { id: "group-1", name: "Platform", parent_id: null, production: false };
 const groups = [group, { id: "group-2", name: "Build", parent_id: null, production: false }];
@@ -854,6 +855,25 @@ describe("App host workflows", () => {
     await act(async () => { production?.click(); });
     await act(async () => { container.querySelector<HTMLButtonElement>("form.host-editor button[type='submit']")?.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
     expect(invoke).toHaveBeenCalledWith("save_host", expect.objectContaining({ host: expect.objectContaining({ id: "host-2", production: true }) }));
+  });
+
+  it("saves a jump host chosen from hosts that cannot loop back", async () => {
+    invoke.mockImplementation(async (command: string, args?: unknown) => command === "list_hosts"
+      ? [{ ...host }, { ...host, id: "host-2", name: "Lab box" }, { ...host, id: "host-3", name: "Behind lab", jump_host_id: "host-2" }]
+      : defaultInvoke(command, args));
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<App />); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='Edit host: Lab box']")?.click(); });
+    const select = [...container.querySelectorAll<HTMLSelectElement>(".host-editor select")]
+      .find((input) => input.getAttribute("aria-describedby") === "host-jump-hint")!;
+    expect([...select.options].map((option) => option.value)).toEqual(["", "host-1"]);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "host-1");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { container.querySelector<HTMLButtonElement>("form.host-editor button[type='submit']")?.click(); await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    expect(invoke).toHaveBeenCalledWith("save_host", expect.objectContaining({ host: expect.objectContaining({ id: "host-2", jump_host_id: "host-1" }) }));
   });
 
   it("reaches the host list from anywhere and walks it with the keyboard", async () => {

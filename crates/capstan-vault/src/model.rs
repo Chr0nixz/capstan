@@ -60,6 +60,9 @@ pub enum CredentialMaterial {
         agent: AgentKind,
         fingerprint: String,
     },
+    /// Nothing is stored; the server's password or keyboard-interactive
+    /// prompts are answered by the user at connect time.
+    Interactive {},
 }
 impl CredentialMaterial {
     pub fn kind(&self) -> &'static str {
@@ -68,6 +71,7 @@ impl CredentialMaterial {
             Self::ImportedKey { .. } => "imported_key",
             Self::KeyFile { .. } => "key_file",
             Self::Agent { .. } => "agent",
+            Self::Interactive {} => "interactive",
         }
     }
 }
@@ -130,7 +134,15 @@ pub struct Host {
     /// Production hosts carry red identity marks and stricter confirmations.
     #[serde(default)]
     pub production: bool,
+    /// The saved host this one is reached through, like OpenSSH `ProxyJump`.
+    /// Omitted when unset so vaults without jump hosts stay readable by
+    /// builds that predate the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_host_id: Option<Uuid>,
 }
+
+/// Hops a connection may pass through before reaching its host.
+pub const MAX_JUMP_HOPS: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -402,6 +414,23 @@ impl Host {
     }
 }
 impl VaultData {
+    /// The hosts `host` is reached through, nearest first. `None` when a jump
+    /// host is missing, the chain loops or it is longer than [`MAX_JUMP_HOPS`].
+    pub fn jump_chain<'a>(&'a self, host: &Host) -> Option<Vec<&'a Host>> {
+        let mut chain: Vec<&Host> = Vec::new();
+        let mut next = host.jump_host_id;
+        while let Some(id) = next {
+            if id == host.id || chain.len() == MAX_JUMP_HOPS || chain.iter().any(|hop| hop.id == id)
+            {
+                return None;
+            }
+            let hop = self.hosts.iter().find(|candidate| candidate.id == id)?;
+            chain.push(hop);
+            next = hop.jump_host_id;
+        }
+        Some(chain)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.schema != 1
             || self.hosts.len() > 4096
@@ -475,6 +504,7 @@ impl VaultData {
                 CredentialMaterial::Agent { fingerprint, .. } => {
                     bounded(fingerprint, 256, true) && fingerprint.starts_with("SHA256:")
                 }
+                CredentialMaterial::Interactive {} => true,
             };
             if !valid {
                 return Err(VaultError::InvalidData);
@@ -503,6 +533,7 @@ impl VaultData {
             host.validate()?;
             if !credentials.contains(&host.credential_id)
                 || host.group_id.is_some_and(|id| !groups.contains(&id))
+                || self.jump_chain(host).is_none()
             {
                 return Err(VaultError::InvalidData);
             }
@@ -626,6 +657,120 @@ mod record_tests {
         .unwrap();
         assert!(round_trip.production);
     }
+
+    #[test]
+    fn interactive_credentials_store_nothing_but_their_kind() {
+        let credential = Credential {
+            id: Uuid::new_v4(),
+            name: "Ask at connect".into(),
+            revision: 0,
+            material: CredentialMaterial::Interactive {},
+        };
+        let value = serde_json::to_value(&credential).unwrap();
+        assert_eq!(
+            value["material"],
+            serde_json::json!({ "kind": "interactive" })
+        );
+        assert_eq!(credential.view().kind, "interactive");
+        let decoded: Credential = serde_json::from_value(value).unwrap();
+        assert!(matches!(
+            decoded.material,
+            CredentialMaterial::Interactive {}
+        ));
+        assert!(serde_json::from_value::<CredentialMaterial>(
+            serde_json::json!({ "kind": "interactive", "value": "secret" })
+        )
+        .is_err());
+        let mut data = VaultData::default();
+        data.credentials.push(decoded);
+        data.validate().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::*;
+
+    fn host(id: u128, jump: Option<u128>) -> Host {
+        Host {
+            id: Uuid::from_u128(id),
+            name: format!("host-{id}"),
+            address: format!("10.0.0.{id}"),
+            port: 22,
+            username: "ops".into(),
+            credential_id: Uuid::from_u128(100),
+            group_id: None,
+            tags: Vec::new(),
+            favorite: false,
+            revision: 0,
+            working_directory: None,
+            startup_command: None,
+            encoding: "utf-8".into(),
+            theme: "graphite".into(),
+            agent_forwarding: false,
+            production: false,
+            jump_host_id: jump.map(Uuid::from_u128),
+        }
+    }
+
+    fn data(hosts: Vec<Host>) -> VaultData {
+        VaultData {
+            hosts,
+            credentials: vec![Credential {
+                id: Uuid::from_u128(100),
+                name: "ask".into(),
+                revision: 0,
+                material: CredentialMaterial::Interactive {},
+            }],
+            ..VaultData::default()
+        }
+    }
+
+    #[test]
+    fn jump_chains_must_exist_end_and_stay_short() {
+        let chained = data(vec![host(1, None), host(2, Some(1)), host(3, Some(2))]);
+        chained.validate().unwrap();
+        let ids: Vec<_> = chained
+            .jump_chain(&chained.hosts[2])
+            .unwrap()
+            .iter()
+            .map(|hop| hop.id)
+            .collect();
+        assert_eq!(ids, vec![Uuid::from_u128(2), Uuid::from_u128(1)]);
+        assert!(chained.jump_chain(&chained.hosts[0]).unwrap().is_empty());
+
+        for invalid in [
+            vec![host(1, Some(1))],
+            vec![host(1, Some(2)), host(2, Some(1))],
+            vec![host(1, Some(9))],
+            (1..=6)
+                .map(|id| host(id, (id > 1).then(|| id - 1)))
+                .collect(),
+        ] {
+            assert!(data(invalid).validate().is_err());
+        }
+        // Four hops are allowed; the fifth host is the first one too far.
+        data(
+            (1..=5)
+                .map(|id| host(id, (id > 1).then(|| id - 1)))
+                .collect(),
+        )
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn hosts_without_a_jump_serialize_as_before() {
+        let direct = serde_json::to_value(host(1, None)).unwrap();
+        assert!(direct.get("jump_host_id").is_none());
+        let jumped = serde_json::to_value(host(2, Some(1))).unwrap();
+        assert_eq!(
+            jumped["jump_host_id"],
+            serde_json::json!(Uuid::from_u128(1))
+        );
+        let decoded: Host = serde_json::from_value(jumped).unwrap();
+        assert_eq!(decoded.jump_host_id, Some(Uuid::from_u128(1)));
+    }
 }
 
 #[cfg(test)]
@@ -653,6 +798,7 @@ mod m3_validation_tests {
                 theme: "graphite".into(),
                 agent_forwarding: false,
                 production: false,
+                jump_host_id: None,
             }],
             credentials: vec![Credential {
                 id: credential_id,

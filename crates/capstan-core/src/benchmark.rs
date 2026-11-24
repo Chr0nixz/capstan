@@ -131,6 +131,7 @@ impl SshFixture {
                 theme: "graphite".to_owned(),
                 agent_forwarding: false,
                 production: false,
+                jump_host_id: None,
             };
             let revision = vault.status().revision.ok_or(CoreError::Locked)?;
             vault.save_host(host, revision).await?;

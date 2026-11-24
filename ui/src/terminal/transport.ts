@@ -1,5 +1,6 @@
 import { createTauriChannel, invokeTauri } from "./bridge";
 import type { StartedTerminal, TerminalLaunch, TerminalSessionId, TerminalSnapshot } from "./contracts";
+import { detectLocale } from "../i18n";
 
 export interface TerminalTransport {
   start: (launch: TerminalLaunch, output: (frame: ArrayBuffer) => void, status: (snapshot: TerminalSnapshot) => void) => Promise<StartedTerminal>;
@@ -20,7 +21,11 @@ export function createTauriTransport(): TerminalTransport {
       output.onmessage = onOutput;
       status.onmessage = onStatus;
       if (launch.kind === "ssh") {
-        return invokeTauri("start_ssh_terminal", { hostId: launch.host_id, attemptId: launch.attempt_id, reconnect: launch.reconnect, onOutput: output, onStatus: status });
+        return invokeTauri("start_ssh_terminal", {
+          hostId: launch.host_id, attemptId: launch.attempt_id, reconnect: launch.reconnect,
+          // Server prompts, such as a verification code, use the UI language.
+          locale: detectLocale(), onOutput: output, onStatus: status,
+        });
       }
       return invokeTauri("start_local_terminal", { options: launch.options, onOutput: output, onStatus: status });
     },

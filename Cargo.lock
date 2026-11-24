@@ -419,6 +419,7 @@ dependencies = [
 name = "capstan-app"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "capstan-core",
  "capstan-diagnostics",
  "capstan-native-windows",

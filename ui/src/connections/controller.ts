@@ -1,5 +1,6 @@
 import { createTerminalController, type ControllerCallbacks, type TerminalController, type TerminalFailure } from "../terminal/controller";
 import { invokeTauri } from "../terminal/bridge";
+import { detectLocale } from "../i18n";
 import type { StartedTerminal, TerminalLaunch } from "../terminal/contracts";
 import { createTauriTransport, type TerminalTransport } from "../terminal/transport";
 import { watchConnections, type ConnectionSnapshotSource } from "./feed";
@@ -19,7 +20,9 @@ type RecoveryDependencies = {
 const defaults: RecoveryDependencies = {
   transport: createTauriTransport, watch: watchConnections,
   disconnect: (snapshot) => invokeTauri("disconnect_connection", { connectionId: snapshot.connectionId, expectedGeneration: snapshot.generation }),
-  reconnect: (snapshot) => invokeTauri("reconnect_connection", { connectionId: snapshot.connectionId, expectedGeneration: snapshot.generation, attemptId: crypto.randomUUID() }),
+  reconnect: (snapshot) => invokeTauri("reconnect_connection", {
+    connectionId: snapshot.connectionId, expectedGeneration: snapshot.generation, attemptId: crypto.randomUUID(), locale: detectLocale(),
+  }),
 };
 
 /** Each replacement owns new Channels, sequence numbers and input queues. */
@@ -75,6 +78,7 @@ export function createRecoveringController(launch: TerminalLaunch, callbacks: Re
         const failures: Partial<Record<NonNullable<ConnectionSnapshot["errorCode"]>, TerminalFailure>> = {
           host_key_changed: "hostKeyChanged", ssh_authentication: "authenticationFailed", vault_locked: "vaultLocked",
           ssh_private_key_invalid: "privateKeyInvalid", ssh_agent_unavailable: "agentUnavailable", ssh_agent_identity_unavailable: "agentIdentityUnavailable",
+          ssh_interaction_required: "interactionRequired", ssh_jump_unreachable: "jumpUnreachable",
           ssh_timeout: "connectionTimedOut", canceled: "operationCanceled", invalid_input: "invalidInput", host_key_rejected: "operationCanceled",
         };
         callbacks.failure(snapshot.errorCode ? failures[snapshot.errorCode] ?? "connectionFailed" : "connectionFailed");

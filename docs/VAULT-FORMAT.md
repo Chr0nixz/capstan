@@ -27,6 +27,10 @@ The master password derives a 32-byte key-encryption key (KEK) using Argon2id v1
 
 M3 adds snippet groups, snippets and tunnel configurations to the encrypted model without changing the schema number. Missing lists decode as empty, so earlier payloads still open. Empty lists are not written, so a Vault without M3 data stays readable by earlier builds. Earlier builds reject unknown fields, so once a snippet or tunnel is saved they can no longer open that Vault or its later backups. To keep a way back, export a `.cbak` before saving the first snippet or tunnel.
 
+A credential of kind `interactive` (`{"kind":"interactive"}`, added 2026-11-21) stores nothing; the user answers the server's password or keyboard-interactive prompts at connect time. Quick connect and SSH config import create one such credential and share it. Earlier builds do not know this kind, so once one is saved they can no longer open that Vault or its later backups; export a `.cbak` first to keep a way back.
+
+A host may carry `jump_host_id` (added 2026-11-21): the id of another saved host it is reached through, like OpenSSH `ProxyJump`. The field is omitted when unset. Validation requires the jump host to exist and the chain to end without a loop within 4 hops; a host that another host jumps through cannot be deleted. Earlier builds reject the field, so once a jump host is saved they can no longer open that Vault or its later backups; a Vault without jump hosts stays readable by them.
+
 The independently generated 32-byte DEK encrypts the serialized model with XChaCha20-Poly1305. Its AAD is header bytes 0–27. The wrapped DEK uses the KEK and its separate nonce; its AAD is header bytes 0–111 followed by SHA-256 of the payload ciphertext. This authenticates the KDF metadata and binds the wrapped DEK to the payload. Changing the master password derives a new KEK and rewraps the same DEK; the payload ciphertext and its nonce stay unchanged.
 
 ## Durable writes and recovery files

@@ -6,7 +6,7 @@ export type TerminalFailure =
   | "startFailed" | "outputInvalid" | "operationFailed" | "hostKeyChanged"
   | "authenticationFailed" | "connectionFailed" | "connectionTimedOut" | "shellRejected"
   | "operationCanceled" | "privateKeyInvalid" | "credentialFileInvalid"
-  | "agentUnavailable" | "agentIdentityUnavailable" | "vaultLocked" | "invalidInput" | "workingDirectoryInvalid";
+  | "agentUnavailable" | "agentIdentityUnavailable" | "interactionRequired" | "jumpUnreachable" | "vaultLocked" | "invalidInput" | "workingDirectoryInvalid";
 export type TerminalController = ReturnType<typeof createTerminalController>;
 export type ControllerCallbacks = {
   started?: (started: StartedTerminal) => void;
@@ -133,6 +133,8 @@ export function createTerminalController(
     else if (code === "credential_file") fail("credentialFileInvalid");
     else if (code === "ssh_agent_unavailable") fail("agentUnavailable");
     else if (code === "ssh_agent_identity_unavailable") fail("agentIdentityUnavailable");
+    else if (code === "ssh_interaction_required") fail("interactionRequired");
+    else if (code === "ssh_jump_unreachable") fail("jumpUnreachable");
     else if (code === "vault_locked") fail("vaultLocked");
     else if (code === "invalid_input") fail("invalidInput");
     else if (code === "working_directory_invalid") fail("workingDirectoryInvalid");

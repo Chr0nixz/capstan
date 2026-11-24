@@ -15,6 +15,8 @@ mod diagnostics_commands;
 #[cfg(feature = "tauri-runtime")]
 mod forwarding_commands;
 #[cfg(feature = "tauri-runtime")]
+mod host_import_commands;
+#[cfg(feature = "tauri-runtime")]
 mod launch_commands;
 #[cfg(all(windows, feature = "tauri-runtime"))]
 pub use launch_commands::prepare_instance;
@@ -610,6 +612,7 @@ pub mod tauri_channel {
         host_id: Uuid,
         attempt_id: Uuid,
         reconnect: Option<crate::connection_commands::ConnectionTarget>,
+        locale: Option<String>,
         on_output: Channel<InvokeResponseBody>,
         on_status: Channel<TerminalSnapshot>,
     ) -> std::result::Result<StartedSshTerminal, CommandError> {
@@ -617,6 +620,12 @@ pub mod tauri_channel {
             return Err(CommandError::new("window_source"));
         }
         let cancellation = attempts.begin(attempt_id)?;
+        // The user is waiting on this attempt, so the server's prompts may be
+        // put to them; automatic reconnects get no permit.
+        let _prompts = broker.allow_prompts(
+            attempt_id,
+            crate::host_import_commands::NativePrompter::new(window.clone(), locale),
+        );
         let _attempt_guard = SshAttemptGuard {
             attempts: attempts.inner().clone(),
             attempt_id,
@@ -2174,6 +2183,7 @@ pub mod tauri_channel {
                 crate::settings_commands::save_desktop_preference,
                 crate::settings_commands::save_terminal_font,
                 crate::diagnostics_commands::open_diagnostics_folder,
+                crate::host_import_commands::create_interactive_credential,
                 crate::theme_commands::list_terminal_themes,
                 crate::theme_commands::preview_terminal_themes,
                 crate::theme_commands::save_terminal_theme_preview,

@@ -3,7 +3,7 @@ export type ExactGeneration = string & { readonly exactGeneration: unique symbol
 export type ConnectionState = "connecting" | "authenticating" | "online" | "reconnecting" | "disconnected" | "failed";
 export const connectionErrorCodes = [
   "ssh_timeout", "ssh_connection", "ssh_authentication", "ssh_protocol", "ssh_channel_rejected",
-  "ssh_private_key_invalid", "ssh_agent_unavailable", "ssh_agent_identity_unavailable", "host_key_unknown",
+  "ssh_private_key_invalid", "ssh_agent_unavailable", "ssh_agent_identity_unavailable", "ssh_interaction_required", "ssh_jump_unreachable", "host_key_unknown",
   "host_key_changed", "host_key_rejected", "vault_locked", "connection_lost", "reconnect_exhausted", "canceled", "invalid_input",
 ] as const;
 export type ConnectionErrorCode = typeof connectionErrorCodes[number];

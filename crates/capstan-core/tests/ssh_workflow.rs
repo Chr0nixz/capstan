@@ -125,6 +125,7 @@ async fn isolated_vault(
         theme: "graphite".into(),
         agent_forwarding: false,
         production: false,
+        jump_host_id: None,
     };
     manager
         .save_host(host.clone(), manager.revision().unwrap())

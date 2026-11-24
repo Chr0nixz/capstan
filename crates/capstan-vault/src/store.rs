@@ -931,6 +931,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         };
         let credential = Credential {
             id: credential_id,

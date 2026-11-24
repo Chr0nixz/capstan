@@ -58,6 +58,8 @@ pub enum CoreError {
     GroupInUse,
     #[error("credential is still referenced by a host")]
     CredentialInUse,
+    #[error("host is the jump host of another host")]
+    HostInUse,
     #[error("host key changed")]
     HostKeyChanged,
     #[error("backup trust conflicts require explicit host-key management")]
@@ -102,6 +104,7 @@ impl CoreError {
             Self::Conflict => "vault_conflict",
             Self::GroupInUse => "group_in_use",
             Self::CredentialInUse => "credential_in_use",
+            Self::HostInUse => "host_in_use",
             Self::HostKeyChanged => "host_key_changed",
             Self::TrustConflict => "trust_conflict",
             Self::CredentialFile => "credential_file",
@@ -191,6 +194,7 @@ pub struct HostView {
     pub theme: String,
     pub agent_forwarding: bool,
     pub production: bool,
+    pub jump_host_id: Option<Uuid>,
 }
 impl From<&Host> for HostView {
     fn from(host: &Host) -> Self {
@@ -211,6 +215,7 @@ impl From<&Host> for HostView {
             theme: host.theme.clone(),
             agent_forwarding: host.agent_forwarding,
             production: host.production,
+            jump_host_id: host.jump_host_id,
         }
     }
 }
@@ -321,12 +326,52 @@ pub struct BackupPreview {
     pub trust_conflicts: Vec<BackupTrustConflict>,
 }
 
+/// Names every hop a host is reached through, so connections through
+/// different jump hosts, accounts, credentials or host keys never share an
+/// entry. Empty for a direct connection.
+fn proxy_path(data: &VaultData, host: &Host) -> Result<String> {
+    let chain = data.jump_chain(host).ok_or(CoreError::InvalidInput)?;
+    if chain.is_empty() {
+        return Ok(String::new());
+    }
+    let mut hops = Vec::with_capacity(chain.len());
+    for hop in chain {
+        let credential = data
+            .credentials
+            .iter()
+            .find(|credential| credential.id == hop.credential_id)
+            .ok_or(CoreError::NotFound)?;
+        let target = capstan_vault::normalize_target(&hop.address)?;
+        let fingerprint = data
+            .trust
+            .iter()
+            .find(|record| record.target == target && record.port == hop.port)
+            .map(|record| record.fingerprint.clone());
+        let identity = match &credential.material {
+            CredentialMaterial::Agent { fingerprint, .. } => Some(fingerprint.clone()),
+            _ => None,
+        };
+        hops.push((
+            target,
+            hop.port,
+            hop.username.clone(),
+            credential.id,
+            credential.revision,
+            fingerprint,
+            identity,
+            hop.agent_forwarding,
+        ));
+    }
+    serde_json::to_string(&hops).map_err(|_| CoreError::TaskFailed)
+}
+
 fn connection_pool_key(
     host: &Host,
     credential_revision: u64,
     vault_epoch: u64,
     fingerprint: String,
     agent_identity: Option<String>,
+    proxy_path: String,
 ) -> capstan_ssh::PoolKey {
     capstan_ssh::PoolKey {
         target: capstan_vault::normalize_target(&host.address)
@@ -339,7 +384,7 @@ fn connection_pool_key(
         vault_epoch,
         agent_identity,
         agent_forwarding: host.agent_forwarding,
-        proxy_path: String::new(),
+        proxy_path,
     }
 }
 
@@ -354,24 +399,77 @@ fn same_host_target(left: &Host, right: &Host) -> bool {
         })
 }
 
+/// Host indices with every jump host before the hosts reached through it,
+/// otherwise in their original order.
+fn jump_order(hosts: &[Host]) -> Vec<usize> {
+    let mut order = Vec::with_capacity(hosts.len());
+    let mut placed = vec![false; hosts.len()];
+    for start in 0..hosts.len() {
+        let mut chain = Vec::new();
+        let mut next = Some(start);
+        while let Some(index) = next {
+            if placed[index] || chain.contains(&index) || chain.len() > capstan_vault::MAX_JUMP_HOPS
+            {
+                break;
+            }
+            chain.push(index);
+            next = hosts[index]
+                .jump_host_id
+                .and_then(|id| hosts.iter().position(|host| host.id == id));
+        }
+        for index in chain.into_iter().rev() {
+            placed[index] = true;
+            order.push(index);
+        }
+    }
+    order
+}
+
+/// `existing` is the same host as `incoming` reached through `jump`, the
+/// existing host its jump host already matched (`None` when direct).
+fn same_backup_host(existing: &Host, incoming: &Host, jump: Option<Uuid>) -> bool {
+    existing.jump_host_id == jump && same_host_target(existing, incoming)
+}
+
+/// Saved hosts that backup hosts duplicate, by backup host id. A host behind
+/// a jump host duplicates only a saved host behind that jump host's match.
+fn backup_host_matches(current: &VaultData, imported: &VaultData) -> HashMap<Uuid, Uuid> {
+    let mut matched = HashMap::new();
+    for index in jump_order(&imported.hosts) {
+        let incoming = &imported.hosts[index];
+        let jump = match incoming.jump_host_id {
+            None => None,
+            Some(id) => match matched.get(&id) {
+                Some(existing) => Some(*existing),
+                None => continue,
+            },
+        };
+        if let Some(existing) = current
+            .hosts
+            .iter()
+            .find(|existing| same_backup_host(existing, incoming, jump))
+        {
+            matched.insert(incoming.id, existing.id);
+        }
+    }
+    matched
+}
+
 fn build_backup_preview(current: &VaultData, imported: &VaultData) -> BackupPreview {
+    let matched = backup_host_matches(current, imported);
     let duplicate_hosts = imported
         .hosts
         .iter()
         .filter_map(|incoming| {
-            current
-                .hosts
-                .iter()
-                .find(|existing| same_host_target(existing, incoming))
-                .and_then(|existing| {
-                    capstan_vault::normalize_target(&incoming.address)
-                        .ok()
-                        .map(|target| BackupHostDuplicate {
-                            existing_name: existing.name.clone(),
-                            incoming_name: incoming.name.clone(),
-                            target,
-                            port: incoming.port,
-                        })
+            let existing_id = matched.get(&incoming.id)?;
+            let existing = current.hosts.iter().find(|host| host.id == *existing_id)?;
+            capstan_vault::normalize_target(&incoming.address)
+                .ok()
+                .map(|target| BackupHostDuplicate {
+                    existing_name: existing.name.clone(),
+                    incoming_name: incoming.name.clone(),
+                    target,
+                    port: incoming.port,
                 })
         })
         .collect();
@@ -501,15 +599,27 @@ fn merge_backup_data(current: &VaultData, imported: VaultData) -> Result<VaultDa
         merged.credentials.push(credential);
     }
 
-    for mut host in imported.hosts {
+    // Jump hosts first, so each host's jump is already mapped and a host
+    // behind a jump host only merges with a host behind the same one.
+    let order = jump_order(&imported.hosts);
+    let mut incoming: Vec<Option<Host>> = imported.hosts.into_iter().map(Some).collect();
+    for index in order {
+        let Some(mut host) = incoming.get_mut(index).and_then(Option::take) else {
+            continue;
+        };
+        let jump = host
+            .jump_host_id
+            .map(|id| host_ids.get(&id).copied().ok_or(CoreError::InvalidInput))
+            .transpose()?;
         if let Some(existing) = merged
             .hosts
             .iter()
-            .find(|existing| same_host_target(existing, &host))
+            .find(|existing| same_backup_host(existing, &host, jump))
         {
             host_ids.insert(host.id, existing.id);
             continue;
         }
+        host.jump_host_id = jump;
         let previous_id = host.id;
         host.id = Uuid::new_v4();
         host_ids.insert(previous_id, host.id);
@@ -874,18 +984,19 @@ impl VaultManager {
         let data = self.current()?.snapshot()?;
         let host = data
             .hosts
-            .into_iter()
+            .iter()
             .find(|host| host.id == host_id)
+            .cloned()
             .ok_or(CoreError::NotFound)?;
         let credential = data
             .credentials
-            .into_iter()
+            .iter()
             .find(|credential| credential.id == host.credential_id)
             .ok_or(CoreError::NotFound)?;
         let target = capstan_vault::normalize_target(&host.address)?;
         let known = self.known_host_key(&target, host.port)?;
-        let identity = match credential.material {
-            CredentialMaterial::Agent { fingerprint, .. } => Some(fingerprint),
+        let identity = match &credential.material {
+            CredentialMaterial::Agent { fingerprint, .. } => Some(fingerprint.clone()),
             _ => None,
         };
         let key = connection_pool_key(
@@ -894,6 +1005,7 @@ impl VaultManager {
             self.epoch(),
             known.map_or_else(|| format!("unknown-{attempt}"), |key| key.fingerprint),
             identity,
+            proxy_path(&data, &host)?,
         );
         Ok((host, key))
     }
@@ -1399,6 +1511,15 @@ impl VaultManager {
     }
 }
 
+/// A host's pooled connection, acquired after its jump hosts'.
+type HopFuture<'a> = std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(Host, ConnectionLease<PasswordConnection>)>>
+            + Send
+            + 'a,
+    >,
+>;
+
 const RECOVERY_SELECTION_LIFETIME: Duration = Duration::from_secs(5 * 60);
 enum ConnectMaterial {
     Password(SecretString),
@@ -1410,6 +1531,7 @@ enum ConnectMaterial {
         provider: capstan_ssh::AgentProvider,
         fingerprint: String,
     },
+    Interactive,
 }
 impl VaultManager {
     pub fn new(path: PathBuf) -> Self {
@@ -2055,6 +2177,20 @@ impl VaultManager {
         };
         self.store_credential(credential, update).await
     }
+    /// A credential that stores nothing; the user answers the server's
+    /// prompts at connect time.
+    pub async fn add_interactive_credential(&self, name: String) -> Result<Uuid> {
+        if name.trim().is_empty() || name.len() > 256 {
+            return Err(CoreError::InvalidInput);
+        }
+        let credential = Credential {
+            id: Uuid::new_v4(),
+            name,
+            revision: 0,
+            material: CredentialMaterial::Interactive {},
+        };
+        self.store_credential(credential, None).await
+    }
     #[cfg(test)]
     async fn add_credential(&self, credential: Credential) -> Result<()> {
         self.store_credential(credential, None).await.map(|_| ())
@@ -2193,13 +2329,22 @@ impl VaultManager {
     }
     pub async fn delete_host(&self, id: Uuid, expected_revision: u64) -> Result<u64> {
         let vault = self.current()?;
-        if vault.snapshot()?.revision != expected_revision {
+        let data = vault.snapshot()?;
+        if data.revision != expected_revision {
             return Err(CoreError::Conflict);
+        }
+        // Refuse before stopping tunnels, so a refused delete changes nothing.
+        // The transaction checks again against the revision it commits on.
+        if data.hosts.iter().any(|host| host.jump_host_id == Some(id)) {
+            return Err(CoreError::HostInUse);
         }
         let _forwarding = self.forwarding.gate.lock().await;
         self.stop_host_tunnels_locked(id).await?;
-        task::spawn_blocking(move || {
+        let result = task::spawn_blocking(move || {
             vault.transaction(expected_revision, move |data| {
+                if data.hosts.iter().any(|host| host.jump_host_id == Some(id)) {
+                    return Err(VaultError::AlreadyExists);
+                }
                 let before = data.hosts.len();
                 data.hosts.retain(|host| host.id != id);
                 if data.hosts.len() == before {
@@ -2210,8 +2355,11 @@ impl VaultManager {
             })
         })
         .await
-        .map_err(|_| CoreError::TaskFailed)?
-        .map_err(Into::into)
+        .map_err(|_| CoreError::TaskFailed)?;
+        match result {
+            Err(VaultError::AlreadyExists) => Err(CoreError::HostInUse),
+            other => other.map_err(Into::into),
+        }
     }
     pub async fn save_group(&self, group: Group, expected_revision: u64) -> Result<u64> {
         if group.id.is_nil() || group.name.trim().is_empty() || group.name.len() > 256 {
@@ -2375,162 +2523,200 @@ impl VaultManager {
         Host,
         capstan_ssh::ConnectionLease<capstan_ssh::PasswordConnection>,
     )> {
-        let (host, credential, credential_revision, vault_epoch) =
-            self.host_and_credential(host_id)?;
-        let authentication = match credential {
-            CredentialMaterial::Password { value } => {
-                ConnectMaterial::Password(SecretString::from(value.expose().to_owned()))
-            }
-            CredentialMaterial::ImportedKey {
-                content,
-                passphrase,
-            } => ConnectMaterial::ImportedKey {
-                content,
-                passphrase,
-            },
-            CredentialMaterial::Agent { agent, fingerprint } => ConnectMaterial::Agent {
-                provider: match agent {
-                    AgentKind::OpenSsh => capstan_ssh::AgentProvider::OpenSsh,
-                    AgentKind::Pageant => capstan_ssh::AgentProvider::Pageant,
-                },
-                fingerprint,
-            },
-            CredentialMaterial::KeyFile { path, passphrase } => {
-                let path = PathBuf::from(path);
-                let read_path = path.clone();
-                let content = task::spawn_blocking(move || read_private_key_file(&read_path))
-                    .await
-                    .map_err(|_| CoreError::TaskFailed)??;
-                capstan_ssh::validate_private_key(
-                    content.expose(),
-                    passphrase.as_ref().map(SecretText::expose),
-                )?;
-                ConnectMaterial::ImportedKey {
+        self.acquire_hop(
+            host_id,
+            attempt_id,
+            broker,
+            cancel,
+            capstan_vault::MAX_JUMP_HOPS,
+        )
+        .await
+    }
+
+    /// Acquires `host_id`'s pooled connection, first acquiring its jump host's
+    /// the same way. Every hop shares the attempt, so its trust confirmation
+    /// and authentication prompts reach the same caller.
+    fn acquire_hop(
+        &self,
+        host_id: Uuid,
+        attempt_id: Uuid,
+        broker: Arc<capstan_ssh::TrustBroker>,
+        cancel: tokio_util::sync::CancellationToken,
+        hops_left: usize,
+    ) -> HopFuture<'_> {
+        Box::pin(async move {
+            let (host, credential, credential_revision, vault_epoch) =
+                self.host_and_credential(host_id)?;
+            let authentication = match credential {
+                CredentialMaterial::Password { value } => {
+                    ConnectMaterial::Password(SecretString::from(value.expose().to_owned()))
+                }
+                CredentialMaterial::ImportedKey {
                     content,
                     passphrase,
+                } => ConnectMaterial::ImportedKey {
+                    content,
+                    passphrase,
+                },
+                CredentialMaterial::Agent { agent, fingerprint } => ConnectMaterial::Agent {
+                    provider: match agent {
+                        AgentKind::OpenSsh => capstan_ssh::AgentProvider::OpenSsh,
+                        AgentKind::Pageant => capstan_ssh::AgentProvider::Pageant,
+                    },
+                    fingerprint,
+                },
+                CredentialMaterial::Interactive {} => ConnectMaterial::Interactive,
+                CredentialMaterial::KeyFile { path, passphrase } => {
+                    let path = PathBuf::from(path);
+                    // Checking the key runs its passphrase KDF; keep it off
+                    // the async workers.
+                    let check = passphrase.clone();
+                    let content = task::spawn_blocking(move || {
+                        let content = read_private_key_file(&path)?;
+                        capstan_ssh::validate_private_key(
+                            content.expose(),
+                            check.as_ref().map(SecretText::expose),
+                        )?;
+                        Ok::<_, CoreError>(content)
+                    })
+                    .await
+                    .map_err(|_| CoreError::TaskFailed)??;
+                    ConnectMaterial::ImportedKey {
+                        content,
+                        passphrase,
+                    }
                 }
+            };
+            if host.agent_forwarding && !matches!(&authentication, ConnectMaterial::Agent { .. }) {
+                return Err(CoreError::InvalidInput);
             }
-        };
-        if host.agent_forwarding && !matches!(&authentication, ConnectMaterial::Agent { .. }) {
-            return Err(CoreError::InvalidInput);
-        }
-        let agent_forwarding = host.agent_forwarding;
-        let binding = capstan_ssh::AttemptBinding {
-            attempt_id,
-            host_id: host.id,
-            host_revision: host.revision,
-            vault_epoch,
-            target: capstan_vault::normalize_target(&host.address).map_err(CoreError::from)?,
-            port: host.port,
-        };
-        let repository: Arc<dyn capstan_ssh::TrustRepository> = Arc::new(self.clone());
-        let known = self.known_host_key(&binding.target, host.port)?;
-        let is_unknown = known.is_none();
-        let agent_identity = match &authentication {
-            ConnectMaterial::Agent { fingerprint, .. } => Some(fingerprint.clone()),
-            ConnectMaterial::Password(_) | ConnectMaterial::ImportedKey { .. } => None,
-        };
-        let pool_key = connection_pool_key(
-            &host,
-            credential_revision,
-            vault_epoch,
-            known
-                .as_ref()
-                .map(|key| key.fingerprint.clone())
-                .unwrap_or_else(|| format!("unknown-{attempt_id}")),
-            agent_identity.clone(),
-        );
-        let address = host.address.clone();
-        let username = host.username.clone();
-        let port = host.port;
-        let broker_for_connect = broker.clone();
-        let repository_for_connect = repository.clone();
-        let binding_for_connect = binding.clone();
-        let mut lease = self
-            .ssh_pool
-            .acquire_checked(
-                pool_key,
-                cancel.clone(),
-                |connection| !connection.is_closed(),
-                move |connection_cancel| async move {
-                    match authentication {
-                        ConnectMaterial::Password(password) => {
-                            capstan_ssh::connect_password(
-                                address,
-                                port,
-                                username,
-                                password,
-                                binding_for_connect,
-                                repository_for_connect,
-                                broker_for_connect,
-                                connection_cancel,
-                            )
+            let agent_forwarding = host.agent_forwarding;
+            let binding = capstan_ssh::AttemptBinding {
+                attempt_id,
+                host_id: host.id,
+                host_revision: host.revision,
+                vault_epoch,
+                target: capstan_vault::normalize_target(&host.address).map_err(CoreError::from)?,
+                port: host.port,
+            };
+            let repository: Arc<dyn capstan_ssh::TrustRepository> = Arc::new(self.clone());
+            let known = self.known_host_key(&binding.target, host.port)?;
+            let is_unknown = known.is_none();
+            let agent_identity = match &authentication {
+                ConnectMaterial::Agent { fingerprint, .. } => Some(fingerprint.clone()),
+                ConnectMaterial::Password(_)
+                | ConnectMaterial::ImportedKey { .. }
+                | ConnectMaterial::Interactive => None,
+            };
+            let via = match host.jump_host_id {
+                None => None,
+                Some(jump_id) => {
+                    let hops_left = hops_left.checked_sub(1).ok_or(CoreError::InvalidInput)?;
+                    let (_, via) = self
+                        .acquire_hop(
+                            jump_id,
+                            attempt_id,
+                            broker.clone(),
+                            cancel.clone(),
+                            hops_left,
+                        )
+                        .await?;
+                    Some(via)
+                }
+            };
+            // After the jump hosts are connected, so their newly trusted keys count.
+            let proxy = proxy_path(&self.current()?.snapshot()?, &host)?;
+            let pool_key = connection_pool_key(
+                &host,
+                credential_revision,
+                vault_epoch,
+                known
+                    .as_ref()
+                    .map(|key| key.fingerprint.clone())
+                    .unwrap_or_else(|| format!("unknown-{attempt_id}")),
+                agent_identity.clone(),
+                proxy.clone(),
+            );
+            let address = host.address.clone();
+            let username = host.username.clone();
+            let port = host.port;
+            let broker_for_connect = broker.clone();
+            let repository_for_connect = repository.clone();
+            let binding_for_connect = binding.clone();
+            let mut lease = self
+                .ssh_pool
+                .acquire_checked(
+                    pool_key,
+                    cancel.clone(),
+                    |connection| !connection.is_closed(),
+                    // Only a new connection needs the decoded key; a pooled
+                    // one is reused without running the key's KDF again.
+                    move |connection_cancel| async move {
+                        let login = match authentication {
+                            ConnectMaterial::Password(password) => {
+                                capstan_ssh::Login::password(password)
+                            }
+                            ConnectMaterial::ImportedKey {
+                                content,
+                                passphrase,
+                            } => task::spawn_blocking(move || {
+                                capstan_ssh::Login::private_key(
+                                    content.expose(),
+                                    passphrase.as_ref().map(SecretText::expose),
+                                )
+                            })
                             .await
-                        }
-                        ConnectMaterial::ImportedKey {
-                            content,
-                            passphrase,
-                        } => {
-                            capstan_ssh::connect_private_key(
-                                address,
-                                port,
-                                username,
-                                content.expose(),
-                                passphrase.as_ref().map(SecretText::expose),
-                                binding_for_connect,
-                                repository_for_connect,
-                                broker_for_connect,
-                                connection_cancel,
-                            )
-                            .await
-                        }
-                        ConnectMaterial::Agent {
-                            provider,
-                            fingerprint,
-                        } => {
-                            capstan_ssh::connect_agent(
-                                address,
-                                port,
-                                username,
+                            .map_err(|_| capstan_ssh::SshError::Protocol)??,
+                            ConnectMaterial::Interactive => capstan_ssh::Login::interactive(),
+                            ConnectMaterial::Agent {
                                 provider,
                                 fingerprint,
-                                agent_forwarding,
-                                binding_for_connect,
-                                repository_for_connect,
-                                broker_for_connect,
-                                connection_cancel,
-                            )
-                            .await
-                        }
-                    }
-                },
-            )
-            .await?;
-        if cancel.is_cancelled() || !repository.is_current(&binding).await {
-            return Err(CoreError::Canceled);
-        }
-        if is_unknown {
-            if let Some(known_key) = self.known_host_key(&binding.target, host.port)? {
-                let trusted_key = connection_pool_key(
-                    &host,
-                    credential_revision,
-                    vault_epoch,
-                    known_key.fingerprint,
-                    agent_identity,
-                );
-                self.ssh_pool.alias(&lease, trusted_key.clone()).await;
-                lease = self
-                    .ssh_pool
-                    .acquire_checked(
-                        trusted_key,
-                        cancel.clone(),
-                        |connection| !connection.is_closed(),
-                        |_| async { Err(capstan_ssh::SshError::Connection) },
-                    )
-                    .await?;
+                            } => {
+                                capstan_ssh::Login::agent(provider, fingerprint, agent_forwarding)?
+                            }
+                        };
+                        capstan_ssh::connect(
+                            address,
+                            port,
+                            username,
+                            login,
+                            via,
+                            binding_for_connect,
+                            repository_for_connect,
+                            broker_for_connect,
+                            connection_cancel,
+                        )
+                        .await
+                    },
+                )
+                .await?;
+            if cancel.is_cancelled() || !repository.is_current(&binding).await {
+                return Err(CoreError::Canceled);
             }
-        }
-        Ok((host, lease))
+            if is_unknown {
+                if let Some(known_key) = self.known_host_key(&binding.target, host.port)? {
+                    let trusted_key = connection_pool_key(
+                        &host,
+                        credential_revision,
+                        vault_epoch,
+                        known_key.fingerprint,
+                        agent_identity,
+                        proxy,
+                    );
+                    self.ssh_pool.alias(&lease, trusted_key.clone()).await;
+                    lease = self
+                        .ssh_pool
+                        .acquire_checked(
+                            trusted_key,
+                            cancel.clone(),
+                            |connection| !connection.is_closed(),
+                            |_| async { Err(capstan_ssh::SshError::Connection) },
+                        )
+                        .await?;
+                }
+            }
+            Ok((host, lease))
+        })
     }
 
     pub async fn connect_password_host_with_lease(
@@ -2901,6 +3087,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         };
         manager.save_host(host, revision).await.unwrap();
         let views = serde_json::to_string(&manager.credentials().unwrap()).unwrap();
@@ -3161,6 +3348,7 @@ mod tests {
                     theme: "graphite".into(),
                     agent_forwarding: false,
                     production: false,
+                    jump_host_id: None,
                 },
                 3,
             )
@@ -3217,6 +3405,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: true,
             production: false,
+            jump_host_id: None,
         };
         let revision = manager.revision().unwrap();
         assert_eq!(
@@ -3268,11 +3457,68 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         };
-        let disabled = connection_pool_key(&host, 0, 1, "SHA256:host".into(), None);
+        let disabled = connection_pool_key(&host, 0, 1, "SHA256:host".into(), None, String::new());
         host.agent_forwarding = true;
-        let enabled = connection_pool_key(&host, 0, 1, "SHA256:host".into(), None);
+        let enabled = connection_pool_key(&host, 0, 1, "SHA256:host".into(), None, String::new());
         assert_ne!(disabled, enabled);
+    }
+
+    #[test]
+    fn proxy_paths_name_each_hop_and_follow_its_trust() {
+        let host = |id: u128, address: &str, jump: Option<u128>| Host {
+            id: Uuid::from_u128(id),
+            name: address.into(),
+            address: address.into(),
+            port: 22,
+            username: "ops".into(),
+            credential_id: Uuid::from_u128(100),
+            group_id: None,
+            tags: vec![],
+            favorite: false,
+            revision: 0,
+            working_directory: None,
+            startup_command: None,
+            encoding: "utf-8".into(),
+            theme: "graphite".into(),
+            agent_forwarding: false,
+            production: false,
+            jump_host_id: jump.map(Uuid::from_u128),
+        };
+        let mut data = VaultData {
+            hosts: vec![
+                host(1, "gw-a.example.test", None),
+                host(2, "gw-b.example.test", None),
+                host(3, "db.internal", Some(1)),
+                host(4, "db.internal", Some(2)),
+            ],
+            credentials: vec![Credential {
+                id: Uuid::from_u128(100),
+                name: "ask".into(),
+                revision: 0,
+                material: CredentialMaterial::Interactive {},
+            }],
+            ..VaultData::default()
+        };
+        data.validate().unwrap();
+        assert_eq!(proxy_path(&data, &data.hosts[0]).unwrap(), "");
+        let through_a = proxy_path(&data, &data.hosts[2]).unwrap();
+        let through_b = proxy_path(&data, &data.hosts[3]).unwrap();
+        assert_ne!(through_a, through_b);
+        assert!(through_a.contains("gw-a.example.test"));
+        data.trust.push(TrustRecord {
+            target: "gw-a.example.test".into(),
+            port: 22,
+            algorithm: "ssh-ed25519".into(),
+            public_key: "ssh-ed25519 AAAA".into(),
+            fingerprint: "SHA256:gw".into(),
+            first_trusted_at: 0,
+            revision: 1,
+        });
+        let trusted = proxy_path(&data, &data.hosts[2]).unwrap();
+        assert_ne!(trusted, through_a);
+        assert!(trusted.contains("SHA256:gw"));
     }
 
     #[tokio::test]
@@ -3548,6 +3794,98 @@ mod tests {
     }
 
     #[test]
+    fn backup_merge_matches_hosts_behind_jump_hosts_by_route() {
+        let credential = Credential {
+            id: Uuid::new_v4(),
+            name: "Ask".into(),
+            revision: 0,
+            material: CredentialMaterial::Interactive {},
+        };
+        let host = |name: &str, address: &str, jump: Option<Uuid>| Host {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            address: address.into(),
+            port: 22,
+            username: "app".into(),
+            credential_id: credential.id,
+            group_id: None,
+            tags: vec![],
+            favorite: false,
+            revision: 0,
+            working_directory: None,
+            startup_command: None,
+            encoding: "utf-8".into(),
+            theme: "graphite".into(),
+            agent_forwarding: false,
+            production: false,
+            jump_host_id: jump,
+        };
+        let mut current = VaultData::default();
+        current.credentials.push(credential.clone());
+        let bastion = host("bastion", "gw.example.test", None);
+        let direct = host("db direct", "10.0.0.5", None);
+        current.hosts.extend([bastion.clone(), direct.clone()]);
+
+        let mut imported = VaultData::default();
+        imported.credentials.push(credential.clone());
+        let imported_bastion = host("bastion copy", "GW.example.test", None);
+        // Listed before its jump host, which the merge must map first.
+        let behind = host("db prod", "10.0.0.5", Some(imported_bastion.id));
+        let same_direct = host("db direct copy", "10.0.0.5", None);
+        let other_gw = host("other gw", "gw2.example.test", None);
+        let behind_other = host("db other", "10.0.0.5", Some(other_gw.id));
+        imported.hosts.extend([
+            behind.clone(),
+            imported_bastion.clone(),
+            same_direct.clone(),
+            other_gw.clone(),
+            behind_other.clone(),
+        ]);
+        imported.validate().unwrap();
+
+        let preview = build_backup_preview(&current, &imported);
+        let duplicates: Vec<_> = preview
+            .duplicate_hosts
+            .iter()
+            .map(|duplicate| {
+                (
+                    duplicate.incoming_name.as_str(),
+                    duplicate.existing_name.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            duplicates,
+            vec![("bastion copy", "bastion"), ("db direct copy", "db direct")]
+        );
+
+        let merged = merge_backup_data(&current, imported).unwrap();
+        merged.validate().unwrap();
+        let added: Vec<_> = merged.hosts[2..]
+            .iter()
+            .map(|added| {
+                let jump = added.jump_host_id.and_then(|id| {
+                    merged
+                        .hosts
+                        .iter()
+                        .find(|candidate| candidate.id == id)
+                        .map(|candidate| candidate.name.as_str())
+                });
+                (added.name.as_str(), jump)
+            })
+            .collect();
+        // db prod goes through the saved bastion and stays its own host.
+        assert_eq!(
+            added,
+            vec![
+                ("db prod", Some("bastion")),
+                ("other gw", None),
+                ("db other", Some("other gw")),
+            ]
+        );
+    }
+
+    #[test]
     fn backup_merge_remaps_references_renames_collisions_and_reports_trust_changes() {
         let current_credential = Uuid::new_v4();
         let current_group = Uuid::new_v4();
@@ -3584,6 +3922,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         });
 
         let incoming_credential = Uuid::new_v4();
@@ -3633,6 +3972,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         });
         imported.hosts.push(Host {
             id: Uuid::new_v4(),
@@ -3651,6 +3991,8 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            // Reached through the backup's copy of a host that is already saved.
+            jump_host_id: Some(imported.hosts[0].id),
         });
         imported.tunnels.push(capstan_vault::TunnelConfig {
             id: Uuid::new_v4(),
@@ -3669,6 +4011,8 @@ mod tests {
 
         let merged = merge_backup_data(&current, imported.clone()).unwrap();
         assert_eq!(merged.hosts.len(), 2);
+        assert_eq!(merged.hosts[1].jump_host_id, Some(current_host));
+        merged.validate().unwrap();
         assert_eq!(merged.groups.len(), 2);
         assert_eq!(merged.credentials.len(), 2);
         assert_eq!(merged.snippets.len(), 1);
@@ -3839,6 +4183,7 @@ mod tests {
                     theme: "graphite".into(),
                     agent_forwarding: false,
                     production: false,
+                    jump_host_id: None,
                 },
                 revision,
             )
@@ -3963,6 +4308,7 @@ mod tests {
                     theme: "graphite".into(),
                     agent_forwarding: false,
                     production: false,
+                    jump_host_id: None,
                 },
                 revision,
             )
@@ -4005,6 +4351,7 @@ mod tests {
             theme: "graphite".into(),
             agent_forwarding: false,
             production: false,
+            jump_host_id: None,
         };
         assert_eq!(
             startup_shell_input(&host).as_deref(),
