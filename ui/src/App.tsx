@@ -791,6 +791,7 @@ export function App(): ReactElement {
     else if (code === "backup_import_expired") setError(labels.backupPreviewExpired);
     else if (code === "credential_file") setError(labels.credentialFileInvalid);
     else if (code === "vault_kdf_policy") setError(labels.vaultPasswordPolicy);
+    else if (code === "secret_mismatch") setError(labels.secretMismatch);
     else if (code === "vault_recovery_expired") setError(labels.recoverySelectionExpired);
     else if (code === "vault_recovery_limit") setError(labels.recoveryCandidateLimit);
     else if (code === "vault_data") setError(labels.invalidVaultData);

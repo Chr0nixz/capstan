@@ -334,10 +334,12 @@ export const copy = {
     backupImported: "Encrypted backup imported.",
     autoLocked: "Vault locked after inactivity.",
     confirmMultilinePaste: (lineCount: number) => `Paste ${pluralize(lineCount, "line", "lines")} into the remote terminal?`,
+    confirmControlPaste: "The text contains control characters, such as Esc or Ctrl key codes, that the terminal may run as keystrokes. Paste it anyway?",
     confirmOsc52Write: (characterCount: number) => `Allow the remote host to replace the clipboard with ${pluralize(characterCount, "character", "characters")}?`,
     osc52ReadBlocked: "Remote clipboard reads are blocked.",
     osc52WriteFailed: "Could not write the remote clipboard request.",
     confirmExternalLink: (protocol: string, url: string) => `Open this non-web link (${protocol})?\n${url}`,
+    confirmWebLink: (host: string, url: string) => `Open a link to ${host}? The text shown may not match where it really goes.\n${url}`,
     terminalConfirmTitle: "Confirm terminal action",
     terminalConfirmAccept: "Continue",
     externalLinkFailed: "Could not open the requested link.",
@@ -363,6 +365,7 @@ export const copy = {
     connectionTimedOut: "The SSH connection or host-key confirmation timed out. Press Enter or choose Reconnect to try again.",
     shellRejected: "The SSH server refused the terminal request. Check that this account can open an interactive shell.",
     vaultPasswordPolicy: "Use at least 12 characters for the vault master password.",
+    secretMismatch: "The two entries did not match. Nothing was changed.",
     localOnlyBeforeUnlock: "Local terminals remain available while the vault is locked.",
     credentialDialogHint: isMacOS()
       ? "The password is entered in a native system dialog and never appears in this form."
@@ -918,10 +921,12 @@ export const copy = {
     backupImported: "加密备份已导入。",
     autoLocked: "因长时间未操作，加密库已锁定。",
     confirmMultilinePaste: (lineCount: number) => `要向远程终端粘贴 ${lineCount} 行内容吗？`,
+    confirmControlPaste: "要粘贴的内容含有控制字符（如 Esc 或 Ctrl 组合键），终端可能把它们当作按键执行。仍要粘贴吗？",
     confirmOsc52Write: (characterCount: number) => `允许远程主机将剪贴板替换为 ${characterCount} 个字符吗？`,
     osc52ReadBlocked: "已阻止远程主机读取剪贴板。",
     osc52WriteFailed: "无法写入远程主机请求的剪贴板内容。",
     confirmExternalLink: (protocol: string, url: string) => `要打开此非网页链接（${protocol}）吗？\n${url}`,
+    confirmWebLink: (host: string, url: string) => `要打开指向 ${host} 的链接吗？显示的文字可能与实际目标不同。\n${url}`,
     terminalConfirmTitle: "确认终端操作",
     terminalConfirmAccept: "继续",
     externalLinkFailed: "无法打开请求的链接。",
@@ -947,6 +952,7 @@ export const copy = {
     connectionTimedOut: "SSH 连接或主机指纹确认已超时。按 Enter 或选择“重新连接”再试一次。",
     shellRejected: "SSH 服务器拒绝了终端请求，请检查此账户是否允许交互式 Shell。",
     vaultPasswordPolicy: "加密库主密码至少需要 12 个字符。",
+    secretMismatch: "两次输入不一致，未做任何更改。",
     localOnlyBeforeUnlock: "加密库锁定时仍可使用本地终端。",
     credentialDialogHint: isMacOS()
       ? "密码在系统原生对话框中输入，不会出现在此表单中。"

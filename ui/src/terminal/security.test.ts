@@ -17,6 +17,13 @@ describe("terminal interaction security", () => {
     expect(pastedLineCount("first\n\nthird")).toBe(3);
     const open = vi.fn();
     expect(activateTerminalLink("https://example.test/path", () => false, open)).toBe(true);
+    // A hyperlink's text or a user name can disguise the target, so both ask.
+    const asked: string[] = [];
+    const ask = (url: URL): boolean => { asked.push(url.host); return false; };
+    expect(activateTerminalLink("https://example.test/path", ask, open, true)).toBe(false);
+    expect(activateTerminalLink("http://trusted.test@evil.test/", ask, open)).toBe(false);
+    expect(activateTerminalLink("https://user:pass@example.test/", ask, open)).toBe(false);
+    expect(asked).toEqual(["example.test", "evil.test", "example.test"]);
     expect(activateTerminalLink("mailto:hello@example.test", () => false, open)).toBe(false);
     expect(activateTerminalLink("mailto:hello@example.test", () => true, open)).toBe(true);
     expect(open).toHaveBeenCalledTimes(2);

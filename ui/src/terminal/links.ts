@@ -20,17 +20,24 @@ function count(text: string, character: string): number {
   return text.split(character).length - 1;
 }
 
-/** Drop sentence punctuation and a closing bracket whose opener sits outside the URL. */
+/**
+ * Drop sentence punctuation and a closing bracket whose opener sits outside the
+ * URL. Counts once and updates as it trims, so a long run of `)` stays linear.
+ */
 function trimUrl(text: string): string {
-  let url = text;
-  for (;;) {
-    const last = url[url.length - 1];
-    if (last === undefined) return url;
-    const opener = CLOSING_BRACKETS[last];
-    if (TRAILING_PUNCTUATION.has(last) || (opener !== undefined && count(url, last) > count(url, opener))) {
-      url = url.slice(0, -1);
-    } else return url;
+  const unmatched = new Map<string, number>();
+  for (const [closer, opener] of Object.entries(CLOSING_BRACKETS)) {
+    unmatched.set(closer, count(text, closer) - count(text, opener));
   }
+  let end = text.length;
+  while (end > 0) {
+    const last = text[end - 1] ?? "";
+    const excess = unmatched.get(last);
+    if (excess !== undefined && excess > 0) unmatched.set(last, excess - 1);
+    else if (!TRAILING_PUNCTUATION.has(last)) break;
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 function isWebUrl(text: string): boolean {

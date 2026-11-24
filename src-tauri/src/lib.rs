@@ -798,6 +798,35 @@ pub mod tauri_channel {
             .ok_or_else(|| CommandError::new("canceled"))
     }
 
+    /// Asks twice for a new secret: a typo in a new master password or backup
+    /// passphrase would otherwise lock the user out on the next unlock.
+    async fn prompt_new_native_secret(
+        window: &tauri::WebviewWindow<tauri::Wry>,
+        title: String,
+        message: String,
+        locale: &str,
+    ) -> std::result::Result<SecretText, CommandError> {
+        let first = prompt_native_secret(window, title.clone(), message, locale).await?;
+        let again = if locale.starts_with("zh") {
+            "再次输入以确认。"
+        } else {
+            "Enter it again to confirm."
+        };
+        let second = prompt_native_secret(window, title, again.to_owned(), locale).await?;
+        confirmed_secret(first, &second)
+    }
+
+    fn confirmed_secret(
+        first: SecretText,
+        second: &SecretText,
+    ) -> std::result::Result<SecretText, CommandError> {
+        if first.expose() == second.expose() {
+            Ok(first)
+        } else {
+            Err(CommandError::new("secret_mismatch"))
+        }
+    }
+
     fn native_prompt_copy(
         locale: &str,
         master: bool,
@@ -871,7 +900,7 @@ pub mod tauri_channel {
         let (title, message) = native_prompt_copy(&locale, true, None);
         vault
             .initialize(
-                prompt_native_secret(&window, title, message, &locale).await?,
+                prompt_new_native_secret(&window, title, message, &locale).await?,
                 KdfParameters::default(),
             )
             .await?;
@@ -1494,7 +1523,7 @@ pub mod tauri_channel {
                 "Enter a new Vault master password (at least 12 characters).".to_owned(),
             )
         };
-        let password = prompt_native_secret(&window, title, message, &locale).await?;
+        let password = prompt_new_native_secret(&window, title, message, &locale).await?;
         vault
             .change_master_password(password, expected_revision)
             .await?;
@@ -1520,7 +1549,7 @@ pub mod tauri_channel {
                 "Choose a separate passphrase for this .cbak backup.".to_owned(),
             )
         };
-        let password = prompt_native_secret(&window, title, message, &locale).await?;
+        let password = prompt_new_native_secret(&window, title, message, &locale).await?;
         let title = if locale.starts_with("zh") {
             "保存 Capstan 加密备份"
         } else {
@@ -2489,6 +2518,16 @@ pub mod tauri_channel {
     mod tests {
         use super::*;
         use capstan_terminal::{BackendControl, BackendParts, FrameSink};
+
+        #[test]
+        fn a_new_secret_must_be_typed_the_same_way_twice() {
+            let typed = || SecretText::new("correct horse battery".into());
+            let confirmed = confirmed_secret(typed(), &typed()).unwrap();
+            assert_eq!(confirmed.expose(), "correct horse battery");
+            let typo = SecretText::new("correct horse batery".into());
+            let error = confirmed_secret(typed(), &typo).unwrap_err();
+            assert_eq!(error.code, "secret_mismatch");
+        }
 
         /// `main` holds this context so synchronous commands can start core tasks
         /// from the AppKit thread, and setup can still block on async work.

@@ -127,9 +127,16 @@ describe("terminal view ownership", () => {
       expect(container.querySelector(".terminal-search-toolbar")).not.toBeNull();
       await act(async () => { root.unmount(); });
     });
+  });
 
-    it("asks in the app because WKWebView's window.confirm always answers false", async () => {
-      const native = vi.spyOn(window, "confirm").mockReturnValue(false);
+  describe.each([["Windows", "Win32"], ["macOS", "MacIntel"]])("confirmations on %s", (_name, platform) => {
+    beforeEach(() => { vi.spyOn(navigator, "platform", "get").mockReturnValue(platform); });
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    // window.confirm is never used: WKWebView answers false unseen, and elsewhere
+    // an Enter typed into the terminal would accept a remote request.
+    it("asks in the app with focus on Cancel", async () => {
+      const native = vi.spyOn(window, "confirm").mockReturnValue(true);
       const container = document.createElement("div");
       document.body.append(container);
       const root = createRoot(container);

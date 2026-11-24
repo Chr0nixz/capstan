@@ -217,7 +217,7 @@ async fn ssh_config_import_checks_keys_and_skips_saved_hosts() {
         .import_ssh_config_hosts(
             &plan,
             &[0, 1, 2, 3, 4],
-            vec![(home.key("locked_key"), "wrong".into())],
+            vec![(home.key("locked_key"), SecretText::new("wrong".into()))],
             names(),
         )
         .await;
@@ -231,7 +231,10 @@ async fn ssh_config_import_checks_keys_and_skips_saved_hosts() {
         .import_ssh_config_hosts(
             &plan,
             &[0, 1, 2, 3, 4],
-            vec![(home.key("locked_key"), "open sesame".into())],
+            vec![(
+                home.key("locked_key"),
+                SecretText::new("open sesame".into()),
+            )],
             names(),
         )
         .await
@@ -372,7 +375,10 @@ async fn ssh_config_import_brings_jump_hosts_along_and_matches_by_route() {
         .import_ssh_config_hosts(
             &plan,
             &[0],
-            vec![(home.key("locked_key"), "open sesame".into())],
+            vec![(
+                home.key("locked_key"),
+                SecretText::new("open sesame".into()),
+            )],
             names(),
         )
         .await

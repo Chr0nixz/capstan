@@ -17,7 +17,6 @@ use std::{
 };
 use tokio::task;
 use uuid::Uuid;
-use zeroize::Zeroize;
 
 /// Longest quick connect text accepted.
 const MAX_QUICK_TEXT: usize = 600;
@@ -421,23 +420,18 @@ impl VaultManager {
         &self,
         plan: &ImportPlan,
         indices: &[u32],
-        mut passphrases: Vec<(PathBuf, String)>,
+        passphrases: Vec<(PathBuf, SecretText)>,
         names: ImportNames,
     ) -> Result<ImportSummary> {
-        let result = self
-            .import_planned(plan, indices, &passphrases, names)
-            .await;
-        for (_, passphrase) in &mut passphrases {
-            passphrase.zeroize();
-        }
-        result
+        self.import_planned(plan, indices, &passphrases, names)
+            .await
     }
 
     async fn import_planned(
         &self,
         plan: &ImportPlan,
         indices: &[u32],
-        passphrases: &[(PathBuf, String)],
+        passphrases: &[(PathBuf, SecretText)],
         names: ImportNames,
     ) -> Result<ImportSummary> {
         if !valid_name(&names.interactive_credential) || !valid_name(&names.group) {
@@ -515,7 +509,7 @@ impl VaultManager {
             let passphrase = passphrases
                 .iter()
                 .find(|(key, _)| key == path)
-                .map(|(_, passphrase)| SecretText::new(passphrase.clone()));
+                .map(|(_, passphrase)| passphrase.clone());
             let read_path = path.clone();
             let content = task::spawn_blocking(move || read_private_key_file(&read_path))
                 .await

@@ -36,6 +36,15 @@ describe("plain-text terminal links", () => {
     expect(text("https://example.test/wiki/A_(b)")).toEqual(["https://example.test/wiki/A_(b)"]);
     expect(text("[docs](https://example.test/a), <https://example.test/b>"))
       .toEqual(["https://example.test/a", "https://example.test/b"]);
+    expect(text("(see https://example.test/a_(b)).)")).toEqual(["https://example.test/a_(b)"]);
+  });
+
+  it("trims a long run of closing brackets in linear time", () => {
+    // Recounting after every trim took over half a second for 13k brackets.
+    const run = "https://example.test/(x)" + ")".repeat(40_000) + ".";
+    const started = performance.now();
+    expect(findPlainLinks(buffer(line(run)), 0).map((link) => link.text)).toEqual(["https://example.test/(x)"]);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("maps wide characters to cells and ends a URL at full-width punctuation", () => {

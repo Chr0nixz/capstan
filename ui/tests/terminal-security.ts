@@ -7,10 +7,12 @@ const results: { name: string; passed: boolean; errors: string[] }[] = [];
 const input: Uint8Array[] = [];
 const clipboard: string[] = [];
 const activated: string[] = [];
+const hiddenTargets: boolean[] = [];
 let allowWrite = false;
 let allowPaste = false;
 let writePrompts = 0;
 let pastePrompts = 0;
+let controlPrompts = 0;
 let blockedReads = 0;
 let parsed: (() => void) | undefined;
 const container = document.querySelector<HTMLDivElement>("#terminal");
@@ -22,7 +24,8 @@ const session = createTerminalSession(container, false, {
   writeOsc52Clipboard: async text => { clipboard.push(text); },
   onOsc52ReadBlocked: () => { blockedReads++; },
   confirmMultilinePaste: () => { pastePrompts++; return allowPaste; },
-  onActivateLink: uri => { activated.push(uri); },
+  confirmControlPaste: () => { controlPrompts++; return false; },
+  onActivateLink: (uri, hidden) => { activated.push(uri); hiddenTargets.push(hidden); },
 });
 const frames = async (): Promise<void> => {
   for (let frame = 0; frame < 3; frame++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
@@ -136,9 +139,17 @@ try {
   await new Promise(resolve => setTimeout(resolve, 0));
   const bytes = new TextDecoder().decode(input[0]);
   check("approved-paste-keeps-bracketed-paste-markers", accepted.defaultPrevented && pastePrompts === 2 && input.length === 1 && bytes.startsWith("\x1b[200~") && bytes.endsWith("\x1b[201~"));
+  const single = paste("echo safe\x1b[201~text", textarea);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  check("single-line-paste-cannot-end-the-bracket-early", single.defaultPrevented && input.length === 2
+    && new TextDecoder().decode(input[1]) === "\x1b[200~echo safetext\x1b[201~");
+  paste("ls\x0f", textarea);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  check("control-character-paste-denied-before-input", controlPrompts === 1 && pastePrompts === 2 && input.length === 2);
   let opened = 0;
   check("non-http-link-denied-before-open", !activateTerminalLink("mailto:synthetic@example.test", () => false, () => { opened++; }) && opened === 0);
   check("approved-non-http-link-opens-once", activateTerminalLink("mailto:synthetic@example.test", () => true, () => { opened++; }) && opened === 1);
+  check("web-link-with-user-name-denied-before-open", !activateTerminalLink("https://synthetic.example.test@other.example.test/", () => false, () => { opened++; }) && opened === 1);
   await write("\r\nplain https://synthetic.example.test/docs. end\r\nother ssh://synthetic.example.test/x end\r\n");
   const found = session.search("synthetic.example", { caseSensitive: true, regex: false }, 1, -1);
   check("search-reads-the-real-xterm-buffer", found.count === 2 && found.index === 0);
@@ -147,6 +158,11 @@ try {
   check("plain-text-web-link-activates-without-trailing-punctuation", activated.length === 1 && activated[0] === "https://synthetic.example.test/docs");
   await clickCharacter("other ssh://", "y");
   check("plain-text-non-web-scheme-is-not-a-link", activated.length === 1);
+  // One word: xterm renders spaces inside a hyperlink as no-break spaces.
+  await write("\x1b]8;;https://hidden.example.test/\x07hyperlinked\x1b]8;;\x07 end\r\n");
+  await clickCharacter("hyperlinked", "k");
+  check("OSC8-link-reports-a-hidden-target", activated.length === 2 && activated[1] === "https://hidden.example.test/"
+    && hiddenTargets[0] === false && hiddenTargets[1] === true);
   session.dispose();
   paste("first\nsecond", textarea);
   check("disposed-paste-listener-does-not-prompt", pastePrompts === 2);
@@ -156,7 +172,7 @@ try {
 } finally {
   session.dispose();
   const report = {
-    passed: results.length === 17 && results.every(result => result.passed),
+    passed: results.length === 21 && results.every(result => result.passed),
     limitation: "Real browser/xterm policy integration with an isolated clipboard adapter; no host clipboard reads/writes or native WebView2 acceptance.",
     results,
   };

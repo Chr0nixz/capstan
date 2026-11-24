@@ -53,10 +53,12 @@ export type TerminalPaneLabels = {
   searchNoMatches: string;
   searchInvalidRegex: string;
   confirmMultilinePaste: (lineCount: number) => string;
+  confirmControlPaste: string;
   confirmOsc52Write: (characterCount: number) => string;
   osc52ReadBlocked: string;
   osc52WriteFailed: string;
   confirmExternalLink: (protocol: string, url: string) => string;
+  confirmWebLink: (host: string, url: string) => string;
   terminalConfirmTitle: string;
   terminalConfirmAccept: string;
   cancelEdit: string;
@@ -139,10 +141,10 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
   themeRef.current = theme;
   const [askInApp, confirmDialog] = useConfirm();
   const openConfirmations = useRef(0);
+  // Always in the app, never window.confirm: WKWebView's answers false without
+  // showing anything, and elsewhere its OK has focus, so an Enter typed into the
+  // terminal accepts a remote request and repeated requests trap the window.
   const askRef = useRef((body: string, remote = false): boolean | Promise<boolean> => {
-    // wry implements no WKUIDelegate confirm panel, so on macOS window.confirm
-    // returns false without showing anything.
-    if (!isMacOS()) return window.confirm(body);
     // A remote program must not swap the question a user is about to answer.
     if (remote && openConfirmations.current > 0) return false;
     openConfirmations.current += 1;
@@ -326,6 +328,8 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       // bracketed paste) once, before any target receives bytes.
       confirmMultilinePaste: (lineCount) => !!paneId && !!useWorkspace.getState().tabs.find((tab) => tab.id === tabId)?.broadcastEnabled
         || askRef.current(labelsRef.current.confirmMultilinePaste(lineCount)),
+      // Broadcast confirmation only looks at line breaks, so this one is always asked.
+      confirmControlPaste: () => askRef.current(labelsRef.current.confirmControlPaste),
       copyOnSelect: () => useDesktopPreferences.getState().preferences.copyOnSelect,
       readClipboard: () => navigator.clipboard.readText(),
       writeSelectionClipboard: async (text) => navigator.clipboard.writeText(text),
@@ -335,10 +339,12 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       onOsc52ReadBlocked: () => localMessage(labelsRef.current.osc52ReadBlocked),
       onOsc52WriteFailed: () => localMessage(labelsRef.current.osc52WriteFailed),
       onRemoteCwd: (uri) => cwdPublisher?.publish(uri),
-      onActivateLink: (uri) => {
+      onActivateLink: (uri, hiddenTarget) => {
         activateTerminalLink(
           uri,
-          (url) => askRef.current(labelsRef.current.confirmExternalLink(url.protocol, url.href)),
+          (url) => askRef.current(url.protocol === "http:" || url.protocol === "https:"
+            ? labelsRef.current.confirmWebLink(url.host, url.href)
+            : labelsRef.current.confirmExternalLink(url.protocol, url.href)),
           (url) => {
             if (isTauriAvailable()) {
               void invokeTauri("open_external_url", {
@@ -349,6 +355,7 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
               window.open(url.href, "_blank", "noopener,noreferrer");
             }
           },
+          hiddenTarget,
         );
       },
       onInputOverflow: () => localMessage(labelsRef.current.inputOverflow),

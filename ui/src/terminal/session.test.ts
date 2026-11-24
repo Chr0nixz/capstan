@@ -444,7 +444,7 @@ describe("terminal session lifecycle", () => {
     const links = provided.mock.calls[0]?.[0] as Parameters<Parameters<TerminalLinkProvider["provideLinks"]>[1]>[0];
     expect(links?.map((link) => link.text)).toEqual(["https://example.test/a"]);
     links?.[0]?.activate(new MouseEvent("click"), "https://example.test/a");
-    expect(onActivateLink).toHaveBeenCalledExactlyOnceWith("https://example.test/a");
+    expect(onActivateLink).toHaveBeenCalledExactlyOnceWith("https://example.test/a", false);
 
     // Dragging across part of a URL selects it and must not open it.
     terminal.getSelection = () => "example.test";
@@ -602,6 +602,44 @@ describe("terminal session lifecycle", () => {
     expect(await terminal.oscHandler?.("c;SGVsbG8=" )).toBe(true);
     expect(confirmOsc52).toHaveBeenCalledWith(5);
     expect(writeClipboard).not.toHaveBeenCalled();
+    session.dispose();
+  });
+
+  it("strips bracketed-paste markers from every paste and confirms control characters, even on one line", () => {
+    const terminal = fakeTerminal();
+    let controlAllowed = false;
+    const confirmControlPaste = vi.fn(() => controlAllowed);
+    const confirmMultilinePaste = vi.fn(() => true);
+    const session = createTerminalSession(document.createElement("div"), false, { terminal, confirmControlPaste, confirmMultilinePaste });
+    const paste = (text: string): Event => {
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: { getData: () => text } });
+      terminal.textarea?.dispatchEvent(event);
+      return event;
+    };
+    // A single line used to reach xterm untouched, so a pasted ESC[201~ ended the bracket early.
+    expect(paste("echo safe\x1b[201~text").defaultPrevented).toBe(true);
+    expect(terminal.paste).toHaveBeenLastCalledWith("echo safetext");
+    // Removing one marker must not leave another behind.
+    paste("a\x1b[20\x1b[201~1~b\x9b200~");
+    expect(terminal.paste).toHaveBeenLastCalledWith("ab");
+    expect(confirmControlPaste).not.toHaveBeenCalled();
+    paste("\x1b[200~\x1b[201~");
+    expect(terminal.paste).toHaveBeenCalledTimes(2);
+
+    paste("rm -rf build\x0f");
+    expect(confirmControlPaste).toHaveBeenCalledTimes(1);
+    expect(terminal.paste).toHaveBeenCalledTimes(2);
+    paste("first\x1b\nsecond");
+    expect(confirmControlPaste).toHaveBeenCalledTimes(2);
+    expect(confirmMultilinePaste).not.toHaveBeenCalled();
+    controlAllowed = true;
+    paste("ls\x7f");
+    expect(terminal.paste).toHaveBeenLastCalledWith("ls\x7f");
+    // Tabs are ordinary text.
+    paste("a\tb");
+    expect(confirmControlPaste).toHaveBeenCalledTimes(3);
+    expect(terminal.paste).toHaveBeenLastCalledWith("a\tb");
     session.dispose();
   });
 

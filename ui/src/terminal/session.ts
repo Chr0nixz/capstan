@@ -11,7 +11,7 @@ import {
   type TerminalSearchOptions,
   type TerminalSearchResult,
 } from "./search";
-import { isMultilinePaste, parseOsc52Request, pastedLineCount } from "./security";
+import { hasPasteControlCharacters, isMultilinePaste, parseOsc52Request, pastedLineCount, stripPasteBrackets } from "./security";
 import { findPlainLinks, type TerminalLink } from "./links";
 import type { TerminalTheme } from "./contracts";
 import type { TerminalThemeDefinition } from "../themes/contracts";
@@ -111,11 +111,14 @@ export type TerminalSessionOptions = {
   onInputOverflow?: (droppedBytes: number) => void;
   onParsedOutput?: (bytes: Uint8Array) => void;
   confirmMultilinePaste?: (lineCount: number) => boolean | Promise<boolean>;
+  /** Asked instead of the line count when the text holds control characters. */
+  confirmControlPaste?: () => boolean | Promise<boolean>;
   copyOnSelect?: () => boolean;
   readClipboard?: () => Promise<string>;
   writeSelectionClipboard?: (text: string) => Promise<void>;
   onSelectionCopyFailed?: () => void;
-  onActivateLink?: (uri: string) => void;
+  /** `hiddenTarget` marks an OSC 8 hyperlink, whose address is not the text on screen. */
+  onActivateLink?: (uri: string, hiddenTarget: boolean) => void;
   confirmOsc52Write?: (characterCount: number) => boolean | Promise<boolean>;
   writeOsc52Clipboard?: (text: string) => Promise<void>;
   onOsc52ReadBlocked?: () => void;
@@ -230,7 +233,7 @@ function defaultTerminal({ theme = "graphite", themes, font, onActivateLink }: T
     macOptionIsMeta: true,
     macOptionClickForcesSelection: true,
     theme: terminalPalette(theme, themes),
-    linkHandler: onActivateLink ? { activate: (_event, uri) => onActivateLink(uri) } : undefined,
+    linkHandler: onActivateLink ? { activate: (_event, uri) => onActivateLink(uri, true) } : undefined,
   });
   return terminal as unknown as TerminalLike;
 }
@@ -382,18 +385,23 @@ export function createTerminalSession(
       options.onResize?.(cols, rows);
     }
   });
-  const pasteText = (text: string): void => {
+  const pasteText = (clipboard: string): void => {
+    // xterm's paste() does not clean the text it wraps in bracketed-paste markers.
+    const text = stripPasteBrackets(clipboard);
     if (!text) return;
-    if (!isMultilinePaste(text)) { terminal.paste?.(text); return; }
     const epoch = inputEpoch;
-    whenConfirmed(options.confirmMultilinePaste?.(pastedLineCount(text)), () => {
+    const paste = (): void => {
       // The pane may have closed or been reassigned while the dialog was open.
       if (!isDisposed && !queue.isClosed && epoch === inputEpoch) terminal.paste?.(text);
-    });
+    };
+    if (hasPasteControlCharacters(text)) whenConfirmed(options.confirmControlPaste?.(), paste);
+    else if (isMultilinePaste(text)) whenConfirmed(options.confirmMultilinePaste?.(pastedLineCount(text)), paste);
+    else paste();
   };
   const pasteListener = (event: ClipboardEvent): void => {
     const text = event.clipboardData?.getData("text/plain");
-    if (text === undefined || !isMultilinePaste(text)) return;
+    if (text === undefined) return;
+    // Every text paste takes the cleaned path above instead of xterm's own.
     event.preventDefault();
     event.stopImmediatePropagation();
     pasteText(text);
@@ -436,7 +444,7 @@ export function createTerminalSession(
       callback(links.length === 0 ? undefined : links.map((link) => ({
         ...link,
         // A drag that starts and ends inside one URL selects text; it is not a click.
-        activate: (_event, text) => { if (!isDisposed && !terminal.getSelection?.()) onActivateLink(text); },
+        activate: (_event, text) => { if (!isDisposed && !terminal.getSelection?.()) onActivateLink(text, false); },
       })));
     },
   }) : undefined;

@@ -277,7 +277,8 @@ pub async fn import_ssh_config(
             .await
             .map_err(|_| CommandError::new("native_credential_ui"))?
             .ok_or_else(|| CommandError::new("canceled"))?;
-        passphrases.push((path, secret.expose().to_owned()));
+        // Kept secret, so a later cancel drops and wipes the ones already typed.
+        passphrases.push((path, secret));
     }
     let summary = vault
         .import_ssh_config_hosts(
