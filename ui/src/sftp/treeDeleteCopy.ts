@@ -1,7 +1,8 @@
+import { pluralize } from "../plural";
 export const treeDeleteCopy = {
   en: {
     title: "Delete directory contents", scanning: "Checking the directory scope…", scope: "This removes the listed directory and its contents. Symbolic links are removed without following them. Changes require a new confirmation; completed removals cannot be undone.",
-    summary: (files: number, directories: number, links: number) => `${files} files · ${directories} directories · ${links} symbolic links`,
+    summary: (files: number, directories: number, links: number) => `${pluralize(files, "file", "files")} · ${pluralize(directories, "directory", "directories")} · ${pluralize(links, "symbolic link", "symbolic links")}`,
     apply: "Delete this tree", deleting: "Deleting…", stop: "Cancel remaining", stopping: "Waiting for the current removal…",
     result: (removed: number, retained: number) => `${removed} removed · ${retained} failed or retained`,
     outcomes: { removed: "Removed", failed: "Failed", retained: "Retained" }, close: "Close", previous: "Previous results", next: "Next results",

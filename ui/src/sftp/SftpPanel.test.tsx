@@ -94,7 +94,7 @@ describe("SFTP panel", () => {
     } : previous?.(command, args));
     await act(async () => button("folder")?.click());
     await act(async () => button("Delete")?.click());
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("2 files · 1 directories");
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("2 files · 1 directory · 0 symbolic links");
     expect(mocks.invoke).toHaveBeenCalledWith("prepare_remote_tree_delete", { terminal, session: attached.sessionId, entry: page().entries[0].id });
     expect(mocks.invoke.mock.calls.some(([command]) => command === "apply_remote_tree_delete")).toBe(false);
   });

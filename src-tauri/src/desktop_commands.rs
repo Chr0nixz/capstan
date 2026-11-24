@@ -61,7 +61,8 @@ impl DesktopState {
 
     pub fn set_locale(&self, locale: &str) {
         #[cfg(windows)]
-        self.chinese.store(locale == "zh-CN", Ordering::Relaxed);
+        self.chinese
+            .store(locale.starts_with("zh"), Ordering::Relaxed);
         #[cfg(not(windows))]
         let _ = locale;
     }

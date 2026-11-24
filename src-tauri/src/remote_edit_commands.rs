@@ -39,7 +39,7 @@ pub async fn select_remote_editor(
         .map_err(|_| CommandError::new("window_source"))?
         .0 as isize;
     let selected = tokio::task::spawn_blocking(move || {
-        let (title, applications) = if locale == "zh-CN" {
+        let (title, applications) = if locale.starts_with("zh") {
             ("选择本地编辑器", "应用程序")
         } else {
             ("Select local editor", "Applications")
@@ -170,7 +170,7 @@ pub async fn close_remote_edit(
             .map_err(|_| CommandError::new("window_source"))?
             .0 as isize;
         let folder = tokio::task::spawn_blocking(move || {
-            let title = if locale == "zh-CN" {
+            let title = if locale.starts_with("zh") {
                 "保存编辑副本"
             } else {
                 "Save edited copy"

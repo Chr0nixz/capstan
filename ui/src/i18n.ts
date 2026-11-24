@@ -1,4 +1,5 @@
 import { isMacOS, shortcutLabel } from "./window/platform";
+import { pluralize } from "./plural";
 
 export const copy = {
   en: {
@@ -82,7 +83,7 @@ export const copy = {
     tunnelRunning: "Running",
     tunnelStopping: "Stopping",
     tunnelFailed: "Failed",
-    tunnelTraffic: (active: number, sent: string, received: string) => `${active} connections · Sent ${sent} · Received ${received}`,
+    tunnelTraffic: (active: number, sent: string, received: string) => `${pluralize(active, "connection", "connections")} · Sent ${sent} · Received ${received}`,
     tunnelInvalid: "Check the host, addresses and ports (1–65535).",
     tunnelBindBusy: "The listen port is already in use. Stop the other listener or choose another port.",
     tunnelRemoteRejected: "The remote forwarding request was rejected or timed out. If stopping failed, the server may still be listening; retry stopping.",
@@ -222,7 +223,6 @@ export const copy = {
     customLocalShell: "Choose a starting directory…",
     backToShells: "Back",
     workingDirectoryInvalid: "The starting directory could not be opened. Check the path or leave it blank.",
-    sshTab: (name: string) => "SSH · " + name,
     vaultLocked: "Vault locked",
     vaultReady: "Vault unlocked",
     initializeVault: "Create vault",
@@ -314,7 +314,7 @@ export const copy = {
     backupExported: "Encrypted backup exported.",
     previewVaultBackup: "Preview and import backup (.cbak)",
     backupPreviewTitle: "Review encrypted backup",
-    backupPreviewCounts: (hosts: number, groups: number, credentials: number, trust: number, snippetGroups: number, snippets: number) => `Backup contains ${hosts} hosts, ${groups} groups, ${credentials} credentials, ${trust} host keys, ${snippetGroups} snippet groups, and ${snippets} snippets.`,
+    backupPreviewCounts: (hosts: number, groups: number, credentials: number, trust: number, snippetGroups: number, snippets: number) => `Backup contains ${pluralize(hosts, "host", "hosts")}, ${pluralize(groups, "group", "groups")}, ${pluralize(credentials, "credential", "credentials")}, ${pluralize(trust, "host key", "host keys")}, ${pluralize(snippetGroups, "snippet group", "snippet groups")}, and ${pluralize(snippets, "snippet", "snippets")}.`,
     backupDuplicateHosts: "Targets already in this vault (merge keeps the existing host)",
     backupTrustConflict: "Host-key conflicts block import. Verify the incoming fingerprint through a trusted channel, cancel this preview, forget the old trust in Settings › Host keys, then preview the backup again.",
     trustedHostKeys: "Trusted SSH host keys",
@@ -329,8 +329,8 @@ export const copy = {
     backupOverwrite: "Replace vault contents",
     backupImported: "Encrypted backup imported.",
     autoLocked: "Vault locked after inactivity.",
-    confirmMultilinePaste: (lineCount: number) => `Paste ${lineCount} lines into the remote terminal?`,
-    confirmOsc52Write: (characterCount: number) => `Allow the remote host to replace the clipboard with ${characterCount} characters?`,
+    confirmMultilinePaste: (lineCount: number) => `Paste ${pluralize(lineCount, "line", "lines")} into the remote terminal?`,
+    confirmOsc52Write: (characterCount: number) => `Allow the remote host to replace the clipboard with ${pluralize(characterCount, "character", "characters")}?`,
     osc52ReadBlocked: "Remote clipboard reads are blocked.",
     osc52WriteFailed: "Could not write the remote clipboard request.",
     confirmExternalLink: (protocol: string, url: string) => `Open this non-web link (${protocol})?\n${url}`,
@@ -341,7 +341,6 @@ export const copy = {
     credentialFileInvalid: "The selected file is not a supported private key or exceeds 1 MiB.",
     hostKeyTitle: "Verify server identity",
     hostKeyChangedTitle: "Server identity changed",
-    hostKeyChangedComparison: (target: string, port: number, oldAlgorithm: string, oldFingerprint: string, newAlgorithm: string, newFingerprint: string) => `Connection to ${target}:${port} is blocked. Compare the previously trusted key (${oldAlgorithm}, ${oldFingerprint}) with the presented key (${newAlgorithm}, ${newFingerprint}) through a trusted channel.`,
     knownHostKey: "Previously trusted",
     presentedHostKey: "Presented now",
     dismissHostKeyChange: "Close and keep blocked",
@@ -635,8 +634,8 @@ export const copy = {
     tunnelProtocolFailed: "转发请求失败。请停止隧道后重试。",
     tunnelClientLimit: "该隧道已有 64 个活动连接，新连接会被关闭，直到有连接结束。",
     tunnelCanceled: "隧道已取消。",
-    tunnelConflict: "Vault 已变更，列表已刷新。请核对编辑内容后重新保存。",
-    tunnelLocked: "请解锁 Vault 后再修改或启动隧道。",
+    tunnelConflict: "加密库已变更，列表已刷新。请核对编辑内容后重新保存。",
+    tunnelLocked: "请解锁加密库后再修改或启动隧道。",
     tunnelStorageFailed: "无法保存隧道。请检查存储权限后重试。",
     tunnelLoadFailed: "无法加载隧道。",
     tunnelRetryLoad: "重试",
@@ -765,7 +764,6 @@ export const copy = {
     customLocalShell: "选择起始目录…",
     backToShells: "返回",
     workingDirectoryInvalid: "无法打开起始目录，请检查路径或留空。",
-    sshTab: (name: string) => "SSH · " + name,
     vaultLocked: "加密库已锁定",
     vaultReady: "加密库已解锁",
     initializeVault: "创建加密库",
@@ -884,7 +882,6 @@ export const copy = {
     credentialFileInvalid: "所选文件不是受支持的私钥格式，或文件超过 1 MiB。",
     hostKeyTitle: "核验服务器身份",
     hostKeyChangedTitle: "服务器身份已变化",
-    hostKeyChangedComparison: (target: string, port: number, oldAlgorithm: string, oldFingerprint: string, newAlgorithm: string, newFingerprint: string) => `已阻止连接到 ${target}:${port}。请通过可信渠道比对旧密钥（${oldAlgorithm}，${oldFingerprint}）与本次提供的新密钥（${newAlgorithm}，${newFingerprint}）。`,
     knownHostKey: "原信任密钥",
     presentedHostKey: "本次提供的密钥",
     dismissHostKeyChange: "关闭并保持阻断",
@@ -1011,7 +1008,7 @@ export const copy = {
     sshChooseHostBody: (count: number) => `有 ${count} 台已保存主机与此 SSH 链接匹配：`,
     launchHostMissing: "该已保存主机已不可用。",
     launchRequestFailed: "无法处理启动请求。",
-    launchUnlockCanceled: "Vault 仍处于锁定状态，已丢弃启动请求。",
+    launchUnlockCanceled: "加密库仍处于锁定状态，已丢弃启动请求。",
     launchCwdFallback: "WSL 无法使用所请求的 Windows 目录，已在默认目录打开。",
     sshLinkHostSaved: "主机已保存，正在连接。",
     terminalClipboardError: "无法访问剪贴板。",
@@ -1088,3 +1085,10 @@ export const copy = {
     restoreRevision: (revision: number) => `替换为修订版本 ${revision}`,
   },
 } as const;
+
+export type Locale = keyof typeof copy;
+
+/** The UI follows the WebView language; every Chinese variant uses the zh-CN copy. */
+export function detectLocale(language: string = navigator.language): Locale {
+  return language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}

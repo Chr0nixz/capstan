@@ -1,4 +1,5 @@
 import type { FileKind, SftpErrorCode } from "./contracts";
+import { pluralize } from "../plural";
 type SftpCopy = {
   title: string; path: string; go: string; parent: string; refresh: string; hidden: string; copy: string;
   follow: string; followShort: string; followHint: string; cwdAliasesMenu: string; waitingCwd: string; cwdAliases: string; cwdAliasesHint: string; cwdAliasNames: string; cwdBindAliases: string;
@@ -6,7 +7,7 @@ type SftpCopy = {
   preferencesLoadFailed: string; preferencesSaveFailed: string; preferencesRetry: string;
   preferencesExitTitle: string; preferencesExitDescription: string; preferencesRetryExit: string;
   newFile: string; newDirectory: string; rename: string; remove: string; permissions: string;
-  edit: string; editorOpening: string; editorSaving: string; editorConflict: string; editorClose: string; editorKeepRemote: string; editorReplace: string; editorSaveAs: string; editorNamePrompt: string;
+  edit: string;
   shellIntegration: string; shellIntegrationTitle: string; shellIntegrationHint: string; shell: string; action: string; install: string; uninstall: string;
   preview: string; applyIntegration: string; previewLoading: string; previewSummary: (added: number, removed: number) => string; noChanges: string;
   name: string; size: string; type: string; modified: string; next: string; previous: string; retry: string;
@@ -28,9 +29,9 @@ export const sftpCopy: Record<"en" | "zh-CN", SftpCopy> = {
     preferencesLoadFailed: "Saved panel preferences could not be read. This session's layout remains available. Check settings.json format and permissions, then retry.", preferencesSaveFailed: "Panel preferences could not be saved. This layout is kept for this session. Check the app data folder's space and permissions, then retry.", preferencesRetry: "Retry preferences",
     preferencesExitTitle: "Panel preferences did not finish saving", preferencesExitDescription: "The window stays open while the file operation finishes. You can keep working or retry closing.", preferencesRetryExit: "Retry exit",
     newFile: "New file", newDirectory: "New directory", rename: "Rename", remove: "Delete", permissions: "Permissions",
-    edit: "Edit", editorOpening: "Opening editor…", editorSaving: "Saving remote file…", editorConflict: "The remote file changed while you were editing.", editorClose: "Close editor", editorKeepRemote: "Keep remote", editorReplace: "Replace remote", editorSaveAs: "Save local as…", editorNamePrompt: "New remote filename",
+    edit: "Edit",
     shellIntegration: "Shell integration", shellIntegrationTitle: "Shell integration", shellIntegrationHint: "Preview the managed block before changing the selected remote configuration.", shell: "Shell", action: "Action", install: "Install", uninstall: "Uninstall",
-    preview: "Preview", applyIntegration: "Apply integration", previewLoading: "Reading the remote configuration…", previewSummary: (added, removed) => `Adds ${added} lines and removes ${removed} lines.`, noChanges: "No changes are needed.",
+    preview: "Preview", applyIntegration: "Apply integration", previewLoading: "Reading the remote configuration…", previewSummary: (added, removed) => `Adds ${pluralize(added, "line", "lines")} and removes ${pluralize(removed, "line", "lines")}.`, noChanges: "No changes are needed.",
     name: "Name", size: "Size", type: "Type / mode", modified: "Modified", next: "Next page", previous: "Previous page", retry: "Reconnect SFTP",
     page: (number) => `Page ${number}`, omitted: (count) => `${count} unsupported entries omitted. Supported files remain available; inspect other names in the terminal.`,
     loading: "Loading remote directory…", empty: "This directory is empty. Create a file or directory to begin.", noVisible: "No visible entries on this page. Show hidden files or open the next page.",
@@ -69,7 +70,7 @@ export const sftpCopy: Record<"en" | "zh-CN", SftpCopy> = {
     preferencesLoadFailed: "无法读取已保存的面板偏好，本次会话仍可调整布局。请检查 settings.json 格式和权限后重试。", preferencesSaveFailed: "面板偏好未能保存，本次会话仍保留当前布局。请检查应用数据目录的空间和权限后重试。", preferencesRetry: "重试",
     preferencesExitTitle: "面板偏好尚未保存完成", preferencesExitDescription: "文件操作尚未结束，窗口保持打开。你可以继续使用，或重试退出。", preferencesRetryExit: "重试退出",
     newFile: "新建文件", newDirectory: "新建目录", rename: "重命名", remove: "删除", permissions: "权限",
-    edit: "编辑", editorOpening: "正在打开编辑器…", editorSaving: "正在保存远程文件…", editorConflict: "编辑期间远程文件发生了变化。", editorClose: "关闭编辑器", editorKeepRemote: "保留远端", editorReplace: "覆盖远端", editorSaveAs: "本地另存为…", editorNamePrompt: "新的远程文件名",
+    edit: "编辑",
     shellIntegration: "Shell 集成", shellIntegrationTitle: "Shell 集成", shellIntegrationHint: "先预览受管理的配置区块，再修改当前选中的远程文件。", shell: "Shell", action: "操作", install: "安装", uninstall: "卸载",
     preview: "预览", applyIntegration: "应用集成", previewLoading: "正在读取远程配置…", previewSummary: (added, removed) => `将增加 ${added} 行，删除 ${removed} 行。`, noChanges: "无需修改。",
     name: "名称", size: "大小", type: "类型 / 权限", modified: "修改时间", next: "下一页", previous: "上一页", retry: "重新连接 SFTP",

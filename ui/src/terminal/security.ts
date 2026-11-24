@@ -25,6 +25,11 @@ export function isMultilinePaste(text: string): boolean {
   return /[\r\n]/u.test(text);
 }
 
+/** Lines the user will see in the confirmation; a final line break does not start another line. */
+export function pastedLineCount(text: string): number {
+  return text.replace(/(?:\r\n|\r|\n)$/u, "").split(/\r\n|\r|\n/u).length;
+}
+
 export function activateTerminalLink(
   value: string,
   confirmNonHttp: (url: URL) => boolean | Promise<boolean>,

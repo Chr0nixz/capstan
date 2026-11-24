@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
-import { copy } from "../i18n";
+import { copy, detectLocale } from "../i18n";
 import { invokeTauri } from "../terminal/bridge";
 import { Titlebar } from "../window/Titlebar";
 import { benchmarkCopy } from "./copy";
@@ -8,7 +8,7 @@ import { percentile } from "./ledger";
 import type { Report, Run } from "./contracts";
 
 export function BenchmarkApp(): ReactElement {
-  const locale = navigator.language.startsWith("zh") ? "zh-CN" : "en";
+  const locale = detectLocale();
   const labels = benchmarkCopy[locale];
   const host = useRef<HTMLDivElement>(null);
   const active = useRef<AbortController | undefined>(undefined);

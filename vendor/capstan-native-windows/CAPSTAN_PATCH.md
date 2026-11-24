@@ -1,5 +1,12 @@
 # Capstan native Windows boundary
 
+## Localized picker filters (2026-11-22)
+
+The private key and Vault backup pickers take their filter labels from the
+caller instead of fixed English text, so a Chinese UI shows Chinese filter
+names. `dialog_filter` builds the NUL-separated list and drops any NUL inside
+a label; a unit test checks the layout.
+
 ## M4-2 theme picker and system notifications (2026-11-04)
 
 The file picker accepts an explicit extension filter for theme import. The

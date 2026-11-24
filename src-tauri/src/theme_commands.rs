@@ -51,7 +51,7 @@ pub async fn preview_terminal_themes(
         .try_lock()
         .map_err(|_| CommandError::new("theme_unavailable"))?;
     let catalog = catalog.inner().clone();
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "选择终端配色文件"
     } else {
         "Select a terminal color scheme"

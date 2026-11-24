@@ -11,7 +11,7 @@ import {
   type TerminalSearchOptions,
   type TerminalSearchResult,
 } from "./search";
-import { isMultilinePaste, parseOsc52Request } from "./security";
+import { isMultilinePaste, parseOsc52Request, pastedLineCount } from "./security";
 import { findPlainLinks, type TerminalLink } from "./links";
 import type { TerminalTheme } from "./contracts";
 import type { TerminalThemeDefinition } from "../themes/contracts";
@@ -374,7 +374,7 @@ export function createTerminalSession(
     if (!text) return;
     if (!isMultilinePaste(text)) { terminal.paste?.(text); return; }
     const epoch = inputEpoch;
-    whenConfirmed(options.confirmMultilinePaste?.(text.split(/\r\n|\r|\n/u).length), () => {
+    whenConfirmed(options.confirmMultilinePaste?.(pastedLineCount(text)), () => {
       // The pane may have closed or been reassigned while the dialog was open.
       if (!isDisposed && !queue.isClosed && epoch === inputEpoch) terminal.paste?.(text);
     });

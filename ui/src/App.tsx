@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type ReactElement } from "react";
-import { copy } from "./i18n";
+import { copy, detectLocale } from "./i18n";
 import { snippetMutationError } from "./snippets/errors";
 import { paneStatus, tabStatus, useWorkspace, type TabStatus, type TerminalTab } from "./workspace";
 import { PaneTools, PaneWorkspace } from "./panes/PaneWorkspace";
@@ -72,7 +72,7 @@ function errorCode(error: unknown): string | undefined {
 }
 
 export function App(): ReactElement {
-  const locale: Locale = navigator.language.startsWith("zh") ? "zh-CN" : "en";
+  const locale: Locale = detectLocale();
   const labels = copy[locale];
   const themes = useTerminalThemes((state) => state.themes);
   useEffect(() => {

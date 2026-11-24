@@ -191,7 +191,7 @@ pub async fn select_transfer_source(
         .map_err(error)
     };
     context()?;
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "选择上传文件"
     } else {
         "Select file to upload"
@@ -240,7 +240,7 @@ pub async fn select_transfer_folder_plan(
         },
     )
     .map_err(error)?;
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "选择上传文件夹"
     } else {
         "Select folder to upload"
@@ -272,7 +272,7 @@ pub async fn select_transfer_folder_download_plan(
     locale: String,
 ) -> Result<Option<capstan_core::transfer::TreePlanSummary>, CommandError> {
     let label = source(&window)?;
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "选择下载位置"
     } else {
         "Select download folder"
@@ -361,7 +361,7 @@ pub async fn select_transfer_destination(
         .map_err(error)
     };
     let name = context()?.remote_file_name().map(str::to_owned);
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "保存下载文件"
     } else {
         "Save downloaded file"
@@ -477,7 +477,7 @@ pub async fn select_recovered_transfer_destination(
     sftp.transfer_context_for_recovered_download(&label, &terminal.0, session, descriptor)
         .await
         .map_err(error)?;
-    let title = if locale == "zh-CN" {
+    let title = if locale.starts_with("zh") {
         "重新选择原下载目标"
     } else {
         "Select the original download destination"

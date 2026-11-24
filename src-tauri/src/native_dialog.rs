@@ -29,20 +29,31 @@ pub async fn pick(
 
     let parent = window.hwnd().map_err(io::Error::other)?.0 as isize;
     let chinese = locale.starts_with("zh");
+    let all_files = if chinese { "所有文件" } else { "All files" };
     tauri::async_runtime::spawn_blocking(move || match picker {
-        Picker::File { save, .. } => pick_file(
-            title,
-            if chinese { "所有文件" } else { "All files" },
-            parent,
-            save,
-        ),
+        Picker::File { save, .. } => pick_file(title, all_files, parent, save),
         Picker::Folder => pick_folder(title, parent),
-        Picker::PrivateKey => capstan_native_windows::pick_private_key_file(title, parent),
-        Picker::Backup { save: false } => {
-            capstan_native_windows::pick_vault_backup_file(title, parent)
-        }
-        Picker::Backup { save: true } => {
-            capstan_native_windows::save_vault_backup_file(title, parent)
+        Picker::PrivateKey => capstan_native_windows::pick_private_key_file(
+            title,
+            if chinese {
+                "私钥文件"
+            } else {
+                "Private key files"
+            },
+            all_files,
+            parent,
+        ),
+        Picker::Backup { save } => {
+            let filter = if chinese {
+                "Capstan 加密备份"
+            } else {
+                "Capstan encrypted backup"
+            };
+            if save {
+                capstan_native_windows::save_vault_backup_file(title, filter, all_files, parent)
+            } else {
+                capstan_native_windows::pick_vault_backup_file(title, filter, all_files, parent)
+            }
         }
         Picker::Theme => pick_file_with_pattern(
             title,

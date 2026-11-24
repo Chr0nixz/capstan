@@ -83,8 +83,29 @@ impl PromptedSecret {
     }
 }
 
+/// Builds a common-dialog filter: label and pattern pairs separated by NUL, closed by a double NUL.
+/// Labels are localized copy, so an embedded NUL is dropped rather than splitting the list.
 #[cfg(windows)]
-pub fn pick_private_key_file(title: &str, parent: isize) -> io::Result<Option<std::path::PathBuf>> {
+fn dialog_filter(entries: &[(&str, &str)]) -> Vec<u16> {
+    let mut filter = Vec::new();
+    for (label, pattern) in entries {
+        for part in [label, pattern] {
+            filter.extend(part.encode_utf16().filter(|unit| *unit != 0));
+            filter.push(0);
+        }
+    }
+    filter.push(0);
+    filter
+}
+
+/// `filter` and `all_files` are the localized labels of the two filter entries.
+#[cfg(windows)]
+pub fn pick_private_key_file(
+    title: &str,
+    filter: &str,
+    all_files: &str,
+    parent: isize,
+) -> io::Result<Option<std::path::PathBuf>> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::{
         Foundation::HWND,
@@ -95,9 +116,7 @@ pub fn pick_private_key_file(title: &str, parent: isize) -> io::Result<Option<st
     };
     const BUFFER_CAPACITY: usize = 32_768;
     let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let filter: Vec<u16> = "Private key files\0*.*\0All files\0*.*\0\0"
-        .encode_utf16()
-        .collect();
+    let filter = dialog_filter(&[(filter, "*.*"), (all_files, "*.*")]);
     let mut file = vec![0_u16; BUFFER_CAPACITY];
     let mut dialog = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -131,7 +150,12 @@ pub fn pick_private_key_file(title: &str, parent: isize) -> io::Result<Option<st
 }
 
 #[cfg(not(windows))]
-pub fn pick_private_key_file(_: &str, _: isize) -> io::Result<Option<std::path::PathBuf>> {
+pub fn pick_private_key_file(
+    _: &str,
+    _: &str,
+    _: &str,
+    _: isize,
+) -> io::Result<Option<std::path::PathBuf>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "native file picker is unavailable",
@@ -141,6 +165,8 @@ pub fn pick_private_key_file(_: &str, _: isize) -> io::Result<Option<std::path::
 #[cfg(windows)]
 fn select_vault_backup_file(
     title: &str,
+    filter: &str,
+    all_files: &str,
     parent: isize,
     save: bool,
 ) -> io::Result<Option<std::path::PathBuf>> {
@@ -154,9 +180,7 @@ fn select_vault_backup_file(
     };
     const BUFFER_CAPACITY: usize = 32_768;
     let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let filter: Vec<u16> = "Capstan encrypted backup\0*.cbak\0All files\0*.*\0\0"
-        .encode_utf16()
-        .collect();
+    let filter = dialog_filter(&[(filter, "*.cbak"), (all_files, "*.*")]);
     let default_extension: Vec<u16> = "cbak\0".encode_utf16().collect();
     let mut file = vec![0_u16; BUFFER_CAPACITY];
     let mut dialog = OPENFILENAMEW {
@@ -201,24 +225,35 @@ fn select_vault_backup_file(
     )))
 }
 
+/// `filter` and `all_files` are the localized labels of the two filter entries.
 #[cfg(windows)]
 pub fn pick_vault_backup_file(
     title: &str,
+    filter: &str,
+    all_files: &str,
     parent: isize,
 ) -> io::Result<Option<std::path::PathBuf>> {
-    select_vault_backup_file(title, parent, false)
+    select_vault_backup_file(title, filter, all_files, parent, false)
 }
 
+/// `filter` and `all_files` are the localized labels of the two filter entries.
 #[cfg(windows)]
 pub fn save_vault_backup_file(
     title: &str,
+    filter: &str,
+    all_files: &str,
     parent: isize,
 ) -> io::Result<Option<std::path::PathBuf>> {
-    select_vault_backup_file(title, parent, true)
+    select_vault_backup_file(title, filter, all_files, parent, true)
 }
 
 #[cfg(not(windows))]
-pub fn pick_vault_backup_file(_: &str, _: isize) -> io::Result<Option<std::path::PathBuf>> {
+pub fn pick_vault_backup_file(
+    _: &str,
+    _: &str,
+    _: &str,
+    _: isize,
+) -> io::Result<Option<std::path::PathBuf>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "native Windows file dialogs are unavailable",
@@ -226,7 +261,12 @@ pub fn pick_vault_backup_file(_: &str, _: isize) -> io::Result<Option<std::path:
 }
 
 #[cfg(not(windows))]
-pub fn save_vault_backup_file(_: &str, _: isize) -> io::Result<Option<std::path::PathBuf>> {
+pub fn save_vault_backup_file(
+    _: &str,
+    _: &str,
+    _: &str,
+    _: isize,
+) -> io::Result<Option<std::path::PathBuf>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "native Windows file dialogs are unavailable",
@@ -417,6 +457,20 @@ pub fn atomic_replace(source: &Path, target: &Path, replace: bool) -> io::Result
         ));
     }
     std::fs::rename(source, target)
+}
+
+#[cfg(all(test, windows))]
+mod filter_tests {
+    use super::dialog_filter;
+
+    #[test]
+    fn dialog_filter_pairs_localized_labels_and_drops_embedded_nul() {
+        let filter = dialog_filter(&[("加密备份", "*.cbak"), ("All\0 files", "*.*")]);
+        let expected: Vec<u16> = "加密备份\0*.cbak\0All files\0*.*\0\0"
+            .encode_utf16()
+            .collect();
+        assert_eq!(filter, expected);
+    }
 }
 
 #[cfg(all(test, windows))]

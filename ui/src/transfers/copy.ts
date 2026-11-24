@@ -1,4 +1,5 @@
 import type { TransferState } from "./contracts";
+import { pluralize } from "../plural";
 type Copy = {
   title: string; upload: string; uploadFolder: string; download: string; downloadFolder: string; cancel: string; pause: string; resume: string; retry: string; replace: string; rename: string; skip: string; name: string;
   empty: string; noReplace: string; typeConflict: string; cleanup: string; conflict: string; changed: string; retryConnection: string; openConnection: string; exitTitle: string; exitDescription: string; keepOpen: string; exit: string;
@@ -31,7 +32,7 @@ export const transferCopy: Record<"en" | "zh-CN", Copy> = {
     conflict: "Review destination", changed: "The destination exists or changed. Review this version before replacing it.",
     exitTitle: "File operations are still active", exitDescription: "Keep Capstan open to continue, or cancel remaining transfers and directory deletions, then exit. Current removals and final commits finish before exit. Completed deletions cannot be undone.", keepOpen: "Keep open", exit: "Cancel remaining operations and exit",
     eta: (seconds) => `${seconds}s remaining`,
-    batch: (name, files) => `Folder batch: ${name} · ${files} files`, batchScope: (count) => `Apply to the ${count} existing destinations in this folder batch`,
+    batch: (name, files) => `Folder batch: ${name} · ${pluralize(files, "file", "files")}`, batchScope: (count) => count === 1 ? "Apply to the existing destination in this folder batch" : `Apply to the ${count} existing destinations in this folder batch`,
     batchHelp: "Only the versions checked for this batch are included. Changed destinations need another decision. Save as applies to this file.",
     replaceBatch: "Replace batch conflicts", skipBatch: "Skip batch conflicts",
     residuals: "Interrupted transfer files", recoveryIncomplete: "Some recovery records could not be read. Unverified files were left untouched.",

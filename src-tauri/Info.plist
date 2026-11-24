@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri merges this into the macOS bundle and embeds it in dev builds.
+     Without CFBundleLocalizations, AppKit resolves the app to English, so open and
+     save panels, system-added menu items and WebView context menus stay English
+     on a Chinese system even though the WebView reports zh-CN. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
+</dict>
+</plist>
