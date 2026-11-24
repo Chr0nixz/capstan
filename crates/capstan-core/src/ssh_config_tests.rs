@@ -455,3 +455,17 @@ fn a_missing_config_yields_nothing() {
     let empty = MemoryFiles::default().with("/home/me/.ssh/config", "# nothing\n");
     assert_eq!(parse_with(&empty), Parsed::default());
 }
+
+#[test]
+fn home_paths_use_the_platform_separator() {
+    let home = Path::new("/home/me");
+    // A key chosen in the file picker has exactly this form, separators included.
+    let key = home.join(".ssh").join("key");
+    assert_eq!(expand_home("~/.ssh/key", home).as_os_str(), key.as_os_str());
+    #[cfg(windows)]
+    assert_eq!(
+        expand_home("~\\.ssh\\key", home).as_os_str(),
+        key.as_os_str()
+    );
+    assert_eq!(expand_home("~", home), home);
+}

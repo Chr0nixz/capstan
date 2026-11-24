@@ -504,8 +504,9 @@ impl VaultManager {
                 continue;
             }
             let text = path.to_string_lossy().into_owned();
+            // Compared as paths: Windows accepts either separator.
             let saved = data.credentials.iter().find(|credential| {
-                matches!(&credential.material, CredentialMaterial::KeyFile { path, .. } if *path == text)
+                matches!(&credential.material, CredentialMaterial::KeyFile { path: saved, .. } if Path::new(saved) == path)
             });
             if let Some(credential) = saved {
                 key_credentials.insert(path.clone(), credential.id);

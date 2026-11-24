@@ -627,7 +627,11 @@ fn expand_home(value: &str, home: &Path) -> PathBuf {
         .strip_prefix("~/")
         .or_else(|| value.strip_prefix("~\\"))
     {
-        home.join(rest)
+        // Rebuild with the platform separator so `~/.ssh/key` names the same
+        // path, in the same form, as a key chosen in the file picker.
+        let mut path = home.to_owned();
+        path.extend(Path::new(rest).components());
+        path
     } else {
         PathBuf::from(value)
     }
