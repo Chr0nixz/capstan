@@ -74,6 +74,54 @@ pub struct DesktopPreferences {
     pub quake_enabled: bool,
     pub quake_hotkey: Option<String>,
     pub quake_height_percent: u8,
+    /// `None` keeps the platform's default font stack.
+    pub terminal_font_family: Option<String>,
+    pub terminal_font_size: u8,
+}
+
+/// Matches xterm's own default, so an unset size changes nothing.
+pub const DEFAULT_TERMINAL_FONT_SIZE: u8 = 15;
+const TERMINAL_FONT_SIZES: std::ops::RangeInclusive<u8> = 8..=32;
+const MAX_TERMINAL_FONT_FAMILY_CHARS: usize = 256;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalFont {
+    pub family: Option<String>,
+    pub size: u8,
+}
+
+impl Default for TerminalFont {
+    fn default() -> Self {
+        Self {
+            family: None,
+            size: DEFAULT_TERMINAL_FONT_SIZE,
+        }
+    }
+}
+
+impl TerminalFont {
+    /// The family is a CSS font-family list that xterm splices into a canvas
+    /// font string, so characters that could end or extend that string are
+    /// refused. A blank family means the platform default.
+    fn validate(mut self) -> Result<Self, SettingsError> {
+        if !TERMINAL_FONT_SIZES.contains(&self.size) {
+            return Err(SettingsError::Invalid);
+        }
+        self.family = match self.family.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some(family)
+                if family.chars().count() > MAX_TERMINAL_FONT_FAMILY_CHARS
+                    || family.chars().any(|character| {
+                        character.is_control() || ";{}<>\\".contains(character)
+                    }) =>
+            {
+                return Err(SettingsError::Invalid);
+            }
+            Some(family) => Some(family.to_owned()),
+        };
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -326,6 +374,35 @@ impl Settings {
         .map_err(|_| SettingsError::Unavailable)?
     }
 
+    pub async fn save_terminal_font(
+        self: Arc<Self>,
+        font: TerminalFont,
+    ) -> Result<DesktopPreferences, SettingsError> {
+        let font = font.validate()?;
+        let pending = self.admit()?;
+        tokio::task::spawn_blocking(move || {
+            let _pending = pending;
+            let _guard = self.gate.lock().map_err(|_| SettingsError::Unavailable)?;
+            let (mut document, storage) = self.read()?;
+            decode_desktop(&document)?;
+            document.insert("schemaVersion".into(), Value::from(1));
+            match font.family {
+                Some(family) => document.insert("terminalFontFamily".into(), Value::from(family)),
+                None => document.remove("terminalFontFamily"),
+            };
+            if font.size == DEFAULT_TERMINAL_FONT_SIZE {
+                document.remove("terminalFontSize");
+            } else {
+                document.insert("terminalFontSize".into(), Value::from(font.size));
+            }
+            let desktop = decode_desktop(&document)?;
+            commit_document(document, storage)?;
+            Ok(desktop)
+        })
+        .await
+        .map_err(|_| SettingsError::Unavailable)?
+    }
+
     pub fn recent_hosts(&self) -> Result<Vec<uuid::Uuid>, SettingsError> {
         let _guard = self.gate.lock().map_err(|_| SettingsError::Unavailable)?;
         let (document, _) = self.read()?;
@@ -526,6 +603,7 @@ fn decode_desktop(document: &Map<String, Value>) -> Result<DesktopPreferences, S
         })
     };
     let quake = decode_quake(document)?;
+    let font = decode_terminal_font(document)?;
     Ok(DesktopPreferences {
         copy_on_select: setting("copyOnSelect", false)?,
         system_notifications: setting("systemNotifications", true)?,
@@ -533,7 +611,37 @@ fn decode_desktop(document: &Map<String, Value>) -> Result<DesktopPreferences, S
         quake_enabled: quake.enabled,
         quake_hotkey: quake.hotkey,
         quake_height_percent: quake.height_percent,
+        terminal_font_family: font.family,
+        terminal_font_size: font.size,
     })
+}
+
+fn decode_terminal_font(document: &Map<String, Value>) -> Result<TerminalFont, SettingsError> {
+    let font = TerminalFont {
+        family: match document.get("terminalFontFamily") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(family)) => Some(family.clone()),
+            Some(_) => return Err(SettingsError::Invalid),
+        },
+        size: document
+            .get("terminalFontSize")
+            .map_or(Ok(DEFAULT_TERMINAL_FONT_SIZE), |value| {
+                value
+                    .as_u64()
+                    .and_then(|value| u8::try_from(value).ok())
+                    .ok_or(SettingsError::Invalid)
+            })?,
+    };
+    // A stored blank family would read back as the default but never be
+    // written that way; refuse it like any other malformed field.
+    if font
+        .family
+        .as_deref()
+        .is_some_and(|family| family.trim() != family || family.is_empty())
+    {
+        return Err(SettingsError::Invalid);
+    }
+    font.validate()
 }
 
 fn decode_quake(document: &Map<String, Value>) -> Result<QuakePreferences, SettingsError> {
@@ -625,7 +733,7 @@ mod tests {
         let defaults = serde_json::to_value(decode_desktop(&Map::new()).unwrap()).unwrap();
         for (key, value) in defaults.as_object().unwrap() {
             assert_eq!(value, &fixture["settingsDefaults"][key]);
-            if key == "quakeHotkey" && value.is_null() {
+            if matches!(key.as_str(), "quakeHotkey" | "terminalFontFamily") && value.is_null() {
                 continue;
             }
             assert_eq!(
@@ -669,6 +777,108 @@ mod tests {
                 Err(SettingsError::Invalid)
             );
         }
+    }
+
+    #[test]
+    fn terminal_font_accepts_css_family_lists_and_refuses_what_could_escape_them() {
+        let font = |family: Option<&str>, size| TerminalFont {
+            family: family.map(str::to_owned),
+            size,
+        };
+        assert_eq!(
+            decode_terminal_font(&Map::new()),
+            Ok(TerminalFont::default())
+        );
+        assert_eq!(
+            font(
+                Some(r#"  "Sarasa Mono SC", 'JetBrains Mono', 微软雅黑, monospace "#),
+                13
+            )
+            .validate()
+            .unwrap()
+            .family
+            .as_deref(),
+            Some(r#""Sarasa Mono SC", 'JetBrains Mono', 微软雅黑, monospace"#)
+        );
+        assert_eq!(
+            font(Some("   "), 15).validate(),
+            Ok(TerminalFont::default())
+        );
+        for size in [7, 33] {
+            assert_eq!(font(None, size).validate(), Err(SettingsError::Invalid));
+        }
+        for family in [
+            "a;b", "a{b", "a}b", "a<b", "a>b", "a\\b", "a\nb", "a\u{7f}b",
+        ] {
+            assert_eq!(
+                font(Some(family), 15).validate(),
+                Err(SettingsError::Invalid)
+            );
+        }
+        assert_eq!(
+            font(Some(&"x".repeat(257)), 15).validate(),
+            Err(SettingsError::Invalid)
+        );
+        for stored in [
+            serde_json::json!({ "terminalFontFamily": 1 }),
+            serde_json::json!({ "terminalFontFamily": "" }),
+            serde_json::json!({ "terminalFontFamily": " Menlo" }),
+            serde_json::json!({ "terminalFontSize": 300 }),
+            serde_json::json!({ "terminalFontSize": "15" }),
+        ] {
+            assert_eq!(
+                decode_desktop(stored.as_object().unwrap()),
+                Err(SettingsError::Invalid)
+            );
+        }
+    }
+
+    #[cfg(any(windows, unix))]
+    #[tokio::test]
+    async fn terminal_font_saves_preserve_other_settings_and_defaults_are_not_stored() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("settings.json");
+        std::fs::write(&path, br#"{"schemaVersion":1,"copyOnSelect":true}"#).unwrap();
+        let settings = Arc::new(Settings::new(root.path().to_owned()));
+        let saved = settings
+            .clone()
+            .save_terminal_font(TerminalFont {
+                family: Some(" Menlo, monospace ".into()),
+                size: 13,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            saved.terminal_font_family.as_deref(),
+            Some("Menlo, monospace")
+        );
+        assert_eq!(saved.terminal_font_size, 13);
+        assert!(saved.copy_on_select);
+        let stored = decode_document(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(stored["terminalFontFamily"], "Menlo, monospace");
+        assert_eq!(stored["terminalFontSize"], 13);
+
+        assert_eq!(
+            settings
+                .clone()
+                .save_terminal_font(TerminalFont {
+                    family: Some("a;b".into()),
+                    size: 13,
+                })
+                .await,
+            Err(SettingsError::Invalid)
+        );
+        let reset = settings
+            .clone()
+            .save_terminal_font(TerminalFont::default())
+            .await
+            .unwrap();
+        assert_eq!(reset.terminal_font_family, None);
+        assert_eq!(reset.terminal_font_size, DEFAULT_TERMINAL_FONT_SIZE);
+        let stored = decode_document(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(!stored.contains_key("terminalFontFamily"));
+        assert!(!stored.contains_key("terminalFontSize"));
+        assert_eq!(stored["copyOnSelect"], true);
     }
 
     #[cfg(any(windows, unix))]

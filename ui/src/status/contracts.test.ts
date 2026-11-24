@@ -36,6 +36,6 @@ it("pins future M4 DTO names and settings defaults", () => {
   expect(fixture.launchRequestKinds).toEqual(["focus", "local", "host", "ssh"]);
   expect(fixture.launchRequest).toEqual({ requestId: "22222222-2222-4222-8222-222222222222", kind: "ssh", display: "user@example.test:22" });
   expect(fixture.settingsDefaults).toEqual({ copyOnSelect: false, systemNotifications: true, jumpListRecentHosts: false,
-    quakeEnabled: false, quakeHotkey: null, quakeHeightPercent: 50, checkUpdatesOnStartup: false });
+    quakeEnabled: false, quakeHotkey: null, quakeHeightPercent: 50, terminalFontFamily: null, terminalFontSize: 15, checkUpdatesOnStartup: false });
   expect(fixture.errorCodes.hello).toEqual(["hello_unavailable", "hello_canceled", "hello_key_missing", "hello_mismatch", "hello_data"]);
 });

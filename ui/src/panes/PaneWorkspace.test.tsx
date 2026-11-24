@@ -17,7 +17,7 @@ vi.mock("../terminal/bridge", () => ({ isTauriAvailable: () => true }));
 vi.mock("../terminal/session", () => ({
   createTerminalSession: (host: HTMLElement, _visible: boolean, options: TerminalSessionOptions) => {
     const session = {
-      write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), focus: vi.fn(), flushInput: vi.fn(() => []), stopInput: vi.fn(), resumeInput: vi.fn(),
+      write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), setFont: vi.fn(), focus: vi.fn(), flushInput: vi.fn(() => []), stopInput: vi.fn(), resumeInput: vi.fn(),
       search: vi.fn(), clearSearch: vi.fn(), settleOutput: vi.fn(async () => undefined), dispose: vi.fn(), rendererMounted: true, disposed: false,
       hasSelection: vi.fn(() => false), mouseReporting: vi.fn(() => false), copySelection: vi.fn(), pasteFromClipboard: vi.fn(), clearScreen: vi.fn(),
     };

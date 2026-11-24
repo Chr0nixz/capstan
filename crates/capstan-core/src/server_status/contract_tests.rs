@@ -50,6 +50,8 @@ struct SettingsDefaults {
     quake_enabled: bool,
     quake_hotkey: Option<String>,
     quake_height_percent: u8,
+    terminal_font_family: Option<String>,
+    terminal_font_size: u8,
     check_updates_on_startup: bool,
 }
 
@@ -119,6 +121,8 @@ fn shared_m4_wire_contract() {
             quake_enabled: false,
             quake_hotkey: None,
             quake_height_percent: 50,
+            terminal_font_family: None,
+            terminal_font_size: 15,
             check_updates_on_startup: false,
         })
     );

@@ -2158,6 +2158,7 @@ pub mod tauri_channel {
                 crate::settings_commands::save_sftp_panel_preferences,
                 crate::settings_commands::load_desktop_preferences,
                 crate::settings_commands::save_desktop_preference,
+                crate::settings_commands::save_terminal_font,
                 crate::theme_commands::list_terminal_themes,
                 crate::theme_commands::preview_terminal_themes,
                 crate::theme_commands::save_terminal_theme_preview,

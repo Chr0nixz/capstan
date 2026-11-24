@@ -21,6 +21,9 @@ export type DesktopPreferences = {
   quakeEnabled: boolean;
   quakeHotkey: string | null;
   quakeHeightPercent: number;
+  /** `null` keeps the platform's default font stack. */
+  terminalFontFamily: string | null;
+  terminalFontSize: number;
 };
 export type DesktopPreference = "copyOnSelect" | "systemNotifications" | "jumpListRecentHosts";
 

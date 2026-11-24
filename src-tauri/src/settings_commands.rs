@@ -1,7 +1,7 @@
 //! Only the selected app root's bounded, nonsecret panel preference DTO is exposed.
 use crate::CommandError;
 use capstan_core::settings::{
-    DesktopPreference, DesktopPreferences, PanelLayout, PanelPreferences, Settings,
+    DesktopPreference, DesktopPreferences, PanelLayout, PanelPreferences, Settings, TerminalFont,
 };
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -48,6 +48,22 @@ pub async fn save_desktop_preference(
         .inner()
         .clone()
         .save_desktop_preference(preference, value)
+        .await
+        .map_err(|error| CommandError::new(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn save_terminal_font(
+    window: tauri::WebviewWindow,
+    settings: State<'_, Arc<Settings>>,
+    family: Option<String>,
+    size: u8,
+) -> Result<DesktopPreferences, CommandError> {
+    source(&window)?;
+    settings
+        .inner()
+        .clone()
+        .save_terminal_font(TerminalFont { family, size })
         .await
         .map_err(|error| CommandError::new(error.to_string()))
 }

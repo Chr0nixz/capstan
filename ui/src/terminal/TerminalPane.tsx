@@ -287,9 +287,11 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
     };
     const inputQueue = paneId ? new RoutedInputQueue(captureInput) : undefined;
     const localMessage = (message: string): void => session.writeLocal(new TextEncoder().encode(`\r\n${message}\r\n`));
+    const desktop = useDesktopPreferences.getState().preferences;
     const session = createTerminalSession(element, visibleRef.current, {
       theme,
       themes,
+      font: { family: desktop.terminalFontFamily, size: desktop.terminalFontSize },
       inputQueue,
       sendInput: async (bytes) => {
         if (!paneId) return controller?.sendInput(bytes) ?? Promise.reject(new Error("session_closed"));
@@ -434,6 +436,9 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
 
   useEffect(() => { sessionRef.current?.setVisible(visible); if (!visible) closeMenu(); }, [visible, tabId]);
   useEffect(() => { sessionRef.current?.setTheme(theme, themes); }, [theme, themes]);
+  useEffect(() => {
+    sessionRef.current?.setFont({ family: preferences.terminalFontFamily, size: preferences.terminalFontSize });
+  }, [preferences.terminalFontFamily, preferences.terminalFontSize]);
   // Focusing a checkbox/header in a different pane must not steal focus back
   // into xterm. Tab activation and explicit terminal actions request it here.
   useEffect(() => { if (visible && focused) sessionRef.current?.focus(); }, [visible, focusRequest, tabId, launch]);

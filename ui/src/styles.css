@@ -1155,7 +1155,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .form-pair { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: start; gap: 10px; }
 .form-pair.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .form-pair.address { grid-template-columns: minmax(0, 1fr) 88px; }
-.vault-settings input[type="number"] { max-width: 140px; }
+.vault-settings input[type="number"], .terminal-font-settings input[type="number"] { max-width: 140px; }
 
 .host-editor { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .host-editor .sheet-body { display: grid; align-content: start; gap: 18px; }

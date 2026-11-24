@@ -8,7 +8,7 @@ import { TerminalPane } from "./TerminalPane";
 import { useWorkspace } from "../workspace";
 
 const mocks = vi.hoisted(() => ({
-  session: { write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), focus: vi.fn(), stopInput: vi.fn(), search: vi.fn(() => ({ index: 0, count: 1, match: null, invalidExpression: false })), clearSearch: vi.fn(), dispose: vi.fn(),
+  session: { write: vi.fn(), writeLocal: vi.fn(), setVisible: vi.fn(), setTheme: vi.fn(), setFont: vi.fn(), focus: vi.fn(), stopInput: vi.fn(), search: vi.fn(() => ({ index: 0, count: 1, match: null, invalidExpression: false })), clearSearch: vi.fn(), dispose: vi.fn(),
     hasSelection: vi.fn(() => false), mouseReporting: vi.fn(() => false), copySelection: vi.fn(), pasteFromClipboard: vi.fn(), clearScreen: vi.fn() },
   controller: { ended: false, sendInput: vi.fn(), acknowledge: vi.fn(), resize: vi.fn(), dispose: vi.fn(async () => undefined) },
   create: vi.fn(),

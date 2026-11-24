@@ -5,6 +5,7 @@ import { useConfirm } from "../ui/ConfirmDialog";
 import { saveDesktopPreference, useDesktopPreferences, useTerminalThemes } from "./store";
 import type { DesktopPreference, TerminalThemeDefinition, ThemePreview } from "./contracts";
 import { QuakeSettings } from "../window/QuakeSettings";
+import { TerminalFontSettings } from "./TerminalFontSettings";
 import { isMacOS } from "../window/platform";
 
 type Locale = keyof typeof copy;
@@ -106,6 +107,7 @@ export function ThemeSettings({ locale }: { locale: Locale }): ReactElement {
       {recentCleared && <p role="status" className="quiet-copy">{labels.recentHostsCleared}</p>}</>}
       {(preferenceError || preferencesLoadError) && <p className="sftp-dialog-error" role="alert">{labels.desktopPreferencesError}</p>}
     </div>
+    <TerminalFontSettings locale={locale} />
     <QuakeSettings locale={locale} />
     <div className="settings-group">
       <h4>{labels.terminalTheme}</h4>

@@ -45,6 +45,8 @@
     "quakeEnabled": false,
     "quakeHotkey": null,
     "quakeHeightPercent": 50,
+    "terminalFontFamily": null,
+    "terminalFontSize": 15,
     "checkUpdatesOnStartup": false
   },
   "errorCodes": {

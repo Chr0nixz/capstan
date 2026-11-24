@@ -61,7 +61,7 @@ export interface TerminalLike {
   clear?: () => void;
   attachCustomKeyEventHandler?: (handler: (event: KeyboardEvent) => boolean) => void;
   parser?: { registerOscHandler: (identifier: number, callback: (data: string) => boolean | Promise<boolean>) => Disposable };
-  options?: { theme?: Record<string, string> };
+  options?: { theme?: Record<string, string>; fontFamily?: string; fontSize?: number };
 }
 
 /** xterm 5.4 dispatches SGR reports synchronously through onData with the
@@ -90,9 +90,13 @@ export type RendererAddon = { dispose: () => void; onContextLoss?: (callback: ()
 export type RendererFactory = (terminal: TerminalLike) => RendererAddon;
 export type FitAddonLike = { fit: () => void };
 
+export type TerminalFont = { family: string | null; size: number };
+
 export type TerminalSessionOptions = {
   theme?: TerminalTheme;
   themes?: readonly TerminalThemeDefinition[];
+  /** A null family keeps the platform's default font stack. */
+  font?: TerminalFont;
   terminal?: TerminalLike;
   rendererFactory?: RendererFactory;
   fitAddonFactory?: (terminal: TerminalLike) => FitAddonLike;
@@ -124,6 +128,7 @@ export type TerminalSession = {
   writeLocal: (data: Uint8Array) => void;
   setVisible: (visible: boolean) => void;
   setTheme: (theme: TerminalTheme, themes?: readonly TerminalThemeDefinition[]) => void;
+  setFont: (font: TerminalFont) => void;
   hasSelection: () => boolean;
   mouseReporting: () => boolean;
   copySelection: () => Promise<void>;
@@ -206,11 +211,18 @@ function whenConfirmed(answer: boolean | Promise<boolean> | undefined, run: () =
   else if (answer) run();
 }
 
-function defaultTerminal({ theme = "graphite", themes, onActivateLink }: TerminalSessionOptions): TerminalLike {
+export const DEFAULT_FONT_SIZE = 15;
+
+export function defaultFontFamily(): string {
+  return isMacOS()
+    ? 'Menlo, "PingFang SC", "Apple Color Emoji", monospace'
+    : '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace';
+}
+
+function defaultTerminal({ theme = "graphite", themes, font, onActivateLink }: TerminalSessionOptions): TerminalLike {
   const terminal = new Terminal({
-    fontFamily: isMacOS()
-      ? 'Menlo, "PingFang SC", "Apple Color Emoji", monospace'
-      : '"Cascadia Mono", "Microsoft YaHei UI", Consolas, monospace',
+    fontFamily: font?.family ?? defaultFontFamily(),
+    fontSize: font?.size ?? DEFAULT_FONT_SIZE,
     allowTransparency: false,
     allowProposedApi: true,
     scrollback: SCROLLBACK_LINES,
@@ -495,6 +507,16 @@ export function createTerminalSession(
     setTheme(nextTheme: TerminalTheme, themes): void {
       if (isDisposed || !terminal.options) return;
       terminal.options.theme = terminalPalette(nextTheme, themes);
+    },
+    setFont(font: TerminalFont): void {
+      if (isDisposed || !terminal.options) return;
+      const family = font.family ?? defaultFontFamily();
+      if (terminal.options.fontFamily === family && terminal.options.fontSize === font.size) return;
+      terminal.options.fontFamily = family;
+      terminal.options.fontSize = font.size;
+      // The cell size changed, so the grid must be refitted; a hidden pane
+      // refits when it becomes visible again.
+      fitTerminal();
     },
     hasSelection: () => !!terminal.getSelection?.(),
     mouseReporting,

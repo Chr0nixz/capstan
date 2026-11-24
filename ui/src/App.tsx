@@ -85,7 +85,9 @@ export function App(): ReactElement {
       if (active && typeof preferences?.copyOnSelect === "boolean" && typeof preferences.systemNotifications === "boolean"
         && typeof preferences.jumpListRecentHosts === "boolean" && typeof preferences.quakeEnabled === "boolean"
         && (preferences.quakeHotkey === null || typeof preferences.quakeHotkey === "string")
-        && Number.isInteger(preferences.quakeHeightPercent)) {
+        && Number.isInteger(preferences.quakeHeightPercent)
+        && (preferences.terminalFontFamily === null || typeof preferences.terminalFontFamily === "string")
+        && Number.isInteger(preferences.terminalFontSize)) {
         useDesktopPreferences.setState({ preferences, ready: true, loadError: false });
       }
     }).catch(() => { if (active) useDesktopPreferences.setState({ ready: false, loadError: true }); });

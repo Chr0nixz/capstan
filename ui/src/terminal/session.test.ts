@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createTerminalSession, SCROLLBACK_LINES, terminalPalette,
+  createTerminalSession, DEFAULT_FONT_SIZE, defaultFontFamily, SCROLLBACK_LINES, terminalPalette,
   type Disposable, type TerminalLike, type TerminalLinkProvider,
 } from "./session";
 import { InputQueue } from "./inputQueue";
@@ -479,6 +479,41 @@ describe("terminal session lifecycle", () => {
       background: "#f7f8fa",
       foreground: "#24292f",
     }));
+    session.dispose();
+  });
+
+  it("passes the configured font to xterm and keeps the platform stack for a null family", () => {
+    const configured = createTerminalSession(document.createElement("div"), false, {
+      font: { family: '"JetBrains Mono", monospace', size: 13 },
+      fitAddonFactory: () => ({ fit: () => undefined }),
+    });
+    expect(defaultTerminalMock.options).toEqual(expect.objectContaining({ fontFamily: '"JetBrains Mono", monospace', fontSize: 13 }));
+    configured.dispose();
+    const fallback = createTerminalSession(document.createElement("div"), false, {
+      fitAddonFactory: () => ({ fit: () => undefined }),
+    });
+    expect(defaultTerminalMock.options).toEqual(expect.objectContaining({ fontFamily: defaultFontFamily(), fontSize: DEFAULT_FONT_SIZE }));
+    fallback.dispose();
+  });
+
+  it("changes the font in place and refits only a visible pane when the font differs", () => {
+    const terminal = fakeTerminal();
+    terminal.options = { fontFamily: defaultFontFamily(), fontSize: DEFAULT_FONT_SIZE };
+    const fit = vi.fn();
+    const session = createTerminalSession(document.createElement("div"), true, { terminal, fitAddonFactory: () => ({ fit }) });
+    fit.mockClear();
+    session.setFont({ family: null, size: DEFAULT_FONT_SIZE });
+    expect(fit).not.toHaveBeenCalled();
+    session.setFont({ family: "Menlo", size: 18 });
+    expect(terminal.options).toEqual(expect.objectContaining({ fontFamily: "Menlo", fontSize: 18 }));
+    expect(fit).toHaveBeenCalledTimes(1);
+    session.setVisible(false);
+    session.setFont({ family: null, size: 12 });
+    expect(terminal.options).toEqual(expect.objectContaining({ fontFamily: defaultFontFamily(), fontSize: 12 }));
+    expect(fit).toHaveBeenCalledTimes(1);
+    session.setVisible(true);
+    expect(fit).toHaveBeenCalledTimes(2);
+    expect(terminal.disposeCount).toBe(0);
     session.dispose();
   });
 

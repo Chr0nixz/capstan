@@ -100,6 +100,7 @@ export type Commands = {
   load_desktop_preferences: { args: { locale: string }; result: DesktopPreferences };
   save_desktop_preference: { args: { preference: DesktopPreference; value: boolean }; result: DesktopPreferences };
   save_quake_preferences: { args: { enabled: boolean; hotkey: string | null; heightPercent: number }; result: DesktopPreferences };
+  save_terminal_font: { args: { family: string | null; size: number }; result: DesktopPreferences };
   quake_status: { args: undefined; result: { enabled: boolean; errorCode: string | null } };
   update_status: { args: undefined; result: UpdateStatus };
   check_update: { args: undefined; result: UpdateStatus };
