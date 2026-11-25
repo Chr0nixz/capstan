@@ -110,6 +110,6 @@ pnpm -C ui test
 ## Git 与协作
 
 - 提交信息遵循 Conventional Commits（如 `feat(ssh): add agent auth`）。
-- 未经维护者要求不要提交或推送；不要直接推送到 `main`。
+- 默认直接提交到 `main`，不新建分支或 PR；在 worktree 或其他分支完成的工作，交付后快进合并回 `main`。未经维护者要求不要推送。
 - `.gitattributes` 将文本文件统一为 LF。
 - 开发环境为 Windows 11，Shell 为 Git Bash 和 PowerShell，注意路径分隔符和换行符。
