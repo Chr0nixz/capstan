@@ -347,11 +347,11 @@ A low-luminance neutral ladder with warm legends, one amber accent, and two oper
 - **Graphite ladder** (graphite-frame, graphite-canvas, graphite-chrome, graphite-panel): Frame is the title bar; Canvas is the workspace, active tab, input wells, and terminal; Chrome carries the sidebar, tab strip, remote-files panel, queues, and settings groups; Panel is only for things that float.
 - **Keycap Face** (keycap-face, with hover and pressed steps): Raised controls, monogram keys, the selected segment, and row hover. Graphite Selected marks selected file rows.
 - **Edges and dividers** (keycap-edge, keycap-edge-strong, quiet-divider, soft-divider): One-pixel control outlines (strong on hover), structural separators, and row separators.
-- **Legends** (warm-legend, bright-legend, muted-legend, faint-legend): Warm is primary text (11.2:1 on Chrome); Bright is for headings, hovered controls, active tabs, and field values; Muted is for secondary labels and resting icons (6.1:1); Faint is for group labels, table headers, and placeholders (4.8:1) and is the floor for any text.
+- **Legends** (warm-legend, bright-legend, muted-legend, faint-legend): Warm is primary text (11.2:1 on Chrome); Bright is for headings, hovered controls, active tabs, and field values; Muted is for secondary labels and resting icons (6.1:1); Faint is for group labels, table headers, and placeholders (4.8:1) and is the floor for any text. Faint holds 4.5:1 only on base surfaces: on the hover face, a hover tint, or a selected row it drops to 3.9–4.4:1, so text there steps up to Muted (4.9:1 or better).
 - **Terminal** (terminal-legend, terminal-selection): A warm xterm foreground and an amber-brown selection; the cursor is Signal Amber.
 
 ### Paper Colorway
-The light set maps role for role, with Paper Amber, Red, and Green darkened to text grade (4.8–5.5:1) and Ink Faint above 4.5:1 on Paper Chrome. Paper Well is the one pure white, used only inside fields. When an SSH host uses the light terminal theme, its terminal, remote-files panel, queues, and file dialogs switch to Paper; the title bar, sidebar, tab strip, and sheets stay graphite.
+The light set maps role for role, with Paper Amber, Red, and Green darkened to text grade (4.8–5.5:1) and Ink Faint above 4.5:1 on Paper Chrome but not on Paper Selected (4.1:1), where it steps up to Ink Muted (4.8:1) as in graphite. Paper Well is the one pure white, used only inside fields. When an SSH host uses the light terminal theme, its terminal, remote-files panel, queues, and file dialogs switch to Paper; the title bar, sidebar, tab strip, and sheets stay graphite.
 
 ### Named Rules
 **The One Accent Key Rule.** Amber marks state only: active, selected, focused, toggled, or in progress. Never use it as a panel wash, a decorative border, a destructive action, or a heading color.
@@ -399,9 +399,9 @@ The half-pixel steps (11.5px, 12.5px) sit very close to their neighbors. New tex
 
 A 36px title bar sits over two columns: a 272px host sidebar and a flexible terminal area. The sidebar heading, tab strip, sheet headers, and remote-files header share one 34px row, so their bottom edges form a single line. The terminal sits flush on Canvas (10px top, 6px right and bottom, 14px left padding) with no card or border.
 
-The remote-files panel docks right (36% default, 280px minimum) or bottom (42% default), resizes from its leading edge between 20% and 60%, and collapses to a 34px strip without remounting the terminal. The transfer and remote-edit queues stack under the terminal behind 32px headings. The sidebar can hide at any width except while the vault is locked, because unlocking lives there; host editing and vault management open in a 460px sheet from its edge.
+The remote-files panel docks right (30% default, 280px minimum) or bottom (42% default, 300px minimum but never more than half the height), resizes from its leading edge between 20% and 60%, and collapses to a 34px strip without remounting the terminal. The transfer and remote-edit queues stack under the terminal behind 32px headings. The sidebar can hide at any width except while the vault is locked, because unlocking lives there; host editing and vault management open in a 460px sheet from its edge.
 
-Compaction follows the workspace, not the window. Under a 760px workspace the remote-files panel starts collapsed and a right-docked panel stacks under the terminal. Inside the panel, columns yield before names truncate: the title hides under 540px, Modified under 420px, Type and mode under 340px. Under a 720px window the sidebar starts closed as an overlay and sheets take the full width.
+Compaction follows the workspace, not the window. Under a 760px workspace the remote-files panel starts collapsed and a right-docked panel stacks under the terminal. The panel also starts collapsed when it would leave any pane under 80 columns (docked right) or 15 rows (docked bottom, e.g. a short window or an open queue); opening it then is a session-only choice. Inside the panel, columns yield before names truncate: the title hides under 540px, Modified under 420px, Type and mode under 340px. Under a 720px window the sidebar starts closed as an overlay and sheets take the full width.
 
 Spacing follows an observed 4, 6, 8, 12, 16, 22px rhythm: 4–6px inside control clusters, 8–12px between rows and in gutters, 16px in sheets, 22px in dialogs. Controls are 28px, fields 30px, footer and dialog actions 32px, file rows 28px, host rows 46px.
 
@@ -442,7 +442,7 @@ Depth comes from tonal layering first, along the graphite ladder; shadows appear
 
 Square-first with gently softened corners: 3–4px for small controls and fields; 7px for rows, settings groups, messages, and popovers; 6px and 9px for the large keys so they read as keycaps; 10px for dialogs. Fully round shapes are reserved for signal lights, count badges, chips, and the Follow toggle.
 
-Borders are one-pixel hairlines in Keycap Edge (controls) or Quiet Divider (structure). Focus is one 2px Signal Amber outline with no glow, offset 1px outside or inset 2–3px inside tight rows. Icons are authored line icons on a 16px grid with a 1.4px stroke and round caps and joins, in currentColor; caption buttons use 1px glyphs.
+Borders are one-pixel hairlines in Keycap Edge (controls) or Quiet Divider (structure). Focus is one 2px Signal Amber outline with no glow, offset 1px outside or inset 2–3px inside tight rows and menu items. Focus never borrows the hover face alone: hover and focus can be on two different items at once. Icons are authored line icons on a 16px grid with a 1.4px stroke and round caps and joins, in currentColor; caption buttons use 1px glyphs.
 
 ## Components
 
@@ -496,8 +496,8 @@ Every button is a small keycap: tactile, quiet, and confident.
 - **Header:** A folder icon, the title, the production chip, and the host in faint Mono Small; three file keys plus More; then the dock and collapse keys after a hairline.
 - **Splitter:** A 5px edge whose 2px line shows Keycap Edge Strong on hover and amber while focused or dragged.
 - **Path row:** Parent, Refresh, a mono path field with an inset go key, and the Follow toggle at its end. Follow is quiet when on (a raised face with a Quiet Green dot), breathes amber only while waiting for a directory hint, and its dot goes hollow once the session ends. The server-hostname editor takes a row only while Follow waits, while it is open, or when it reports an error; the More menu opens it at any time.
-- **Menus:** Panel popovers of 28px items with icons, separators, key hints, and Delete in Safety Red Text.
-- **Table:** A sticky Caption header, right-aligned tabular sizes, and middle-truncated names that keep the extension. Directory icons are Muted Legend, symlinks green, files faint. Hover adds a 3% tint; selection adds a 2px amber inner edge on the first cell.
+- **Menus:** Panel popovers of 28px items with icons, separators, key hints, and Delete in Safety Red Text. Hover raises an item to the hover face; keyboard focus adds the 2px amber outline inset 2px. Key hints are Faint at rest and Muted on a hovered or focused item.
+- **Table:** A sticky Caption header, right-aligned tabular sizes, and middle-truncated names that keep the extension. Directory icons are Muted Legend, symlinks green, files faint. Hover adds a 3% tint; selection adds a 2px amber inner edge on the first cell. On a hovered or selected row the faint mode digits turn Muted.
 - **Busy, footer, ended:** A 2px amber sweep under the controls while busy, a Caption footer for the drop hint and pagination, and a quiet Keycap Face note once the session behind the panel has ended.
 
 ### Transfer and remote-edit queues
@@ -506,7 +506,7 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Command palette
 - A Panel popover 76px from the top, under the tab strip, with no scrim, so the workspace stays visible. A 44px search row, a scrolling list, and a 30px Chrome hint row of keycaps (↑ ↓, Enter, Esc).
-- Rows are 30px menu items, not keycaps: a faint kind icon, the label, a production chip, faint mono detail, and a shortcut keycap on the right. The active row takes the hover face. Empty search shows sections (Recent, Hosts, Snippets, Local shells, Workspace, Panels, Terminal theme); typing ranks one flat list, label prefixes first.
+- Rows are 30px menu items, not keycaps: a faint kind icon, the label, a production chip, faint mono detail, and a shortcut keycap on the right. The active row takes the hover face and a 1px Signal Amber inner ring, and its icon and detail turn Muted. Empty search shows sections (Recent, Hosts, Snippets, Local shells, Workspace, Panels, Terminal theme); typing ranks one flat list, label prefixes first.
 - Focus stays in the search field; the active row is announced through `aria-activedescendant` and kept in view.
 
 ### Split panes and broadcast

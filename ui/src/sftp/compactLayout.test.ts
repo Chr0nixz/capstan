@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { crowdsTerminal, effectiveLayout, narrowestPaneShare, resolveLayoutChange } from "./compactLayout";
+import { crowdsTerminal, crowdsTerminalRows, effectiveLayout, narrowestPaneShare, resolveLayoutChange, shortestPaneShare } from "./compactLayout";
 import type { PaneId, PaneNode } from "../panes/contracts";
 
 const open = { dock: "right" as const, size: 36, collapsed: false };
@@ -51,5 +51,40 @@ describe("terminal columns", () => {
     // A bottom dock never takes columns.
     expect(crowdsTerminal(1020, { ...layout, dock: "bottom" }, right(pane("a"), pane("b")), 15)).toBe(false);
     expect(crowdsTerminal(0, layout, pane("a"), 15)).toBe(false);
+  });
+});
+
+describe("terminal rows", () => {
+  const pane = (id: string): PaneNode => ({ kind: "pane", paneId: id as PaneId, launch: { kind: "local", options: {} } });
+  const right = (first: PaneNode, second: PaneNode): PaneNode => ({ kind: "split", direction: "horizontal", ratio: 0.5, first, second });
+  const down = (first: PaneNode, second: PaneNode, ratio = 0.5): PaneNode => ({ kind: "split", direction: "vertical", ratio, first, second });
+  const bottom = { dock: "bottom" as const, size: 42, collapsed: false };
+
+  it("measures the shortest pane across stacked splits only", () => {
+    expect(shortestPaneShare(pane("a"))).toBe(1);
+    expect(shortestPaneShare(right(pane("a"), pane("b")))).toBe(1);
+    expect(shortestPaneShare(down(pane("a"), pane("b"), 0.7))).toBeCloseTo(0.3);
+    expect(shortestPaneShare(down(pane("a"), down(pane("b"), pane("c"))))).toBeCloseTo(0.25);
+  });
+
+  it("folds a bottom-docked panel that would leave a pane under 15 rows", () => {
+    // The default 1,280 x 800 window leaves 665 px: the panel takes 300 and the terminal keeps ~19 rows.
+    expect(crowdsTerminalRows(665, bottom, pane("a"), 15)).toBe(false);
+    // The panel never takes more than half, so 600 px still leaves 15 rows; 560 px does not.
+    expect(crowdsTerminalRows(600, bottom, pane("a"), 15)).toBe(false);
+    expect(crowdsTerminalRows(560, bottom, pane("a"), 15)).toBe(true);
+    // A short window, or the transfer queue opened under a 720 x 560 window (~275 px).
+    expect(crowdsTerminalRows(365, bottom, pane("a"), 15)).toBe(true);
+    expect(crowdsTerminalRows(275, bottom, pane("a"), 15)).toBe(true);
+    // A stacked split halves the rows; a side-by-side split does not.
+    expect(crowdsTerminalRows(665, bottom, down(pane("a"), pane("b")), 15)).toBe(true);
+    expect(crowdsTerminalRows(665, bottom, right(pane("a"), pane("b")), 15)).toBe(false);
+    // A larger font needs more height for the same rows.
+    expect(crowdsTerminalRows(665, bottom, pane("a"), 20)).toBe(true);
+  });
+
+  it("leaves a right dock and an unmeasured area alone", () => {
+    expect(crowdsTerminalRows(275, { ...bottom, dock: "right" }, pane("a"), 15)).toBe(false);
+    expect(crowdsTerminalRows(0, bottom, pane("a"), 15)).toBe(false);
   });
 });

@@ -571,6 +571,9 @@ describe("App host workflows", () => {
     await answer(copy.en.rejectHostKey);
     expect(invoke).toHaveBeenCalledWith("answer_host_trust", { challengeId: "second", accepted: false });
     expect(dialog.open).toBe(false);
+    // The closed dialog stays in the document, so it must stop claiming the alert role.
+    expect(dialog.getAttribute("role")).toBeNull();
+    expect(dialog.getAttribute("aria-describedby")).toBeNull();
   });
 
   it("shows old and new fingerprints for a changed host key without offering trust acceptance", async () => {
@@ -584,6 +587,10 @@ describe("App host workflows", () => {
       } });
     });
     const dialog = container.querySelector<HTMLDialogElement>("dialog.trust-dialog");
+    // A screen reader hears why the connection stopped, not only the title and the focused button.
+    expect(dialog?.getAttribute("role")).toBe("alertdialog");
+    const summary = document.getElementById(dialog?.getAttribute("aria-describedby") ?? "");
+    expect(summary?.textContent).toContain("Nothing was sent.");
     expect(dialog?.textContent).toContain("SHA256:old-key");
     expect(dialog?.textContent).toContain("SHA256:new-key");
     expect([...(dialog?.querySelectorAll(".fp-changed") ?? [])].map((chunk) => chunk.textContent)).toEqual(["new-"]);

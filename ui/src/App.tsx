@@ -25,7 +25,7 @@ import { useMediaQuery } from "./ui/useMediaQuery";
 import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickConnect, parseQuickHost, productionSource } from "./hosts/identity";
 import { SshConfigImportDialog, type ImportSummary } from "./hosts/SshConfigImport";
 import { fingerprintChunks, hostKeyFile } from "./hosts/fingerprint";
-import { crowdsTerminal, effectiveLayout, resolveLayoutChange } from "./sftp/compactLayout";
+import { crowdsTerminal, crowdsTerminalRows, effectiveLayout, resolveLayoutChange } from "./sftp/compactLayout";
 import { filesFocusTarget } from "./sftp/focus";
 import { SnippetManager, type SnippetRunRequest, type SnippetTarget } from "./snippets/SnippetManager";
 import { TunnelManager } from "./forwarding/TunnelManager";
@@ -118,10 +118,14 @@ export function App(): ReactElement {
   const tabListRef = useRef<HTMLDivElement>(null);
   useTabStrip(tabListRef, activeTab, tabs.length);
   const [shellWidth, setShellWidth] = useState(0);
+  const [shellHeight, setShellHeight] = useState(0);
   useEffect(() => {
     const element = shellRef.current;
     if (!element || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(([entry]) => setShellWidth(Math.round(entry.contentRect.width)));
+    const observer = new ResizeObserver(([entry]) => {
+      setShellWidth(Math.round(entry.contentRect.width));
+      setShellHeight(Math.round(entry.contentRect.height));
+    });
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
@@ -2062,8 +2066,10 @@ export function App(): ReactElement {
               const sftpHostLabel = sshHost?.name ?? tab.label ?? "";
               const sftpTheme = tab.paneStates[tab.focusedPaneId]?.themeOverride ?? (launch.kind === "ssh" ? launch.theme : "graphite");
               const savedLayout = panelState.tabs[tab.id] ?? panelState.layout;
-              // The panel also folds when it would squeeze a pane under 80 columns, e.g. after a split.
-              const tabCompact = compact || crowdsTerminal(shellWidth, savedLayout, tab.root, terminalFontSize);
+              // The panel also folds when it would squeeze a pane under 80 columns, e.g. after a split,
+              // or, docked at the bottom, under 15 rows, e.g. in a short window or with a queue open.
+              const tabCompact = compact || crowdsTerminal(shellWidth, savedLayout, tab.root, terminalFontSize)
+                || crowdsTerminalRows(shellHeight, savedLayout, tab.root, terminalFontSize);
               const sftpLayout = effectiveLayout(savedLayout, tabCompact, compactExpanded.has(tab.id));
               const tabName = tabNames.get(tab.id) ?? labels.localShell;
               const production = !!sshHostId && productionHosts.has(sshHostId);
@@ -2105,10 +2111,13 @@ export function App(): ReactElement {
             production={productionHosts.has(activeLaunch.host_id) ? labels.production : undefined} labels={labels.serverStatus} />}
         </section>
       </div>
-      <dialog ref={dialogRef} className="trust-dialog" data-alert={challenge?.keyChanged ? "true" : undefined} aria-labelledby="trust-title" onCancel={(event) => { event.preventDefault(); void respondToChallenge(false); }}>
+      {/* An alert dialog with its summary as the description, so a screen reader reads why the
+          connection stopped before the focused button. The role is set only while a question is open. */}
+      <dialog ref={dialogRef} className="trust-dialog" data-alert={challenge?.keyChanged ? "true" : undefined} role={challenge ? "alertdialog" : undefined}
+        aria-labelledby="trust-title" aria-describedby={challenge ? "trust-summary" : undefined} onCancel={(event) => { event.preventDefault(); void respondToChallenge(false); }}>
         {challenge && <Fragment key={challenge.challengeId}>
           <h2 id="trust-title"><span className="dialog-mark" aria-hidden="true">{challenge.keyChanged ? <AlertIcon size={18} /> : <ShieldIcon size={18} />}</span>{challenge.keyChanged ? labels.hostKeyChangedTitle : labels.hostKeyTitle}{challengeProduction && <span className="prod-chip">{labels.production}</span>}</h2>
-          <p>{challenge.keyChanged
+          <p id="trust-summary">{challenge.keyChanged
             ? labels.hostKeyChangedSummary(challengeHost?.name ?? challenge.target, challenge.target, challenge.port)
             : labels.hostKeyMessage(challengeHost?.name ?? null, challenge.target, challenge.port)}</p>
           <dl>
@@ -2144,10 +2153,10 @@ export function App(): ReactElement {
           </div>
         </Fragment>}
       </dialog>
-      <dialog ref={backupDialogRef} className="trust-dialog" aria-labelledby="backup-title" onCancel={(event) => { event.preventDefault(); cancelBackupPreview(); }}>
+      <dialog ref={backupDialogRef} className="trust-dialog" aria-labelledby="backup-title" aria-describedby={backupPreview ? "backup-summary" : undefined} onCancel={(event) => { event.preventDefault(); cancelBackupPreview(); }}>
         {backupPreview && <>
           <h2 id="backup-title"><span className="dialog-mark" aria-hidden="true"><ShieldIcon size={18} /></span>{labels.backupPreviewTitle}</h2>
-          <p>{labels.backupPreviewCounts(backupPreview.preview.hostCount, backupPreview.preview.groupCount, backupPreview.preview.credentialCount, backupPreview.preview.trustCount, backupPreview.preview.snippetGroupCount, backupPreview.preview.snippetCount)}</p>
+          <p id="backup-summary">{labels.backupPreviewCounts(backupPreview.preview.hostCount, backupPreview.preview.groupCount, backupPreview.preview.credentialCount, backupPreview.preview.trustCount, backupPreview.preview.snippetGroupCount, backupPreview.preview.snippetCount)}</p>
           {backupPreview.preview.duplicateHosts.length > 0 && <>
             <h3>{labels.backupDuplicateHosts}</h3>
             <ul>{backupPreview.preview.duplicateHosts.map((duplicate, index) => <li key={`${duplicate.target}:${duplicate.port}:${index}`}>

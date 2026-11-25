@@ -554,7 +554,9 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .launcher-menu { display: grid; }
 .launcher-menu [role="menuitem"] { justify-content: flex-start; gap: 10px; width: 100%; min-height: 28px; padding: 0 8px; border: 0; border-radius: var(--radius); color: var(--legend); background: transparent; box-shadow: none; }
 .launcher-menu [role="menuitem"] .icon { color: var(--legend-muted); }
-.launcher-menu [role="menuitem"]:hover:not(:disabled), .launcher-menu [role="menuitem"]:focus-visible { color: var(--legend-strong); background: var(--face-hover); outline: none; }
+.launcher-menu [role="menuitem"]:hover:not(:disabled), .launcher-menu [role="menuitem"]:focus-visible { color: var(--legend-strong); background: var(--face-hover); }
+/* Hover is the face alone; keyboard focus keeps the amber key, inset so the menu edge cannot clip it. */
+.launcher-menu [role="menuitem"]:focus-visible { outline-offset: -2px; }
 .launcher-menu [role="menuitem"]:active:not(:disabled) { transform: none; background: var(--face-press); }
 .launcher-label { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .launcher-menu kbd { color: var(--legend-muted); }
@@ -595,7 +597,8 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .terminal-pane { min-width: 0; min-height: 0; }
 .terminal-pane[hidden] { display: none; }
 .terminal-pane-sftp-right { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, var(--sftp-size, 36%)); }
-.terminal-pane-sftp-bottom { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(min(300px, 65%), var(--sftp-size, 42%)); }
+/* The stacked panel keeps 300px but never more than half: opened by hand in a short window, it shares the height with the terminal. */
+.terminal-pane-sftp-bottom { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(min(300px, 50%), var(--sftp-size, 42%)); }
 .terminal-pane-sftp-right.is-collapsed { grid-template-columns: minmax(0, 1fr) 34px; }
 .terminal-pane-sftp-bottom.is-collapsed { grid-template-rows: minmax(0, 1fr) 34px; }
 .terminal-pane-terminal, .terminal-pane-terminal > .terminal-pane-root { min-width: 0; min-height: 0; height: 100%; }
@@ -1097,9 +1100,10 @@ input[type="range"] { accent-color: var(--amber-fill); }
   cursor: default;
   user-select: none;
 }
-.command-result[aria-selected="true"] { color: var(--legend-strong); background: var(--face-hover); }
+/* The active row is the palette's focus: the hover face plus a 1px amber ring (5.9:1), so it reads apart from a pointer hover. */
+.command-result[aria-selected="true"] { color: var(--legend-strong); background: var(--face-hover); box-shadow: inset 0 0 0 1px var(--amber); }
 .command-icon { display: grid; place-items: center; flex: 0 0 16px; color: var(--legend-faint); }
-.command-result[aria-selected="true"] .command-icon { color: var(--legend-muted); }
+.command-result[aria-selected="true"] .command-icon, .command-result[aria-selected="true"] .command-detail { color: var(--legend-muted); }
 .command-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .command-detail { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--legend-faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .command-detail.mono { font-family: var(--font-mono); font-size: 11px; }
@@ -1498,12 +1502,16 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
   box-shadow: none;
 }
 .sftp-menu button .icon { color: var(--legend-muted); }
-.sftp-menu button:hover:not(:disabled), .sftp-menu button:focus-visible { color: var(--legend-strong); background: var(--face-hover); outline: none; }
+.sftp-menu button:hover:not(:disabled), .sftp-menu button:focus-visible { color: var(--legend-strong); background: var(--face-hover); }
+/* Hover is the face alone; keyboard focus keeps the amber key, inset so the menu edge cannot clip it. */
+.sftp-menu button:focus-visible { outline-offset: -2px; }
 .sftp-menu button:active:not(:disabled) { transform: none; background: var(--face-press); }
 .sftp-menu button.is-danger, .sftp-menu button.is-danger .icon { color: var(--red-text); }
 .sftp-menu button:disabled { opacity: 0.45; }
 .sftp-menu-label { flex: 1; min-width: 0; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .sftp-menu-label[data-keys]::after { content: attr(data-keys); float: right; margin-left: 16px; color: var(--legend-faint); font-family: var(--font-mono); font-size: 11px; }
+/* Faint holds 4.5:1 only on base surfaces; on the hover face the key hint steps up to Muted. */
+.sftp-menu button:hover:not(:disabled) .sftp-menu-label[data-keys]::after, .sftp-menu button:focus-visible .sftp-menu-label[data-keys]::after { color: var(--legend-muted); }
 .sftp-menu button .sftp-menu-check { color: var(--amber); }
 .sftp-menu-separator { height: 1px; margin: 4px 6px; background: var(--divider); }
 .sftp-export-row { display: flex; padding: 0 8px 6px; }
@@ -1591,6 +1599,8 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .sftp-table tr.selected { background: var(--selected); }
 .sftp-table tr.selected:hover { background: var(--selected); }
 .sftp-table tr.selected td:first-child { box-shadow: inset 2px 0 0 var(--amber); }
+/* Faint mode digits drop under 4.5:1 on the hover tint and the selected face; there they step up to Muted. */
+.sftp-table tbody tr:hover td:nth-child(3) .mono, .sftp-table tr.selected td:nth-child(3) .mono { color: var(--legend-muted); }
 .sftp-entry {
   display: flex;
   align-items: center;
@@ -1851,7 +1861,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
   :focus-visible { outline: 2px solid Highlight; }
   .prod-chip, .count-badge { border: 1px solid CanvasText; }
   .sftp-splitter::after { background: ButtonText; }
-  .terminal-tab[aria-selected="true"], .segmented button[aria-selected="true"], .sftp-menu button:focus-visible { border-color: Highlight; outline: 1px solid Highlight; }
+  .terminal-tab[aria-selected="true"], .segmented button[aria-selected="true"] { border-color: Highlight; outline: 1px solid Highlight; }
   .settings-group, .sftp-dialog, .sheet, .host-list, .transfer-queue, .update-notice { border-color: CanvasText; }
   .primary-action { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; }
   button:disabled { color: GrayText; }
@@ -1866,7 +1876,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 /* ---------- Responsive ---------- */
 
 @container workspace (max-width: 759px) {
-  .terminal-pane-sftp-right { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(min(300px, 65%), var(--sftp-size, 36%)); }
+  .terminal-pane-sftp-right { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(min(300px, 50%), var(--sftp-size, 36%)); }
   .terminal-pane-sftp-right .sftp-splitter { inset: 0 0 auto; width: auto; height: 5px; cursor: row-resize; }
   .terminal-pane-sftp-right .sftp-splitter::after { inset: 0 0 auto; width: auto; height: 2px; }
   .terminal-pane-sftp-right.is-collapsed { grid-template-rows: minmax(0, 1fr); }
