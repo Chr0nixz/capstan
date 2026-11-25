@@ -280,12 +280,15 @@ export function createTerminalSession(
   let sendingInput = false;
 
   const fitTerminal = (): void => {
-    if (!isDisposed && isVisible) {
-      try {
-        fit.fit();
-      } catch {
-        // The container may not have measurable dimensions during initial mount.
-      }
+    // A collapsed pane or minimized window measures 0. Fitting then would
+    // shrink the grid to FitAddon's 2x1 minimum and resize the remote
+    // terminal, which rewraps its output. The resize observer fits again
+    // once the container has a size.
+    if (isDisposed || !isVisible || container.clientWidth === 0 || container.clientHeight === 0) return;
+    try {
+      fit.fit();
+    } catch {
+      // The container may not have measurable dimensions during initial mount.
     }
   };
 

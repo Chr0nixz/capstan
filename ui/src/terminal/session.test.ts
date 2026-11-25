@@ -42,6 +42,12 @@ vi.mock("@xterm/xterm", () => ({
   },
 }));
 
+/** jsdom lays nothing out, so a container that fit may measure needs a size. */
+function sizedContainer(container = document.createElement("div")): HTMLDivElement {
+  Object.defineProperties(container, { clientWidth: { value: 800, configurable: true }, clientHeight: { value: 480, configurable: true } });
+  return container;
+}
+
 function fakeTerminal(): TerminalLike & {
   dataListener?: (data: string) => void;
   resizeListener?: (size: { cols: number; rows: number }) => void;
@@ -500,7 +506,7 @@ describe("terminal session lifecycle", () => {
     const terminal = fakeTerminal();
     terminal.options = { fontFamily: defaultFontFamily(), fontSize: DEFAULT_FONT_SIZE };
     const fit = vi.fn();
-    const session = createTerminalSession(document.createElement("div"), true, { terminal, fitAddonFactory: () => ({ fit }) });
+    const session = createTerminalSession(sizedContainer(), true, { terminal, fitAddonFactory: () => ({ fit }) });
     fit.mockClear();
     session.setFont({ family: null, size: DEFAULT_FONT_SIZE });
     expect(fit).not.toHaveBeenCalled();
@@ -643,6 +649,20 @@ describe("terminal session lifecycle", () => {
     session.dispose();
   });
 
+  it("does not fit a container that measures zero", () => {
+    const fit = { fit: vi.fn() };
+    const container = document.createElement("div");
+    const session = createTerminalSession(container, true, { terminal: fakeTerminal(), fitAddonFactory: () => fit });
+    session.setVisible(false);
+    session.setVisible(true);
+    expect(fit.fit).not.toHaveBeenCalled();
+    sizedContainer(container);
+    session.setVisible(false);
+    session.setVisible(true);
+    expect(fit.fit).toHaveBeenCalledTimes(1);
+    session.dispose();
+  });
+
   it("keeps input queued until the asynchronous write completes and fits visible terminals", async () => {
     const terminal = fakeTerminal();
     terminal.unicode = { activeVersion: "6" };
@@ -652,7 +672,7 @@ describe("terminal session lifecycle", () => {
     const sendInput = vi.fn(() => new Promise<void>((resolve) => {
       resolveWrite = resolve;
     }));
-    const session = createTerminalSession(document.createElement("div"), true, {
+    const session = createTerminalSession(sizedContainer(), true, {
       terminal,
       inputQueue: queue,
       fitAddonFactory: () => fit,
