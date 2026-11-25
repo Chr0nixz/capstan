@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import fixture from "../../../docs/agent/fixtures/M3-contract.json";
 import { copy } from "../i18n";
-import { decodeTunnelConfig, decodeTunnelRuntimeSnapshot, tunnelErrorCodes, tunnelStateChangedEvent } from "./contracts";
+import { decodeTunnelConfig, decodeTunnelRuntimeSnapshot, isLoopbackBind, tunnelErrorCodes, tunnelStateChangedEvent } from "./contracts";
 import { tunnelError } from "./errors";
 
 describe("forwarding contract", () => {
+  it("tells loopback listen addresses from ones other machines can reach", () => {
+    for (const host of ["127.0.0.1", "127.8.9.10", " localhost ", "LOCALHOST", "::1", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", ""]) expect(isLoopbackBind(host), host).toBe(true);
+    for (const host of ["0.0.0.0", "::", "[::]", "192.168.1.5", "10.0.0.1", "127.0.0.256", "128.0.0.1", "localhost.example", "::2", "host.local"]) expect(isLoopbackBind(host), host).toBe(false);
+  });
   it("decodes local, remote and SOCKS5 configurations from the shared fixture", () => {
     expect(fixture.tunnels.map(decodeTunnelConfig).map((tunnel) => tunnel.forward.kind)).toEqual(["local", "remote", "socks5"]);
     expect(decodeTunnelRuntimeSnapshot(fixture.tunnelRuntimeSnapshot).bytes_received).toBe("18446744073709551615");

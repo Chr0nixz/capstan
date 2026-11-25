@@ -73,6 +73,9 @@ export const copy = {
     tunnelRemoteHint: "Listen on the SSH server; connect to the destination from this computer.",
     tunnelSocksHint: "TCP CONNECT only. Destinations are resolved by the SSH server.",
     tunnelBindHint: "127.0.0.1 keeps the listener private. Set another address only to share it with that network.",
+    tunnelBindExposed: (remote: boolean) => remote
+      ? "Not a loopback address: if the server allows it, other machines that reach the server can use this tunnel."
+      : "Not a loopback address: other computers that reach this one can use this tunnel.",
     tunnelAuto: "Start when the SSH connection comes online",
     tunnelStart: "Start tunnel",
     tunnelStop: "Stop tunnel",
@@ -676,6 +679,9 @@ export const copy = {
     tunnelRemoteHint: "在 SSH 服务器监听，由本机连接目标地址。",
     tunnelSocksHint: "仅支持 TCP CONNECT，目标域名由 SSH 服务器解析。",
     tunnelBindHint: "127.0.0.1 仅限本机访问。需要向其他网卡开放时，请显式填写对应地址。",
+    tunnelBindExposed: (remote: boolean) => remote
+      ? "这不是回环地址：服务器允许时，能访问到服务器的其他机器都可以使用这条隧道。"
+      : "这不是回环地址：能访问到本机的其他电脑都可以使用这条隧道。",
     tunnelAuto: "SSH 连接上线时自动启动",
     tunnelStart: "启动隧道",
     tunnelStop: "停止隧道",

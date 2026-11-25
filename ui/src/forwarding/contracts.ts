@@ -3,6 +3,16 @@ import type { HostId } from "../terminal/contracts";
 export type TunnelId = string & { readonly tunnel: unique symbol };
 export type ExactBytes = string & { readonly exactBytes: unique symbol };
 export const defaultLocalBindHost = "127.0.0.1" as const;
+/**
+ * Whether a listen address stays on its own machine: localhost, 127.0.0.0/8
+ * or ::1. Anything else lets other machines that reach it use the tunnel.
+ * An empty address counts as loopback until the user types one.
+ */
+export function isLoopbackBind(value: string): boolean {
+  const host = value.trim().replace(/^\[(.*)\]$/u, "$1").toLowerCase();
+  if (host === "" || host === "localhost" || host === "::1") return true;
+  return /^(?:::ffff:)?127(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/u.test(host) || /^(?:0{1,4}:){7}0{0,3}1$/u.test(host);
+}
 export const tunnelStateChangedEvent = "tunnel-state-changed" as const;
 export type TunnelForward =
   | { kind: "local"; bind_host: string; bind_port: number; destination_host: string; destination_port: number }

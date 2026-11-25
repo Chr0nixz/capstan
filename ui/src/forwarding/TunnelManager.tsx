@@ -6,7 +6,7 @@ import type { ConfirmRequest } from "../ui/ConfirmDialog";
 import type { HostView } from "../terminal/contracts";
 import { watchConnections } from "../connections/feed";
 import type { ConnectionSnapshot } from "../connections/contracts";
-import { decodeTunnelConfig, defaultLocalBindHost, type TunnelConfig, type TunnelForward, type TunnelRuntimeSnapshot } from "./contracts";
+import { decodeTunnelConfig, defaultLocalBindHost, isLoopbackBind, type TunnelConfig, type TunnelForward, type TunnelRuntimeSnapshot } from "./contracts";
 import { tunnelApi, watchTunnels } from "./api";
 import { useTunnelTargets } from "./targets";
 import { tunnelError } from "./errors";
@@ -173,6 +173,7 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
           <p className="tunnel-help">{draft.kind === "local" ? labels.tunnelLocalHint : draft.kind === "remote" ? labels.tunnelRemoteHint : labels.tunnelSocksHint}</p>
           <div className="tunnel-endpoint"><label>{labels.tunnelBindHost}<input value={draft.bind} onChange={(event) => setDraft({ ...draft, bind: event.currentTarget.value })} autoComplete="off" spellCheck={false} /></label><label>{labels.tunnelBindPort}<input type="number" min="1" max="65535" value={draft.port} onChange={(event) => setDraft({ ...draft, port: event.currentTarget.value })} /></label></div>
           <p className="tunnel-help">{labels.tunnelBindHint}</p>
+          {!isLoopbackBind(draft.bind) && <p className="inline-error" role="status"><AlertIcon size={14} /><span>{labels.tunnelBindExposed(draft.kind === "remote")}</span></p>}
           {draft.kind !== "socks5" && <div className="tunnel-endpoint"><label>{labels.tunnelDestinationHost}<input value={draft.destination} onChange={(event) => setDraft({ ...draft, destination: event.currentTarget.value })} autoComplete="off" spellCheck={false} /></label><label>{labels.tunnelDestinationPort}<input type="number" min="1" max="65535" value={draft.destinationPort} onChange={(event) => setDraft({ ...draft, destinationPort: event.currentTarget.value })} /></label></div>}
           <label className="check-label"><input type="checkbox" checked={draft.auto} onChange={(event) => setDraft({ ...draft, auto: event.currentTarget.checked })} />{labels.tunnelAuto}</label>
         </fieldset>

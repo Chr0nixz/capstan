@@ -86,6 +86,16 @@ async function mount(): Promise<void> {
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 }
 function tunnelRouteText(): string { return tunnelRoute(tunnel); }
+function field<T extends HTMLInputElement | HTMLSelectElement>(label: string, selector: string): T {
+  const result = [...container.querySelectorAll("label")].find((item) => item.textContent?.startsWith(label))?.querySelector<T>(selector);
+  if (!result) throw new Error(`Missing field: ${label}`);
+  return result;
+}
+function change(element: HTMLInputElement | HTMLSelectElement, value: string): void {
+  const prototype = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(element, value);
+  element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+}
 function button(label: string): HTMLButtonElement {
   const result = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === label);
   if (!result) throw new Error(`Missing button: ${label}`);
@@ -103,6 +113,19 @@ describe("tunnel panel", () => {
     }))).toContain("[::1]");
     const invalid = editDraft(tunnel);
     expect(() => draftConfig({ ...invalid, port: "65536" })).toThrow("forwarding_contract_invalid");
+  });
+
+  it("warns while the listen address is not loopback", async () => {
+    await mount();
+    await act(async () => button(copy.en.tunnelNew).click());
+    const exposed = (): string | undefined => container.querySelector(".tunnel-editor .inline-error")?.textContent ?? undefined;
+    expect(exposed()).toBeUndefined();
+    await act(async () => change(field<HTMLInputElement>(copy.en.tunnelBindHost, "input"), "0.0.0.0"));
+    expect(exposed()).toBe(copy.en.tunnelBindExposed(false));
+    await act(async () => change(field<HTMLSelectElement>(copy.en.tunnelKind, "select"), "remote"));
+    expect(exposed()).toBe(copy.en.tunnelBindExposed(true));
+    await act(async () => change(field<HTMLInputElement>(copy.en.tunnelBindHost, "input"), "localhost"));
+    expect(exposed()).toBeUndefined();
   });
 
   it("replaces the empty state with the load error and recovers on Try again", async () => {
