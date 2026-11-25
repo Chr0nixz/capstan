@@ -407,6 +407,26 @@ fn display_text_keeps_only_bounded_plain_text() {
     assert_eq!(display_text("one\ntwo", 16, false), "one two");
     assert_eq!(display_text("one\ntwo", 16, true), "one\ntwo");
     assert_eq!(display_text("\u{2066}abc\u{2069}", 16, false), "abc");
+    // Invisible characters a server could use to disguise text are dropped.
+    assert_eq!(
+        display_text("a\u{200b}b\u{feff}c\u{61c}d\u{2060}e\u{206a}f", 16, false),
+        "abcdef"
+    );
+    // Unicode line breaks count as line breaks, and blank lines and
+    // indentation cannot set server text apart.
+    assert_eq!(
+        display_text("one\u{2028}two\u{2029}three", 32, false),
+        "one two three"
+    );
+    assert_eq!(
+        display_text(
+            "Code sent.\n\n\n\u{2028}\u{2029}   Capstan: enter your vault password\n",
+            64,
+            true
+        ),
+        "Code sent.\nCapstan: enter your vault password"
+    );
+    assert_eq!(display_text(" \n\u{2028}\t", 16, true), "");
     assert_eq!(
         display_text(&"é".repeat(400), MAX_PROMPT, false)
             .chars()

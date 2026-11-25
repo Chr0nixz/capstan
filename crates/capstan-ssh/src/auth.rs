@@ -386,27 +386,44 @@ fn asks_for_password(text: &str) -> bool {
         .any(|word| text.contains(word))
 }
 
+/// Invisible formatting and direction marks, overrides and isolates.
+fn is_hidden_format(character: char) -> bool {
+    matches!(
+        character,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+    )
+}
+
 /// Server text shown in a native dialog: bounded, without control characters
-/// or bidirectional overrides that could disguise it. Instructions keep their
-/// line breaks.
+/// or invisible formatting that could disguise it. Instructions keep their
+/// line breaks, including Unicode line and paragraph separators, but not
+/// blank lines or indentation, which could set server text apart to look
+/// like the dialog's own wording.
 fn display_text(value: &str, limit: usize, lines: bool) -> String {
     let text: String = value
         .chars()
-        .filter(|character| {
-            !matches!(character, '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-        })
-        .map(|character| {
-            if character == '\n' && lines {
-                '\n'
-            } else if character.is_control() {
-                ' '
-            } else {
-                character
-            }
+        .filter(|character| !is_hidden_format(*character))
+        .map(|character| match character {
+            '\n' | '\u{2028}' | '\u{2029}' if lines => '\n',
+            '\u{2028}' | '\u{2029}' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
         })
         .take(limit)
         .collect();
-    text.trim().to_owned()
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl AuthenticationMethod {
