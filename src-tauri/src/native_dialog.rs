@@ -79,8 +79,12 @@ pub async fn prompt_secret(
     _locale: &str,
 ) -> io::Result<Option<SecretText>> {
     let parent = window.hwnd().map(|handle| handle.0 as isize).unwrap_or(0);
+    let closer = capstan_native_windows::DialogCloser::default();
+    // Dropped unanswered (a timeout, a lost connection): cancel the dialog
+    // instead of leaving it open with nowhere to send the answer.
+    let _close = closer.close_on_drop();
     tauri::async_runtime::spawn_blocking(move || {
-        capstan_native_windows::prompt_secret(&title, &message, "", parent)?
+        capstan_native_windows::prompt_secret(&title, &message, "", parent, &closer)?
             .map(|prompt| {
                 String::from_utf16(prompt.password())
                     .map(SecretText::new)
@@ -106,28 +110,86 @@ mod macos {
     use objc2_foundation::{ns_string, NSArray, NSPoint, NSRect, NSSize, NSString, NSURL};
     use tauri::Manager;
 
+    use dispatch2::DispatchQueue;
+    use objc2_app_kit::NSApplication;
+    use std::sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    };
+
     #[derive(Default)]
-    pub struct ModalDialog(std::sync::Arc<tokio::sync::Mutex<()>>);
+    pub struct ModalDialog(Arc<tokio::sync::Mutex<()>>);
+
+    const WAITING: u8 = 0;
+    const SHOWING: u8 = 1;
+    const ENDED: u8 = 2;
+
+    /// Closes a dialog whose caller stopped waiting, such as an
+    /// authentication prompt that timed out. Left open, it would hold the
+    /// dialog lock until someone dismissed it, and its answer would go nowhere.
+    struct Abandon(Arc<AtomicU8>);
+
+    /// Before the dialog shows: false when its caller already gave up.
+    fn begin(phase: &AtomicU8) -> bool {
+        phase
+            .compare_exchange(WAITING, SHOWING, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    /// When the caller gives up: true when the dialog is on screen and must
+    /// be closed. A dialog that has not shown yet never will.
+    fn give_up(phase: &AtomicU8) -> bool {
+        phase.compare_exchange(WAITING, ENDED, Ordering::SeqCst, Ordering::SeqCst) == Err(SHOWING)
+    }
+
+    impl Drop for Abandon {
+        fn drop(&mut self) {
+            if !give_up(&self.0) {
+                return;
+            }
+            let phase = self.0.clone();
+            // The dialog runs inside tao's main-thread callback, which holds
+            // back tao's other callbacks until it returns. The GCD main queue
+            // still runs during the modal loop.
+            DispatchQueue::main().exec_async(move || {
+                if phase.load(Ordering::SeqCst) != SHOWING {
+                    return;
+                }
+                if let Some(main) = MainThreadMarker::new() {
+                    NSApplication::sharedApplication(main).abortModal();
+                }
+            });
+        }
+    }
 
     async fn show<T: Send + 'static>(
         window: &WebviewWindow,
         operation: impl FnOnce(MainThreadMarker) -> io::Result<T> + Send + 'static,
     ) -> io::Result<T> {
-        let state = window.state::<ModalDialog>();
-        let guard = state.0.clone().try_lock_owned().map_err(io::Error::other)?;
+        let lock = window.state::<ModalDialog>().0.clone();
+        // One dialog at a time; the next one waits for it to close.
+        let guard = lock.lock_owned().await;
+        let phase = Arc::new(AtomicU8::new(WAITING));
+        let abandon = Abandon(phase.clone());
         let (send, receive) = tokio::sync::oneshot::channel();
         window
             .run_on_main_thread(move || {
                 let _guard = guard;
+                if !begin(&phase) {
+                    return;
+                }
                 let result = autoreleasepool(|_| {
                     let main =
                         MainThreadMarker::new().ok_or_else(|| io::Error::other("AppKit thread"))?;
                     operation(main)
                 });
+                phase.store(ENDED, Ordering::SeqCst);
                 let _ = send.send(result);
             })
             .map_err(io::Error::other)?;
-        receive.await.map_err(io::Error::other)?
+        let result = receive.await.map_err(io::Error::other)?;
+        drop(abandon);
+        result
     }
 
     pub async fn pick(
@@ -247,6 +309,28 @@ mod macos {
             let url = NSURL::fileURLWithPath_isDirectory(&NSString::from_str(path), true);
             NSWorkspace::sharedWorkspace().openURL(&url)
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_dialog_given_up_before_it_shows_never_shows() {
+            let phase = AtomicU8::new(WAITING);
+            assert!(!give_up(&phase));
+            assert!(!begin(&phase));
+        }
+
+        #[test]
+        fn only_a_dialog_on_screen_is_closed_when_its_caller_gives_up() {
+            let phase = AtomicU8::new(WAITING);
+            assert!(begin(&phase));
+            assert!(give_up(&phase));
+            // Answered first: nothing left to close.
+            phase.store(ENDED, Ordering::SeqCst);
+            assert!(!give_up(&phase));
+        }
     }
 }
 

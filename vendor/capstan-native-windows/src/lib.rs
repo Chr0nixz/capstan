@@ -273,12 +273,97 @@ pub fn save_vault_backup_file(
     ))
 }
 
+/// Closes a dialog that a blocking call shows on its own thread, for a caller
+/// that stopped waiting for the answer (a timeout, a lost connection).
+/// Otherwise the dialog stays open and its answer goes nowhere.
+#[derive(Clone, Debug, Default)]
+pub struct DialogCloser(std::sync::Arc<DialogThread>);
+
+#[derive(Debug, Default)]
+struct DialogThread {
+    /// The thread showing the dialog, 0 when none is.
+    thread: std::sync::atomic::AtomicU32,
+    closed: std::sync::atomic::AtomicBool,
+}
+
+/// Closes the dialog when dropped; after an answer there is nothing to close.
+#[derive(Debug)]
+pub struct CloseOnDrop(DialogCloser);
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+impl DialogCloser {
+    pub fn close_on_drop(&self) -> CloseOnDrop {
+        CloseOnDrop(self.clone())
+    }
+
+    /// Cancels the dialog if it is open, and keeps one that has not opened
+    /// yet from opening.
+    pub fn close(&self) {
+        use std::sync::atomic::Ordering;
+        self.0.closed.store(true, Ordering::SeqCst);
+        let thread = self.0.thread.load(Ordering::SeqCst);
+        if thread != 0 {
+            close_thread_windows(thread);
+        }
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn is_closed(&self) -> bool {
+        self.0.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Marks the calling thread as the one showing the dialog; false when
+    /// the dialog was closed before it opened.
+    #[cfg(windows)]
+    fn enter(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        // SAFETY: GetCurrentThreadId has no preconditions.
+        let thread = unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() };
+        self.0.thread.store(thread, Ordering::SeqCst);
+        if self.is_closed() {
+            self.leave();
+            return false;
+        }
+        true
+    }
+
+    #[cfg(windows)]
+    fn leave(&self) {
+        self.0.thread.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// WM_CLOSE cancels a dialog the way its Cancel button does.
+#[cfg(windows)]
+fn close_thread_windows(thread: u32) {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, TRUE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumThreadWindows, PostMessageW, WM_CLOSE};
+
+    unsafe extern "system" fn post_close(window: HWND, _: LPARAM) -> i32 {
+        // SAFETY: the window handle comes from EnumThreadWindows; posting
+        // to a window that has since closed fails harmlessly.
+        unsafe { PostMessageW(window, WM_CLOSE, 0, 0) };
+        TRUE
+    }
+    // SAFETY: the callback matches WNDENUMPROC and keeps no state.
+    unsafe { EnumThreadWindows(thread, Some(post_close), 0) };
+}
+
+#[cfg(not(windows))]
+fn close_thread_windows(_: u32) {}
+
 #[cfg(windows)]
 pub fn prompt_secret(
     title: &str,
     message: &str,
     username: &str,
     parent: isize,
+    closer: &DialogCloser,
 ) -> io::Result<Option<PromptedSecret>> {
     use std::ptr;
     use windows_sys::Win32::Foundation::{ERROR_CANCELLED, HWND};
@@ -306,6 +391,9 @@ pub fn prompt_secret(
         pszCaptionText: title.as_ptr(),
         hbmBanner: ptr::null_mut(),
     };
+    if !closer.enter() {
+        return Ok(None);
+    }
     // SAFETY: all UTF-16 pointers and writable buffers remain alive for the synchronous dialog call.
     let status = unsafe {
         CredUIPromptForCredentialsW(
@@ -324,7 +412,9 @@ pub fn prompt_secret(
                 | CREDUI_FLAGS_ALWAYS_SHOW_UI,
         )
     };
-    if status == ERROR_CANCELLED {
+    closer.leave();
+    // An answer given just as the caller gave up goes nowhere either.
+    if status == ERROR_CANCELLED || (status == 0 && closer.is_closed()) {
         password_buffer.zeroize();
         username_buffer.zeroize();
         return Ok(None);
@@ -353,7 +443,13 @@ pub fn prompt_secret(
 }
 
 #[cfg(not(windows))]
-pub fn prompt_secret(_: &str, _: &str, _: &str, _: isize) -> io::Result<Option<PromptedSecret>> {
+pub fn prompt_secret(
+    _: &str,
+    _: &str,
+    _: &str,
+    _: isize,
+    _: &DialogCloser,
+) -> io::Result<Option<PromptedSecret>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "native Windows credential UI is unavailable",
@@ -496,6 +592,38 @@ pub fn atomic_replace(source: &Path, target: &Path, replace: bool) -> io::Result
         ));
     }
     std::fs::rename(source, target)
+}
+
+#[cfg(test)]
+mod dialog_closer_tests {
+    use super::*;
+
+    #[test]
+    fn a_dialog_closed_before_it_opens_never_opens() {
+        let closer = DialogCloser::default();
+        drop(closer.close_on_drop());
+        assert!(closer.is_closed());
+        #[cfg(windows)]
+        {
+            assert!(!closer.enter());
+            assert!(prompt_secret("title", "message", "", 0, &closer)
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn closing_reaches_the_thread_that_shows_the_dialog() {
+        use std::sync::atomic::Ordering;
+        let closer = DialogCloser::default();
+        assert!(closer.enter());
+        assert_ne!(closer.0.thread.load(Ordering::SeqCst), 0);
+        // No windows on this thread: closing finds nothing and does no harm.
+        closer.close();
+        closer.leave();
+        assert_eq!(closer.0.thread.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[cfg(all(test, windows))]

@@ -19,7 +19,7 @@ default = []
 tauri-runtime = [
     "dep:tauri", "dep:tauri-plugin-snap-layout", "dep:tauri-plugin-global-shortcut",
     "dep:tauri-plugin-updater", "dep:serde_json", "dep:objc2", "dep:objc2-app-kit",
-    "dep:objc2-foundation",
+    "dep:objc2-foundation", "dep:dispatch2",
 ]
 m0-benchmarks = ["tauri-runtime", "capstan-pty/m0-benchmarks", "capstan-core/benchmarks", "dep:serde_json"]
 custom-protocol = ["tauri-runtime", "tauri/custom-protocol"]
@@ -50,6 +50,7 @@ tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "sync", 
 capstan-native-windows = { path = "../vendor/capstan-native-windows" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = { version = "=0.3.1", optional = true, default-features = false, features = ["std"] }
 objc2 = { version = "=0.6.4", optional = true }
 objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = [
     "NSAlert", "NSApplication", "NSControl", "NSOpenPanel", "NSSavePanel",

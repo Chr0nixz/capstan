@@ -427,6 +427,7 @@ dependencies = [
  "capstan-ssh",
  "capstan-terminal",
  "capstan-vault",
+ "dispatch2",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

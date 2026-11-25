@@ -1,5 +1,15 @@
 # Capstan native Windows boundary
 
+## Abandoned credential prompts close (2026-11-25)
+
+`prompt_secret` takes a `DialogCloser`. When the caller stops waiting (an
+authentication prompt that timed out, a lost connection), its drop guard posts
+`WM_CLOSE` to the windows of the thread showing the CredUI dialog, which ends
+it as if canceled. Before, the dialog stayed open and its answer went nowhere.
+A dialog closed before it opens never opens, and an answer that arrives after
+the caller gave up is zeroized and dropped. Unit tests cover the closer's
+state; closing a real dialog needs a desktop session and is checked by hand.
+
 ## Localized picker filters (2026-11-22)
 
 The private key and Vault backup pickers take their filter labels from the
