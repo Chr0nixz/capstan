@@ -202,6 +202,8 @@ impl Log {
 
     fn reopen(&mut self) -> io::Result<()> {
         self.file = None;
+        // The whole folder may have been deleted while running.
+        fs::create_dir_all(&self.directory)?;
         let path = self.directory.join(FILE_NAME);
         // Appending through a planted link would write somewhere else.
         if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file()) {
@@ -219,13 +221,18 @@ impl Log {
 
     fn append(&mut self, line: &str) -> io::Result<()> {
         let length = line.len() as u64;
+        // Deleted while open: lines written through the old handle would
+        // never be seen. Start a new file instead.
+        if self.file.is_some() && fs::symlink_metadata(self.directory.join(FILE_NAME)).is_err() {
+            self.file = None;
+        }
+        if self.file.is_none() {
+            self.reopen()?;
+        }
         if self.size.saturating_add(length) > self.limit {
             // Without a successful rotation the line is dropped, so the log
             // stays within two files.
             self.rotate()?;
-        }
-        if self.file.is_none() {
-            self.reopen()?;
         }
         let Some(file) = self.file.as_mut() else {
             return Err(io::ErrorKind::NotFound.into());
@@ -240,10 +247,15 @@ impl Log {
 
     fn rotate(&mut self) -> io::Result<()> {
         self.file = None;
-        fs::rename(
+        match fs::rename(
             self.directory.join(FILE_NAME),
             self.directory.join(PREVIOUS_FILE_NAME),
-        )?;
+        ) {
+            Ok(()) => {}
+            // Nothing to keep: the file was deleted. A new one starts below.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         self.reopen()
     }
 }
@@ -319,6 +331,45 @@ mod tests {
                 .len(),
             80
         );
+    }
+
+    #[test]
+    fn a_log_deleted_while_running_starts_again() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("logs");
+        fs::create_dir(&directory).unwrap();
+        let mut log = Log::open(directory.clone(), 100).unwrap();
+        let line = format!("{}\n", "x".repeat(39));
+        log.append(&line).unwrap();
+        fs::remove_file(directory.join(FILE_NAME)).unwrap();
+        log.append(&line).unwrap();
+        assert_eq!(fs::read_to_string(directory.join(FILE_NAME)).unwrap(), line);
+        // Rotation keeps working afterwards.
+        for _ in 0..3 {
+            log.append(&line).unwrap();
+        }
+        assert_eq!(
+            fs::read_to_string(directory.join(PREVIOUS_FILE_NAME))
+                .unwrap()
+                .len(),
+            80
+        );
+
+        // So does deleting the whole folder.
+        fs::remove_dir_all(&directory).unwrap();
+        log.append(&line).unwrap();
+        assert_eq!(fs::read_to_string(directory.join(FILE_NAME)).unwrap(), line);
+    }
+
+    #[test]
+    fn rotation_with_nothing_to_rename_starts_a_new_file() {
+        let root = tempfile::tempdir().unwrap();
+        let mut log = Log::open(root.path().to_owned(), 100).unwrap();
+        log.file = None;
+        fs::remove_file(root.path().join(FILE_NAME)).unwrap();
+        log.rotate().unwrap();
+        assert!(root.path().join(FILE_NAME).is_file());
+        assert!(!root.path().join(PREVIOUS_FILE_NAME).exists());
     }
 
     #[cfg(unix)]
