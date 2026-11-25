@@ -11,6 +11,7 @@ use crate::sftp::{ExactU64, FileKind, Metadata, RemotePath, SftpError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashSet,
     fs, io,
     path::PathBuf,
     sync::Mutex,
@@ -136,6 +137,9 @@ struct Loaded {
 pub(crate) struct RecoveryStore {
     storage: Mutex<Storage>,
     state: Mutex<Loaded>,
+    /// Records written by this process. They may belong to a transfer that
+    /// is still running, so a full ledger never drops them.
+    written: Mutex<HashSet<Uuid>>,
 }
 
 impl RecoveryStore {
@@ -159,6 +163,7 @@ impl RecoveryStore {
         Ok(Self {
             storage: Mutex::new(storage),
             state: Mutex::new(loaded),
+            written: Mutex::new(HashSet::new()),
         })
     }
 
@@ -174,12 +179,19 @@ impl RecoveryStore {
     pub(crate) fn upsert(&self, record: RecoveryRecord) -> Result<(), SftpError> {
         validate_record(&record)?;
         let mut state = self.state.lock().map_err(|_| SftpError::LocalIo)?;
+        let mut written = self.written.lock().map_err(|_| SftpError::LocalIo)?;
+        let id = record.id;
         let mut next = state.clone();
         if let Some(existing) = next.records.iter_mut().find(|item| item.id == record.id) {
             *existing = record;
         } else {
             if next.records.len() >= MAX_RECORDS {
-                return Err(SftpError::ResourceLimit);
+                // A full ledger must not stop every new transfer. The oldest
+                // record left by an earlier run is forgotten; its file stays
+                // where it is, as it would after Forget in the queue.
+                let oldest =
+                    oldest_inherited(&next.records, &written).ok_or(SftpError::ResourceLimit)?;
+                next.records.remove(oldest);
             }
             next.records.push(record);
         }
@@ -192,6 +204,7 @@ impl RecoveryStore {
         persist(&mut storage, &next)?;
         next.incomplete |= load_slots(&mut storage).0.incomplete;
         *state = next;
+        written.insert(id);
         Ok(())
     }
 
@@ -235,6 +248,16 @@ impl RecoveryStore {
             }
         }
     }
+}
+
+/// The least recently updated record that this process did not write.
+fn oldest_inherited(records: &[RecoveryRecord], written: &HashSet<Uuid>) -> Option<usize> {
+    records
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| !written.contains(&record.id))
+        .min_by_key(|(_, record)| record.updated_seconds)
+        .map(|(index, _)| index)
 }
 
 fn view(record: &RecoveryRecord) -> TransferRecoveryView {
@@ -627,6 +650,54 @@ mod tests {
             remote_cleanup_baseline: None,
             updated_seconds: 1,
         }
+    }
+
+    #[test]
+    fn a_full_ledger_forgets_the_oldest_record_from_an_earlier_run() {
+        let records: Vec<_> = [(1, 30), (2, 10), (3, 5), (4, 20)]
+            .into_iter()
+            .map(|(id, updated)| RecoveryRecord {
+                updated_seconds: updated,
+                ..record(Uuid::from_u128(id), false)
+            })
+            .collect();
+        // Record 3 is the oldest, but this run wrote it: it may be running.
+        let written = HashSet::from([Uuid::from_u128(3)]);
+        assert_eq!(oldest_inherited(&records, &written), Some(1));
+        let all: HashSet<_> = records.iter().map(|record| record.id).collect();
+        assert_eq!(oldest_inherited(&records, &all), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn new_transfers_still_get_a_record_when_the_ledger_is_full() {
+        let root = tempfile::tempdir().unwrap();
+        let store = RecoveryStore::open(root.path().to_owned()).unwrap();
+        for index in 0..MAX_RECORDS as u128 {
+            let mut item = record(Uuid::from_u128(index + 100), false);
+            item.updated_seconds = 1_000 + u64::try_from(index).unwrap();
+            store.upsert(item).unwrap();
+        }
+        // In the same run every record may belong to a running transfer.
+        assert_eq!(
+            store.upsert(record(Uuid::from_u128(1), false)),
+            Err(SftpError::ResourceLimit)
+        );
+        drop(store);
+        let restarted = RecoveryStore::open(root.path().to_owned()).unwrap();
+        let fresh = Uuid::from_u128(1);
+        restarted.upsert(record(fresh, false)).unwrap();
+        let ids: Vec<_> = restarted
+            .snapshot()
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(ids.len(), MAX_RECORDS);
+        assert!(ids.contains(&fresh));
+        assert!(!ids.contains(&Uuid::from_u128(100)));
+        assert!(ids.contains(&Uuid::from_u128(101)));
     }
 
     #[test]

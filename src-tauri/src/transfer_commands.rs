@@ -424,6 +424,16 @@ pub fn transfer_recovery_snapshot(
     transfers.recovery_snapshot().map_err(error)
 }
 #[tauri::command]
+pub fn forget_recovered_transfer(
+    window: tauri::WebviewWindow,
+    transfers: State<'_, Arc<TransferService>>,
+    id: Uuid,
+) -> Result<(), CommandError> {
+    transfers
+        .forget_recovered(source(&window)?, id)
+        .map_err(error)
+}
+#[tauri::command]
 pub fn retry_recovered_transfer_upload(
     window: tauri::WebviewWindow,
     sftp: State<'_, Arc<SftpService>>,

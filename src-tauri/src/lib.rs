@@ -2304,6 +2304,7 @@ pub mod tauri_channel {
                 crate::transfer_commands::enqueue_transfer,
                 crate::transfer_commands::transfer_snapshot,
                 crate::transfer_commands::transfer_recovery_snapshot,
+                crate::transfer_commands::forget_recovered_transfer,
                 crate::transfer_commands::retry_recovered_transfer_upload,
                 crate::transfer_commands::cleanup_recovered_transfer_upload,
                 crate::transfer_commands::select_recovered_transfer_destination,

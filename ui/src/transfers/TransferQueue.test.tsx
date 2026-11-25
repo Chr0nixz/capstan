@@ -123,6 +123,26 @@ describe("global transfer entry", () => {
     for (const label of ["Resume upload", "Resume download", "Remove partial", "继续上传", "继续下载", "删除残留"]) expect(button(label)).toBeUndefined();
     expect(mocks.invoke.mock.calls.some(([command]) => String(command).startsWith("select_recovered") || String(command).startsWith("retry_recovered") || String(command).startsWith("cleanup_recovered"))).toBe(false);
   });
+  it("forgets a record that cannot be resumed or cleaned only after confirmation", async () => {
+    const recovery = { entries: [{ id: fixture[0].id, hostId: fixture[0].hostId, name: "report.bin", remotePath: "/drop/report.bin", direction: "download", total: "10", partialSize: "4", localPartial: true, state: "missing", updatedSeconds: "1" }], incomplete: false };
+    let forgotten = false;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "transfer_snapshot" || command === "native_export_snapshot") return [];
+      if (command === "transfer_recovery_snapshot") return forgotten ? { entries: [], incomplete: false } : recovery;
+      if (command === "forget_recovered_transfer") forgotten = true;
+      return undefined;
+    });
+    await act(async () => root.unmount()); root = createRoot(container);
+    await act(async () => root.render(<TransferQueue locale="en" hosts={{}} />));
+    for (const label of ["Resume download", "Remove partial"]) expect(button(label)).toBeUndefined();
+    await act(async () => button("Forget")?.click());
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "forget_recovered_transfer")).toBe(false);
+    expect(document.body.textContent).toContain("The partial itself is left as it is");
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>(".sftp-dialog button")].find((item) => item.textContent === "Forget");
+    await act(async () => confirm?.click());
+    expect(mocks.invoke).toHaveBeenCalledWith("forget_recovered_transfer", { id: fixture[0].id });
+    expect(container.textContent).not.toContain("Interrupted transfer files");
+  });
   it("resumes a discovered download only through a fresh destination picker", async () => {
     const recovery = { entries: [{ id: fixture[0].id, hostId: fixture[0].hostId, name: "report.bin", remotePath: "/drop/report.bin", direction: "download", total: "10", partialSize: "4", localPartial: true, state: "available", updatedSeconds: "1" }], incomplete: false };
     const terminal = "11111111-1111-4111-8111-111111111111" as TerminalSessionId, session = "22222222-2222-4222-8222-222222222222" as SftpSessionId;

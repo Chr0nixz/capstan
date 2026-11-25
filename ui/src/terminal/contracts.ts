@@ -188,6 +188,7 @@ export type Commands = {
   retry_recovered_transfer_download: { args: { terminal: TerminalSessionId; session: import("../sftp/contracts").SftpSessionId; id: string; selection: string }; result: void };
   cleanup_recovered_transfer_download: { args: { id: string; selection: string }; result: void };
   cleanup_recovered_transfer_upload: { args: { terminal: TerminalSessionId; session: import("../sftp/contracts").SftpSessionId; id: string }; result: void };
+  forget_recovered_transfer: { args: { id: string }; result: void };
   resolve_transfer_conflict: { args: { id: string; revision: import("../sftp/contracts").ExactU64; decision: import("../transfers/contracts").Decision }; result: void };
   confirm_transfer_exit: { args: undefined; result: void };
   list_local_shells: { args: undefined; result: LocalShellProfile[] };

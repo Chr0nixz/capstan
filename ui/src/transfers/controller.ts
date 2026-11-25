@@ -88,6 +88,8 @@ export function createTransferController(transport: TransferTransport) {
       action(id, () => transport.cleanupRecoveredDownload?.(id, selection) ?? Promise.reject({ code: "operation_canceled" }), true),
     cleanupRecoveredUpload: (id: string, terminal: TerminalSessionId, session: SftpSessionId): Promise<void> =>
       action(id, () => transport.cleanupRecoveredUpload?.(id, terminal, session) ?? Promise.reject({ code: "operation_canceled" }), true),
+    forgetRecovered: (id: string): Promise<void> =>
+      action(id, () => transport.forgetRecovered?.(id) ?? Promise.reject({ code: "operation_canceled" }), true),
     resolve: (task: Transfer, decision: Decision): Promise<void> => {
       const conflict = task.conflict;
       return conflict ? action(task.id, () => transport.resolve(task.id, conflict.revision, decision)) : Promise.resolve();

@@ -9,6 +9,7 @@ type Copy = {
   residuals: string; recoveryIncomplete: string; manualRecovery: string; recoveryState: Record<"awaiting_reconnect" | "available" | "missing" | "changed" | "manual_inspection" | "cleanup_required", string>;
   resumeRecovered: string; resumeDownload: string; localPartial: string; downloadRecoveryManual: string; uploadRecoveryManual: string;
   removePartial: string; removePartialTitle: string; removePartialDescription: string; removePartialConfirm: string;
+  forgetRecord: string; forgetRecordTitle: string; forgetRecordDescription: string;
   unknownHost: string; clearFinished: string; summaryActive: (count: number, eta: string | null) => string; summaryPaused: (count: number) => string; summaryAttention: (count: number) => string;
   existingSize: (size: string) => string; incomingSize: (size: string) => string;
   exports: string; prepareExport: string; dragExport: string; dropHint: string; clearExport: string; exportRetention: string; exportCleanup: string; clearExportConfirm: string;
@@ -41,6 +42,7 @@ export const transferCopy: Record<"en" | "zh-CN", Copy> = {
     resumeRecovered: "Resume upload", resumeDownload: "Resume download", localPartial: "A local partial was retained.", downloadRecoveryManual: "Choose the original download destination again to verify and resume this partial.",
     uploadRecoveryManual: "Choose the original source to verify and resume. Ownership cannot be verified for removal; inspect the remote partial manually before deleting it.",
     removePartial: "Remove partial", removePartialTitle: "Remove interrupted transfer data?", removePartialDescription: "The retained partial bytes will be permanently deleted. Local downloads require selecting the original destination again. The final file is left unchanged.", removePartialConfirm: "Remove partial",
+    forgetRecord: "Forget", forgetRecordTitle: "Forget this interrupted transfer?", forgetRecordDescription: "Capstan stops tracking this partial and can no longer resume or remove it. The partial itself is left as it is; inspect or delete it yourself if needed.",
     states: { queued: "Queued", preparing: "Preparing", running: "Transferring", paused: "Paused", resuming: "Resuming", retrying: "Retrying", verifying: "Verifying", committing: "Committing", completed: "Completed", awaiting_conflict: "Decision needed", failed: "Failed", canceled: "Canceled", interrupted: "Interrupted" },
   },
   "zh-CN": {
@@ -66,6 +68,7 @@ export const transferCopy: Record<"en" | "zh-CN", Copy> = {
     resumeRecovered: "继续上传", resumeDownload: "继续下载", localPartial: "已保留本地部分文件。", downloadRecoveryManual: "重新选择原下载目标后，将校验并续传此残留。",
     uploadRecoveryManual: "重新选择原文件后可校验并续传。暂无法核验残留归属，请先人工检查远端残留；此处不提供自动删除。",
     removePartial: "删除残留", removePartialTitle: "删除中断的传输数据？", removePartialDescription: "已保留的部分数据将被永久删除；本地下载需重新选择原目标以核验，最终目标文件保持不变。", removePartialConfirm: "删除残留",
+    forgetRecord: "忘记", forgetRecordTitle: "忘记这条中断的传输？", forgetRecordDescription: "Capstan 将不再跟踪这份残留，也无法再续传或删除它。残留文件本身保持原样，需要时请自行检查或删除。",
     states: { queued: "排队中", preparing: "准备中", running: "传输中", paused: "已暂停", resuming: "恢复中", retrying: "重试中", verifying: "校验中", committing: "提交中", completed: "已完成", awaiting_conflict: "等待决策", failed: "失败", canceled: "已取消", interrupted: "已中断" },
   },
 };

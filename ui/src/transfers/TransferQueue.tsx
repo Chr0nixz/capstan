@@ -43,6 +43,7 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
   const [retryPrompt, setRetryPrompt] = useState<string | null>(null);
   const [recoveryPrompt, setRecoveryPrompt] = useState<string | null>(null);
   const [cleanupPrompt, setCleanupPrompt] = useState<string | null>(null);
+  const [forgetPrompt, setForgetPrompt] = useState<string | null>(null);
   const [exitOpen, setExitOpen] = useState(false), [exiting, setExiting] = useState(false);
   const [exitError, setExitError] = useState<SftpErrorCode | "preferences" | null>(null);
   const focusReturn = useRef<HTMLElement | null>(null);
@@ -193,6 +194,13 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
     if (cleanupPrompt && !state.recovery.some((item) => item.id === cleanupPrompt && canClean(item))) setCleanupPrompt(null);
   }, [cleanupPrompt, state.recovery]);
   useEffect(() => {
+    if (forgetPrompt && !state.recovery.some((item) => item.id === forgetPrompt)) setForgetPrompt(null);
+  }, [forgetPrompt, state.recovery]);
+  const forgetRecovered = async (id: string): Promise<void> => {
+    try { await controller.forgetRecovered(id); setForgetPrompt(null); }
+    catch (cause) { setRetryError(sftpError(cause)); setForgetPrompt(null); }
+  };
+  useEffect(() => {
     if (!isTauriAvailable()) return;
     let disposed = false, unlisten: (() => void) | undefined;
     void listenTauriEvent<{ error?: string } | null>("transfer-exit-requested", (payload) => { setExitError(exitErrorCode(payload?.error)); setExitOpen(true); }).then((listener) => {
@@ -243,10 +251,11 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
               {item.direction === "download" && canRecover(item.state) && <p>{labels.downloadRecoveryManual}</p>}
               {item.direction === "upload" && canRecover(item.state) && <p>{labels.uploadRecoveryManual}</p>}
             </div>
-            {(canRecover(item.state) || canClean(item)) && <div className="transfer-row-actions">
+            <div className="transfer-row-actions">
               {canRecover(item.state) && <button type="button" disabled={state.pending.includes(item.id)} onClick={() => void retryRecoveredUpload(item.id)}>{item.direction === "upload" ? labels.resumeRecovered : labels.resumeDownload}</button>}
               {canClean(item) && <button type="button" disabled={state.pending.includes(item.id)} onClick={() => setCleanupPrompt(item.id)}>{labels.removePartial}</button>}
-            </div>}
+              <button type="button" className="ghost-button" disabled={state.pending.includes(item.id)} onClick={() => setForgetPrompt(item.id)}>{labels.forgetRecord}</button>
+            </div>
           </article>)}
         </section>}
         {!shownTasks.length && <p className="sftp-status">{labels.empty}</p>}
@@ -278,6 +287,14 @@ export function TransferQueue({ locale, hosts, production, sessions = [], theme 
         <Dialog.Title>{labels.removePartialTitle}</Dialog.Title><Dialog.Description>{labels.removePartialDescription}</Dialog.Description>
         <div className="sftp-dialog-actions"><Dialog.Close asChild><button className="ghost-button" type="button">{labels.keepOpen}</button></Dialog.Close>
           <button type="button" className="danger-action" disabled={!cleanupPrompt || state.pending.includes(cleanupPrompt)} onClick={() => { if (cleanupPrompt) void cleanupRecoveredUpload(cleanupPrompt); }}>{labels.removePartialConfirm}</button>
+        </div>
+      </Dialog.Content></Dialog.Portal>
+    </Dialog.Root>
+    <Dialog.Root open={!!forgetPrompt} onOpenChange={(open) => { if (!open) setForgetPrompt(null); }}>
+      <Dialog.Portal><Dialog.Overlay className="sftp-dialog-overlay" /><Dialog.Content className="sftp-dialog" data-theme={theme}>
+        <Dialog.Title>{labels.forgetRecordTitle}</Dialog.Title><Dialog.Description>{labels.forgetRecordDescription}</Dialog.Description>
+        <div className="sftp-dialog-actions"><Dialog.Close asChild><button className="ghost-button" type="button">{sftpCopy[locale].cancel}</button></Dialog.Close>
+          <button type="button" className="danger-action" disabled={!forgetPrompt || state.pending.includes(forgetPrompt)} onClick={() => { if (forgetPrompt) void forgetRecovered(forgetPrompt); }}>{labels.forgetRecord}</button>
         </div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>

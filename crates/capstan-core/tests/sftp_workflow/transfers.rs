@@ -1087,6 +1087,50 @@ async fn failed_owned_upload_cleanup_keeps_a_baseline_bound_cleanup_record() {
     fixture.close().await;
 }
 
+// Needs the encrypted transfer recovery ledger, which is Windows-only so far.
+#[cfg(windows)]
+#[tokio::test]
+async fn forgetting_a_recovery_record_leaves_the_partial_in_place() {
+    let (fixture, session, transfers) = fixture().await;
+    let remote = &fixture.observations.transfer;
+    remote.deny_commit.store(true, Ordering::SeqCst);
+    remote.stall_write.store(true, Ordering::SeqCst);
+    let recovery = tempfile::tempdir().unwrap();
+    transfers
+        .configure_recovery_directory(recovery.path().to_owned())
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"new").unwrap();
+    let id = enqueue_upload(&fixture, session, &transfers, &source, "target");
+    let partial = format!("/files/.capstan-{id}.partial");
+    tokio::time::timeout(Duration::from_secs(3), remote.started.notified())
+        .await
+        .unwrap();
+    // Running: the record still protects a live partial.
+    assert_eq!(
+        transfers.forget_recovered("main", id),
+        Err(SftpError::ScopeExpired)
+    );
+    remote
+        .denied_removals
+        .lock()
+        .unwrap()
+        .insert(partial.clone());
+    remote.stall_write.store(false, Ordering::SeqCst);
+    remote.release.notify_waiters();
+    assert_eq!(finished(&transfers, id).await.state, TransferState::Failed);
+    assert_eq!(transfers.recovery_snapshot().unwrap().entries.len(), 1);
+    assert_eq!(
+        transfers.forget_recovered("secondary", id),
+        Err(SftpError::ScopeExpired)
+    );
+    transfers.forget_recovered("main", id).unwrap();
+    assert!(transfers.recovery_snapshot().unwrap().entries.is_empty());
+    assert_eq!(remote.bytes(&partial), b"new");
+    fixture.close().await;
+}
+
 #[cfg(any(windows, unix))]
 #[tokio::test]
 async fn rejected_exclusive_open_does_not_report_a_nonexistent_partial() {

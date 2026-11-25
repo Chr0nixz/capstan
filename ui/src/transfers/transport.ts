@@ -16,6 +16,7 @@ export interface TransferTransport {
   retryRecoveredDownload?(id: string, terminal: TerminalSessionId, session: SftpSessionId, selection: string): Promise<void>;
   cleanupRecoveredDownload?(id: string, selection: string): Promise<void>;
   cleanupRecoveredUpload?(id: string, terminal: TerminalSessionId, session: SftpSessionId): Promise<void>;
+  forgetRecovered?(id: string): Promise<void>;
   resolve(id: string, revision: ExactU64, decision: Decision): Promise<void>;
   exit(): Promise<void>;
 }
@@ -33,6 +34,7 @@ export function tauriTransferTransport(): TransferTransport {
     retryRecoveredDownload: (id, terminal, session, selection) => invokeTauri("retry_recovered_transfer_download", { id, terminal, session, selection }),
     cleanupRecoveredDownload: (id, selection) => invokeTauri("cleanup_recovered_transfer_download", { id, selection }),
     cleanupRecoveredUpload: (id, terminal, session) => invokeTauri("cleanup_recovered_transfer_upload", { id, terminal, session }),
+    forgetRecovered: (id) => invokeTauri("forget_recovered_transfer", { id }),
     resolve: (id, revision, decision) => invokeTauri("resolve_transfer_conflict", { id, revision, decision }),
     exit: () => invokeTauri("confirm_transfer_exit"),
   };

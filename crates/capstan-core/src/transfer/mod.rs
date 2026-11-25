@@ -845,6 +845,31 @@ impl TransferService {
         store.remove(id)
     }
 
+    /// Forget in the queue: drops the record and nothing else. The partial
+    /// stays where it is; Capstan just stops offering to resume or remove it.
+    /// This is the way out for records that can never be cleaned up, such as
+    /// a partial that is gone or one whose host was deleted.
+    pub fn forget_recovered(&self, window: &str, id: Uuid) -> Result<(), SftpError> {
+        if window != "main" {
+            return Err(SftpError::ScopeExpired);
+        }
+        let running = self
+            .state
+            .lock()
+            .map_err(|_| SftpError::ConnectionLost)?
+            .tasks
+            .iter()
+            .any(|task| {
+                task.status
+                    .lock()
+                    .is_ok_and(|status| status.id == id && !status.state.terminal())
+            });
+        if running {
+            return Err(SftpError::ScopeExpired);
+        }
+        self.forget_recovery(id)
+    }
+
     pub fn recovery_target(&self, window: &str, id: Uuid) -> Result<TransferTarget, SftpError> {
         if window != "main" {
             return Err(SftpError::ScopeExpired);
