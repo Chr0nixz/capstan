@@ -459,3 +459,12 @@ fn diagnostic_codes_name_the_method_without_details() {
     );
     assert_eq!(AuthenticationMethod::Interactive.code(), "interactive");
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_hung_agent_fails_the_attempt_instead_of_waiting_forever() {
+    // Opening the agent and listing its keys both go through this bound.
+    let started = tokio::time::Instant::now();
+    let result = agent_request(std::future::pending::<Result<()>>()).await;
+    assert!(matches!(result, Err(SshError::Timeout)));
+    assert_eq!(started.elapsed(), Duration::from_secs(5));
+}

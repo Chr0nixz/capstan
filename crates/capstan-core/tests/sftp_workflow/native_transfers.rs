@@ -294,10 +294,10 @@ async fn native_receipts_are_owner_bound_single_use_and_upload_files_and_empty_d
     let remote = &fixture.observations.transfer;
     assert_eq!(remote.bytes("/files/中文 file.txt"), b"native drop bytes");
     assert_eq!(remote.bytes("/files/tree/nested.txt"), b"nested bytes");
-    assert_eq!(
-        remote.files.lock().unwrap()["/files/tree/empty"].mode & 0o170000,
-        0o40000
-    );
+    // Created folders get the server's default mode, not a private one.
+    for folder in ["/files/tree", "/files/tree/empty"] {
+        assert_eq!(remote.mode(folder), 0o40755, "{folder}");
+    }
     fixture.close().await;
 }
 

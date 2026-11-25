@@ -869,8 +869,10 @@ impl SftpService {
                 .await
                 .map_err(map_error)
         } else {
+            // An empty new file gets the server's default mode, like one
+            // made in a remote shell.
             view.client
-                .open_file(path.as_str(), true, &cancel)
+                .create_file(path.as_str(), None, &cancel)
                 .await
                 .map_err(map_error)?
                 .close(&cancel)

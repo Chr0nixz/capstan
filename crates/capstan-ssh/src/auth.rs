@@ -6,7 +6,9 @@
 //! given through [`crate::TrustBroker::allow_prompts`]. Without one, a prompt
 //! fails the attempt with [`SshError::InteractionRequired`], so automatic
 //! reconnects never wait on input nobody was asked for.
-use crate::{open_agent_client, select_agent_identity, AttemptBinding, AuthenticationMethod};
+use crate::{
+    agent_request, open_agent_client, select_agent_identity, AttemptBinding, AuthenticationMethod,
+};
 use crate::{Result, SshError};
 use async_trait::async_trait;
 use russh::{
@@ -141,11 +143,14 @@ impl<H: client::Handler> Session<'_, '_, H> {
                 provider,
                 fingerprint,
             } => {
-                let mut agent = open_agent_client(provider).await?;
-                let identities = agent
-                    .request_identities()
-                    .await
-                    .map_err(|_| SshError::AgentUnavailable)?;
+                let mut agent = agent_request(open_agent_client(provider)).await?;
+                let identities = agent_request(async {
+                    agent
+                        .request_identities()
+                        .await
+                        .map_err(|_| SshError::AgentUnavailable)
+                })
+                .await?;
                 let key = select_agent_identity(&identities, &fingerprint)?;
                 let hash = self.rsa_hash().await;
                 let result = step(

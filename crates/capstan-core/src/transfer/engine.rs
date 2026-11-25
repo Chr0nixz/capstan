@@ -13,6 +13,16 @@ enum CleanupOutcome {
     Unverified,
 }
 
+/// The permission bits an upload carries over from the file it replaces.
+fn replaced_permissions(target: Option<&TargetVersion>) -> Option<u32> {
+    match target {
+        Some(TargetVersion::Remote(metadata)) if metadata.kind == FileKind::File => {
+            metadata.permissions.map(|mode| mode & 0o7777)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum TargetVersion {
     Remote(Metadata),
@@ -23,16 +33,13 @@ impl TargetVersion {
         match self {
             Self::Remote(value) => value.clone(),
             Self::Local(value) => Metadata {
-                kind: if value.attributes & 0x10 != 0 {
+                kind: if value.is_directory() {
                     FileKind::Directory
                 } else {
                     FileKind::File
                 },
                 size: Some(ExactU64(value.size)),
-                // Windows FILETIME uses 100 ns ticks since 1601.
-                modified_seconds: Some(ExactU64(
-                    (value.modified / 10_000_000).saturating_sub(11_644_473_600),
-                )),
+                modified_seconds: Some(ExactU64(value.modified_seconds())),
                 permissions: None,
             },
         }
@@ -351,7 +358,7 @@ impl Job {
             Local::Source(source) => {
                 let source = source.clone();
                 blocking(move || source.verify()).await?;
-                self.upload().await?;
+                self.upload(replaced_permissions(approved.as_ref())).await?;
             }
             Local::Destination(_) => self.download().await?,
         }
@@ -488,7 +495,8 @@ impl Job {
         }
         Ok(())
     }
-    async fn upload(&mut self) -> Result<(), SftpError> {
+    /// `keep` is the mode of the file this upload replaces, if any.
+    async fn upload(&mut self, keep: Option<u32>) -> Result<(), SftpError> {
         let Local::Source(source) = &self.local else {
             return Err(SftpError::LocalIo);
         };
@@ -558,15 +566,23 @@ impl Job {
             task.checkpoint_recovery(&context, Some(checkpoint_path), None, None, None)
         })
         .await?;
-        let file = match if !resuming {
+        let file = match if resuming {
+            self.context
+                .client
+                .open_existing_file(temporary.as_str(), &self.task.cancel)
+                .await
+        } else if keep.is_some() {
+            // Private while written; the replaced file's mode follows below.
             self.context
                 .client
                 .open_file(temporary.as_str(), true, &self.task.cancel)
                 .await
         } else {
+            // A new file starts from the local mode where there is one, like
+            // OpenSSH's sftp, and otherwise from the server's defaults.
             self.context
                 .client
-                .open_existing_file(temporary.as_str(), &self.task.cancel)
+                .create_file(temporary.as_str(), source.permissions(), &self.task.cancel)
                 .await
         } {
             Ok(file) => file,
@@ -661,6 +677,25 @@ impl Job {
         let expected = result?;
         drained?;
         closed?;
+        if let Some(mode) = keep {
+            // Before verification, so every later check sees the final mode.
+            match self
+                .context
+                .client
+                .set_permissions(temporary.as_str(), mode, &self.task.cancel)
+                .await
+            {
+                // A server that refuses mode changes still gets the content,
+                // which then stays readable by its owner only.
+                Ok(())
+                | Err(
+                    ClientError::PermissionDenied
+                    | ClientError::Unsupported
+                    | ClientError::RemoteIo,
+                ) => {}
+                Err(error) => return Err(map_error(error)),
+            }
+        }
         self.task.phase(TransferState::Verifying)?;
         let source_attrs = metadata(
             self.context
@@ -883,12 +918,18 @@ impl Job {
         }
         Ok(())
     }
-    async fn cleanup(&mut self) -> CleanupOutcome {
+    /// `retry` says whether this task keeps its plan for an explicit retry.
+    async fn cleanup(&mut self, retry: bool) -> CleanupOutcome {
         match &self.local {
             Local::Destination(destination) => {
-                if (self.task.cancel.is_cancelled()
-                    || self.context.client.is_closed()
-                    || self.partial.is_some())
+                // Without a recovery ledger (outside Windows) only an in-session
+                // retry could reuse the prefix, so a canceled or skipped
+                // download would leave a hidden file nothing ever removes.
+                let reusable = retry || self.task.recovery.is_some();
+                if reusable
+                    && (self.task.cancel.is_cancelled()
+                        || self.context.client.is_closed()
+                        || self.partial.is_some())
                     && blocking({
                         let destination = destination.clone();
                         move || destination.partial_size()
@@ -959,13 +1000,15 @@ impl Job {
     }
     async fn record_cleanup(&self, outcome: &CleanupOutcome) -> Result<(), SftpError> {
         use super::recovery::RecoveryMode;
+        // Without a ledger nothing could find a preserved local file again,
+        // so it stays owned and its handle's drop retries the removal.
+        let Some(store) = self.task.recovery.clone() else {
+            return Ok(());
+        };
         if let Local::Destination(destination) = &self.local {
             let destination = destination.clone();
             blocking(move || destination.preserve_partial()).await?;
         }
-        let Some(store) = self.task.recovery.clone() else {
-            return Ok(());
-        };
         let id = self.task.status.lock().map_err(|_| SftpError::LocalIo)?.id;
         let local = self.local.clone();
         let baseline = match outcome {
@@ -1282,8 +1325,12 @@ pub(super) async fn run(
         }
         result => result,
     };
+    // Matches the plan cleared below: no retry after success or cancellation.
+    let retry = !(result.is_ok()
+        || task.cancel.is_cancelled()
+        || result == Err(SftpError::OperationCanceled));
     let cleanup = if result.is_err() {
-        job.cleanup().await
+        job.cleanup(retry).await
     } else {
         CleanupOutcome::Complete
     };
@@ -1322,7 +1369,7 @@ pub(super) async fn run(
             }
         }
     }
-    if result.is_ok() || task.cancel.is_cancelled() || result == Err(SftpError::OperationCanceled) {
+    if !retry {
         task.clear_retry();
     }
     if matches!(cleanup, CleanupOutcome::Complete) {

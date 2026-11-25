@@ -288,6 +288,11 @@ impl Source {
         self.baseline.size
     }
 
+    /// Read, write and execute bits for user, group and others.
+    pub fn permissions(&self) -> u32 {
+        self.baseline.attributes & 0o777
+    }
+
     fn reopen(&self) -> io::Result<File> {
         let parent = self.anchor.checked_parent()?;
         let file = open_regular(&parent, self.anchor.filename()?, OFlags::RDONLY)?;

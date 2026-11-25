@@ -86,7 +86,7 @@ impl Version {
     fn kind(&self) -> FileKind {
         match self {
             Self::Remote(value) => value.kind,
-            Self::Local(value) if value.attributes & 0x10 != 0 => FileKind::Directory,
+            Self::Local(value) if value.is_directory() => FileKind::Directory,
             Self::Local(_) => FileKind::File,
             Self::Blocked => FileKind::Other,
         }

@@ -4,7 +4,7 @@
 //! Vault: trust for both hops, the shared connection pool and deletion.
 
 use capstan_core::VaultManager;
-use capstan_ssh::TrustBroker;
+use capstan_ssh::{connection_state::ConnectionState, TrustBroker};
 use capstan_vault::{Host, KdfParameters, SecretText};
 use russh::{
     keys::{Algorithm, HashAlg, PrivateKey},
@@ -246,11 +246,12 @@ async fn a_host_behind_a_jump_host_confirms_both_keys_and_shares_the_jump() {
     );
 
     // A terminal on the jump host itself reuses the connection the target rides on.
+    let bastion_owner = Uuid::new_v4();
     let (_, bastion_shell) = timeout(
         Duration::from_secs(10),
         manager.connect_password_host(
             bastion.id,
-            Uuid::new_v4(),
+            bastion_owner,
             broker.clone(),
             CancellationToken::new(),
         ),
@@ -259,6 +260,41 @@ async fn a_host_behind_a_jump_host_confirms_both_keys_and_shares_the_jump() {
     .unwrap()
     .unwrap();
     assert!(challenges.try_recv().is_err());
+
+    // Disconnecting the jump host ends its own sessions but keeps the route
+    // the target rides on, so the target neither drops nor reopens the jump.
+    let bastion_connection = manager.connection_for_owner(bastion_owner).unwrap();
+    assert_ne!(
+        bastion_connection.connection_id,
+        manager.connection_for_owner(attempt).unwrap().connection_id
+    );
+    let disconnected = manager
+        .disconnect_connection(
+            bastion_connection.connection_id,
+            bastion_connection.generation,
+        )
+        .await
+        .unwrap();
+    assert_eq!(disconnected.state, ConnectionState::Disconnected);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        manager.connection_for_owner(attempt).unwrap().state,
+        ConnectionState::Online
+    );
+    let (_, second_shell) = timeout(
+        Duration::from_secs(10),
+        manager.connect_password_host(
+            db.id,
+            Uuid::new_v4(),
+            broker.clone(),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(jump.destinations.lock().unwrap().len(), 1);
+    second_shell.control.close().await.unwrap();
 
     let revision = manager.revision().unwrap();
     assert_eq!(

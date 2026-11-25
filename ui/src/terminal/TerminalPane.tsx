@@ -18,6 +18,7 @@ import { flushSync } from "react-dom";
 import { saveDesktopPreference, useDesktopPreferences, useTerminalThemes } from "../themes/store";
 import { isMacOS, primaryModifier } from "../window/platform";
 import { useConfirm } from "../ui/ConfirmDialog";
+import { RECONNECT_RESET } from "./reset";
 
 export type TerminalPaneLabels = {
   localShell: string;
@@ -375,7 +376,7 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
         suspended: () => { inputVersion += 1; unregisterInput?.(); session.stopInput(); cwdPublisher?.close(); },
         replacing: async () => {
           await session.settleOutput();
-          if (!disposed) session.writeLocal(new TextEncoder().encode("\x18\x1b[?1049l\x1b[?2004l\x1b[0m"));
+          if (!disposed) session.writeLocal(new TextEncoder().encode(RECONNECT_RESET));
         },
         started: (started) => {
           if (started.kind === "ssh") useTunnelTargets.getState().register(started.hostId, started.connectionId);

@@ -22,6 +22,9 @@ const IN_FLIGHT: usize = 208;
 const WAITING: usize = 128;
 const HANDLES: usize = 64;
 const BLOCK: usize = super::wire::MAX_DATA_BYTES;
+/// New files are private until whoever writes them decides otherwise, so a
+/// temporary never exposes content before it is published.
+const PRIVATE_FILE_MODE: u32 = 0o600;
 /// Connection-wide admission, shared by every subsystem on one transport.
 pub(crate) struct Admission {
     slots: Arc<Semaphore>,
@@ -403,18 +406,42 @@ impl SftpClient {
         let handle = self.open_handle(path.to_owned(), None, cancel).await?;
         Ok(RemoteDirectory { handle, eof: false })
     }
+    /// Opens `path` for reading, or with `create` makes a new file only the
+    /// owner can read while it is written.
     pub async fn open_file(
         self: &Arc<Self>,
         path: &str,
         create: bool,
         cancel: &CancellationToken,
     ) -> Result<RemoteFile, ClientError> {
-        let flags = if create {
-            OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE
+        if create {
+            self.create_file(path, Some(PRIVATE_FILE_MODE), cancel)
+                .await
         } else {
-            OpenFlags::READ
-        };
-        self.open_file_with_flags(path, flags, create, cancel).await
+            self.open_file_with_flags(path, OpenFlags::READ, false, None, cancel)
+                .await
+        }
+    }
+
+    /// Creates a new file for writing. `None` leaves its permissions to the
+    /// server's defaults; either way the server's umask still applies.
+    pub async fn create_file(
+        self: &Arc<Self>,
+        path: &str,
+        permissions: Option<u32>,
+        cancel: &CancellationToken,
+    ) -> Result<RemoteFile, ClientError> {
+        if permissions.is_some_and(|mode| mode > 0o7777) {
+            return Err(ClientError::InvalidPath);
+        }
+        self.open_file_with_flags(
+            path,
+            OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            true,
+            permissions,
+            cancel,
+        )
+        .await
     }
 
     /// Open an existing regular file for offset writes without truncating it.
@@ -425,7 +452,7 @@ impl SftpClient {
         path: &str,
         cancel: &CancellationToken,
     ) -> Result<RemoteFile, ClientError> {
-        self.open_file_with_flags(path, OpenFlags::WRITE, true, cancel)
+        self.open_file_with_flags(path, OpenFlags::WRITE, true, None, cancel)
             .await
     }
 
@@ -434,11 +461,12 @@ impl SftpClient {
         path: &str,
         flags: OpenFlags,
         writable: bool,
+        permissions: Option<u32>,
         cancel: &CancellationToken,
     ) -> Result<RemoteFile, ClientError> {
         validate_path(path)?;
         let handle = self
-            .open_handle(path.to_owned(), Some(flags), cancel)
+            .open_handle(path.to_owned(), Some((flags, permissions)), cancel)
             .await?;
         Ok(RemoteFile { handle, writable })
     }
@@ -448,7 +476,7 @@ impl SftpClient {
     async fn open_handle(
         self: &Arc<Self>,
         path: String,
-        flags: Option<OpenFlags>,
+        flags: Option<(OpenFlags, Option<u32>)>,
         cancel: &CancellationToken,
     ) -> Result<OwnedHandle, ClientError> {
         if cancel.is_cancelled() {
@@ -476,12 +504,12 @@ impl SftpClient {
             let result = owner
                 .request_with_completion(&admission, &completion, true, |raw| async move {
                     match flags {
-                        Some(flags) => {
+                        Some((flags, permissions)) => {
                             raw.open(
                                 path,
                                 flags,
                                 FileAttributes {
-                                    permissions: Some(0o600),
+                                    permissions,
                                     ..Default::default()
                                 },
                             )
@@ -516,16 +544,9 @@ impl SftpClient {
         validate_path(path)?;
         self.request(cancel, true, |raw| {
             let path = path.to_owned();
-            async move {
-                raw.mkdir(
-                    path,
-                    FileAttributes {
-                        permissions: Some(0o700),
-                        ..Default::default()
-                    },
-                )
-                .await
-            }
+            // No mode: the server's default and umask apply, as for `mkdir`
+            // in OpenSSH's sftp.
+            async move { raw.mkdir(path, FileAttributes::default()).await }
         })
         .await
         .map(|_| ())

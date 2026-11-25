@@ -144,6 +144,16 @@ fn select_agent_identity(identities: &[AgentIdentity], fingerprint: &str) -> Res
         .ok_or(SshError::AgentIdentityUnavailable)
 }
 
+/// Opening an agent and listing its keys never wait for the user, so a slow
+/// answer means it hung. Unbounded, a connection would stay "authenticating".
+const AGENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn agent_request<T>(request: impl std::future::Future<Output = Result<T>>) -> Result<T> {
+    tokio::time::timeout(AGENT_TIMEOUT, request)
+        .await
+        .map_err(|_| SshError::Timeout)?
+}
+
 async fn open_agent_client(provider: AgentProvider) -> Result<DynamicAgentClient> {
     #[cfg(windows)]
     {
@@ -208,13 +218,14 @@ async fn relay_agent_channel(
 }
 
 pub async fn list_agent_identities(provider: AgentProvider) -> Result<Vec<AgentIdentityView>> {
-    let mut client = tokio::time::timeout(Duration::from_secs(5), open_agent_client(provider))
-        .await
-        .map_err(|_| SshError::Timeout)??;
-    let identities = tokio::time::timeout(Duration::from_secs(5), client.request_identities())
-        .await
-        .map_err(|_| SshError::Timeout)?
-        .map_err(|_| SshError::AgentUnavailable)?;
+    let mut client = agent_request(open_agent_client(provider)).await?;
+    let identities = agent_request(async {
+        client
+            .request_identities()
+            .await
+            .map_err(|_| SshError::AgentUnavailable)
+    })
+    .await?;
     let mut views = identities
         .iter()
         .filter_map(agent_identity_view)
@@ -866,6 +877,18 @@ impl PasswordConnection {
 
     pub fn connection_generation(&self) -> u64 {
         self.connection_generation
+    }
+    /// Whether this connection tunnels through `jump`, directly or through
+    /// further jump hosts.
+    pub fn routes_through(&self, jump: &PasswordConnection) -> bool {
+        let mut via = self.via.as_ref();
+        while let Some(lease) = via {
+            if std::ptr::eq(lease.connection(), jump) {
+                return true;
+            }
+            via = lease.connection().via.as_ref();
+        }
+        false
     }
     pub fn is_closed(&self) -> bool {
         self.cancel.is_cancelled()

@@ -37,6 +37,8 @@ pub async fn prepare_file_workflow_exit(
         settings.resume();
         transfers.abort_exit(window);
         sftp.abort_tree_delete_exit(window);
+    } else {
+        transfers.release_unrecorded_retries(window);
     }
     result
 }

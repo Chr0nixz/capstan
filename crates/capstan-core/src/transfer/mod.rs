@@ -394,7 +394,10 @@ impl Task {
         local: Local,
         partial: PartialState,
     ) -> Result<(), SftpError> {
-        if let Local::Destination(destination) = &local {
+        // Kept on disk past this handle only when the ledger records it.
+        // Otherwise the retry plan's handle owns it, and dropping the plan
+        // (cancel, removal, exit) removes it.
+        if let (Local::Destination(destination), Some(_)) = (&local, &self.recovery) {
             destination.preserve_partial()?;
         }
         let target = context.target.clone();
@@ -1904,6 +1907,27 @@ impl TransferService {
                 .remove(window);
         }
         result
+    }
+    /// Once exit is certain: without a recovery ledger an interrupted
+    /// download's prefix has no later owner, so releasing its retry plan
+    /// removes the hidden local `.partial` now. Handles are not dropped at
+    /// process exit.
+    pub(crate) fn release_unrecorded_retries(&self, window: &str) {
+        if self.recovery.lock().map_or(true, |store| store.is_some()) {
+            return;
+        }
+        let tasks = match self.state.lock() {
+            Ok(state) => state
+                .tasks
+                .iter()
+                .filter(|task| task.window == window)
+                .cloned()
+                .collect::<Vec<_>>(),
+            Err(_) => return,
+        };
+        for task in tasks {
+            task.clear_retry();
+        }
     }
     pub(crate) fn abort_exit(&self, window: &str) {
         if let Ok(mut state) = self.state.lock() {

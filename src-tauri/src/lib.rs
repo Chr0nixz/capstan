@@ -22,6 +22,8 @@ mod launch_commands;
 pub use launch_commands::prepare_instance;
 #[cfg(all(target_os = "macos", feature = "tauri-runtime"))]
 mod macos_menu;
+#[cfg(all(target_os = "macos", feature = "tauri-runtime"))]
+mod macos_quit;
 #[cfg(feature = "tauri-runtime")]
 mod native_dialog;
 #[cfg(feature = "tauri-runtime")]
@@ -1942,6 +1944,21 @@ pub mod tauri_channel {
         Ok(())
     }
 
+    /// Tells a macOS quit from the Dock, logout or shutdown, which waits on
+    /// the close flow, how the flow ended. Returns whether one was waiting;
+    /// never on other platforms.
+    fn answer_pending_quit(quit: bool) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            crate::macos_quit::answer(quit)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = quit;
+            false
+        }
+    }
+
     pub fn register_commands(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
         #[cfg(feature = "m0-benchmarks")]
         let builder = builder.manage(crate::benchmark::BenchmarkState::default());
@@ -1997,6 +2014,9 @@ pub mod tauri_channel {
                 )?;
                 #[cfg(target_os = "macos")]
                 app.manage(crate::data_directory::lock_instance(&data_directory)?);
+                // Dock, logout and shutdown quits run the close flow below.
+                #[cfg(target_os = "macos")]
+                crate::macos_quit::install(app.handle());
                 // After the instance lock, so a second instance never writes here.
                 let diagnostics = data_directory.join(capstan_diagnostics::DIRECTORY);
                 // A log that cannot start must not stop the application.
@@ -2417,6 +2437,7 @@ pub mod tauri_channel {
                     if window.label() == "main" {
                         api.prevent_close();
                         if crate::update_commands::closing(window.app_handle()) {
+                            answer_pending_quit(false);
                             return;
                         }
                         #[cfg(windows)]
@@ -2449,6 +2470,7 @@ pub mod tauri_channel {
                             || sftp.has_active_tree_deletes(window.label()).unwrap_or(true)
                         {
                             let _ = window.emit("transfer-exit-requested", ());
+                            answer_pending_quit(false);
                             return;
                         }
                         #[cfg(windows)]
@@ -2501,13 +2523,18 @@ pub mod tauri_channel {
                                         error: error.to_string(),
                                     },
                                 );
+                                answer_pending_quit(false);
                                 return;
                             }
                             attempts.block_and_cancel_all(&broker).await;
                             crate::forwarding_commands::shutdown(&window).await;
                             crate::connection_commands::shutdown(&window).await;
                             manager.close_all().await;
-                            let _ = window.destroy();
+                            // AppKit ends a quit it was waiting on by itself;
+                            // destroying the window first would race that.
+                            if !answer_pending_quit(true) {
+                                let _ = window.destroy();
+                            }
                         });
                     }
                 }

@@ -973,6 +973,16 @@ async fn folder_download_skip_preserves_nested_targets_and_the_selected_root() {
         .collect::<Vec<_>>();
     capstan_core::native_fs::prepare_destination_folder(local.path(), &directories).unwrap();
     std::fs::write(local.path().join("tree/nested/existing"), b"keep local").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Group write is 0x10, the bit Windows uses for directories.
+        std::fs::set_permissions(
+            local.path().join("tree/nested/existing"),
+            std::fs::Permissions::from_mode(0o664),
+        )
+        .unwrap();
+    }
     let items = tree
         .files()
         .iter()
@@ -1006,6 +1016,16 @@ async fn folder_download_skip_preserves_nested_targets_and_the_selected_root() {
         .await
         .conflict
         .unwrap();
+    // The prompt describes the local file as the platform reports it.
+    assert!(conflict.replace_allowed);
+    let target = conflict.target.clone().unwrap();
+    assert_eq!(target.kind, capstan_core::sftp::FileKind::File);
+    assert_eq!(target.size.map(|size| size.0), Some(10));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    assert!(target.modified_seconds.unwrap().0.abs_diff(now) < 300);
     transfers
         .resolve("main", existing, conflict.revision, Decision::SkipBatch)
         .unwrap();

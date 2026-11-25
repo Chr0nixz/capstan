@@ -863,6 +863,19 @@ struct RecoverySelection {
     expires_at: Instant,
 }
 
+/// Failures a later reconnect attempt can get past on its own: the network,
+/// or a target behind a jump host that is still restarting.
+fn reconnect_retryable(error: &CoreError) -> bool {
+    matches!(
+        error,
+        CoreError::Ssh(
+            capstan_ssh::SshError::Timeout
+                | capstan_ssh::SshError::Connection
+                | capstan_ssh::SshError::JumpUnreachable
+        )
+    )
+}
+
 fn connection_error(error: &CoreError) -> ConnectionErrorCode {
     match error {
         CoreError::Ssh(error) => error.into(),
@@ -1255,7 +1268,12 @@ impl VaultManager {
                     affected.push(candidate.clone());
                 }
             }
-            transport.disconnect().await;
+            // A jump host's transport stays open while connections tunnel
+            // through it (PLAN §4.2). Closing it would drop them, and their
+            // automatic reconnect would open the jump host again anyway.
+            if !self.carries_tunneled_connections(transport)? {
+                transport.disconnect().await;
+            }
         }
         for candidate in affected {
             let candidate_id = candidate
@@ -1281,6 +1299,17 @@ impl VaultManager {
             .snapshot
             .clone();
         Ok(snapshot)
+    }
+    fn carries_tunneled_connections(&self, jump: &PasswordConnection) -> Result<bool> {
+        for candidate in self.connections.entries()? {
+            let record = candidate.record.lock().map_err(|_| CoreError::TaskFailed)?;
+            if record.transport.upgrade().is_some_and(|connection| {
+                !connection.is_closed() && connection.routes_through(jump)
+            }) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
     pub async fn reconnect_connection(
         &self,
@@ -1476,12 +1505,7 @@ impl VaultManager {
                 Ok(()) => failures = 0,
                 Err(error) => {
                     failures += 1;
-                    let retryable = matches!(
-                        error,
-                        CoreError::Ssh(
-                            capstan_ssh::SshError::Timeout | capstan_ssh::SshError::Connection
-                        )
-                    );
+                    let retryable = reconnect_retryable(&error);
                     if let Ok(mut record) = entry.record.lock() {
                         let code = if self
                             .connections
@@ -3465,6 +3489,26 @@ mod tests {
         host.agent_forwarding = true;
         let enabled = connection_pool_key(&host, 0, 1, "SHA256:host".into(), None, String::new());
         assert_ne!(disabled, enabled);
+    }
+
+    #[test]
+    fn reconnect_retries_a_target_the_jump_host_cannot_reach_yet() {
+        use capstan_ssh::SshError;
+        for error in [
+            SshError::Timeout,
+            SshError::Connection,
+            SshError::JumpUnreachable,
+        ] {
+            assert!(reconnect_retryable(&CoreError::Ssh(error)));
+        }
+        for error in [
+            SshError::HostKeyChanged,
+            SshError::Authentication,
+            SshError::InteractionRequired,
+        ] {
+            assert!(!reconnect_retryable(&CoreError::Ssh(error)));
+        }
+        assert!(!reconnect_retryable(&CoreError::Canceled));
     }
 
     #[test]

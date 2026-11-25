@@ -104,6 +104,12 @@ impl RemoteState {
     pub(super) fn bytes(&self, path: &str) -> Vec<u8> {
         self.files.lock().unwrap()[path].data.clone()
     }
+    pub(super) fn mode(&self, path: &str) -> u32 {
+        self.files.lock().unwrap()[path].mode
+    }
+    pub(super) fn set_mode(&self, path: &str, mode: u32) {
+        self.files.lock().unwrap().get_mut(path).unwrap().mode = mode;
+    }
     pub(super) fn no_partials(&self) -> bool {
         !self
             .files
@@ -125,6 +131,24 @@ fn take_string(packet: &[u8], cursor: &mut usize) -> Vec<u8> {
     let value = packet[*cursor..*cursor + length].to_vec();
     *cursor += length;
     value
+}
+/// The permissions an OPEN or MKDIR asked for, with the 022 umask most
+/// servers run under applied, or `default` when it asked for none.
+fn requested_mode(packet: &[u8], mut cursor: usize, default: u32) -> u32 {
+    let read = |cursor: usize| u32::from_be_bytes(packet[cursor..cursor + 4].try_into().unwrap());
+    let flags = read(cursor);
+    cursor += 4;
+    if flags & 1 != 0 {
+        cursor += 8;
+    }
+    if flags & 2 != 0 {
+        cursor += 8;
+    }
+    if flags & 4 != 0 {
+        read(cursor) & 0o7777 & !0o022
+    } else {
+        default & !0o022
+    }
 }
 fn attrs(id: u32, record: &Record) -> Vec<u8> {
     let mut packet = reply(105, id);
@@ -302,7 +326,7 @@ pub(super) async fn serve<
                             path.clone(),
                             Record {
                                 data: vec![],
-                                mode: 0o100600,
+                                mode: 0o100000 | requested_mode(&packet, cursor + 4, 0o666),
                                 mtime: 100,
                             },
                         );
@@ -395,7 +419,7 @@ pub(super) async fn serve<
                 if let std::collections::hash_map::Entry::Vacant(entry) = files.entry(path) {
                     entry.insert(Record {
                         data: Vec::new(),
-                        mode: 0o40700,
+                        mode: 0o40000 | requested_mode(&packet, cursor, 0o777),
                         mtime: 100,
                     });
                     status(id, 0)
@@ -776,6 +800,62 @@ async fn conflict_decision_is_single_use_and_rechecked_after_write() {
     assert_eq!(remote.bytes("/files/target"), b"changed after write");
     assert_eq!(remote.bytes("/files/kept-copy"), b"new content");
     assert!(remote.no_partials());
+    fixture.close().await;
+}
+
+#[cfg(any(windows, unix))]
+#[tokio::test]
+async fn uploads_keep_the_mode_of_the_file_they_replace() {
+    let (fixture, session, transfers) = fixture().await;
+    let remote = &fixture.observations.transfer;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"#!/bin/sh\necho new\n").unwrap();
+    for (name, mode) in [("deploy.sh", 0o100755), ("index.html", 0o100644)] {
+        let path = format!("/files/{name}");
+        remote.put(&path, b"old");
+        remote.set_mode(&path, mode);
+        let id = enqueue_upload(&fixture, session, &transfers, &source, name);
+        let conflict = wait(&transfers, id, |s| s.conflict.is_some())
+            .await
+            .conflict
+            .unwrap();
+        transfers
+            .resolve("main", id, conflict.revision, Decision::Replace)
+            .unwrap();
+        assert_eq!(
+            finished(&transfers, id).await.state,
+            TransferState::Completed
+        );
+        assert_eq!(remote.bytes(&path), b"#!/bin/sh\necho new\n");
+        assert_eq!(remote.mode(&path), mode, "{name}");
+    }
+    assert!(remote.no_partials());
+    fixture.close().await;
+}
+
+#[cfg(any(windows, unix))]
+#[tokio::test]
+async fn new_uploads_take_the_local_mode_or_the_server_default() {
+    let (fixture, session, transfers) = fixture().await;
+    let remote = &fixture.observations.transfer;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"private").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    let id = enqueue_upload(&fixture, session, &transfers, &source, "fresh");
+    assert_eq!(
+        finished(&transfers, id).await.state,
+        TransferState::Completed
+    );
+    // macOS sends the local mode, like OpenSSH's sftp; Windows files have
+    // none, so the server's default applies. The server's umask is 022.
+    let expected = if cfg!(unix) { 0o100640 } else { 0o100644 };
+    assert_eq!(remote.mode("/files/fresh"), expected);
     fixture.close().await;
 }
 

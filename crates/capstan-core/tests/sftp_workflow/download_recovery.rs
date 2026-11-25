@@ -173,6 +173,124 @@ async fn live_download_retry_reauthorizes_the_original_path_on_a_fresh_scope() {
     fixture.close().await;
 }
 
+/// Without the recovery ledger (outside Windows) nothing could offer a
+/// canceled download's prefix again, so it must not stay behind hidden.
+#[tokio::test]
+async fn canceled_download_without_a_recovery_ledger_leaves_no_partial() {
+    let (fixture, session, transfers) = fixture().await;
+    let remote = &fixture.observations.transfer;
+    let body = (0..1024 * 1024)
+        .map(|n| (n % 251) as u8)
+        .collect::<Vec<_>>();
+    remote.put("/files/source.bin", &body);
+    let local = tempfile::tempdir().unwrap();
+    let page = fixture.list(session, "/files").await.unwrap();
+    let entry = page
+        .entries
+        .iter()
+        .find(|entry| entry.name == "source.bin")
+        .unwrap();
+    let context = fixture
+        .service
+        .transfer_context(
+            "main",
+            "one",
+            session,
+            TransferTarget::Download { entry: entry.id },
+        )
+        .unwrap();
+    let target = local.path().join("returned.bin");
+    let destination = Arc::new(NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&target).unwrap(),
+    ));
+    let grant = transfers.grant_destination(&context, destination).unwrap();
+    remote.stall_read.store(true, Ordering::SeqCst);
+    let id = transfers.enqueue(context, grant.token).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), remote.started.notified())
+        .await
+        .unwrap();
+    let partial = local.path().join(format!(".capstan-{id}.partial"));
+    assert!(partial.exists());
+    transfers.cancel("main", id).unwrap();
+    let canceled = finished(&transfers, id).await;
+    assert_eq!(canceled.state, TransferState::Canceled);
+    assert!(!canceled.cleanup_required);
+    remote.stall_read.store(false, Ordering::SeqCst);
+    remote.release.notify_one();
+    assert!(!partial.exists());
+    assert!(!target.exists());
+    assert_eq!(std::fs::read_dir(local.path()).unwrap().count(), 0);
+    fixture.close().await;
+}
+
+/// An interrupted download keeps its prefix for a retry in this run only;
+/// without a ledger, a confirmed exit removes it.
+#[tokio::test]
+async fn exit_removes_an_interrupted_download_prefix_without_a_recovery_ledger() {
+    let (fixture, session, transfers) = fixture().await;
+    let remote = &fixture.observations.transfer;
+    let body = (0..1024 * 1024)
+        .map(|n| (n % 251) as u8)
+        .collect::<Vec<_>>();
+    remote.put("/files/source.bin", &body);
+    let local = tempfile::tempdir().unwrap();
+    let page = fixture.list(session, "/files").await.unwrap();
+    let entry = page
+        .entries
+        .iter()
+        .find(|entry| entry.name == "source.bin")
+        .unwrap();
+    let context = fixture
+        .service
+        .transfer_context(
+            "main",
+            "one",
+            session,
+            TransferTarget::Download { entry: entry.id },
+        )
+        .unwrap();
+    let target = local.path().join("returned.bin");
+    let destination = Arc::new(NativeDestination::new(
+        capstan_core::native_fs::Destination::select(&target).unwrap(),
+    ));
+    let grant = transfers.grant_destination(&context, destination).unwrap();
+    remote.stall_read.store(true, Ordering::SeqCst);
+    let id = transfers.enqueue(context, grant.token).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), remote.started.notified())
+        .await
+        .unwrap();
+    let partial = local.path().join(format!(".capstan-{id}.partial"));
+    fixture
+        .lease
+        .open_sftp(&CancellationToken::new())
+        .await
+        .unwrap()
+        .close()
+        .await;
+    assert_eq!(
+        finished(&transfers, id).await.state,
+        TransferState::Interrupted
+    );
+    remote.stall_read.store(false, Ordering::SeqCst);
+    remote.release.notify_one();
+    assert!(partial.exists());
+    assert!(transfers.download_retry("main", id).is_ok());
+
+    let settings_root = tempfile::tempdir().unwrap();
+    let settings = capstan_core::settings::Settings::new(settings_root.path().to_owned());
+    capstan_core::application::prepare_file_workflow_exit(
+        &settings,
+        &transfers,
+        &fixture.service,
+        "main",
+    )
+    .await
+    .unwrap();
+    assert!(!partial.exists());
+    assert!(!target.exists());
+    fixture.close().await;
+}
+
 // Needs the encrypted transfer recovery ledger, which is Windows-only so far.
 #[cfg(windows)]
 #[tokio::test]
