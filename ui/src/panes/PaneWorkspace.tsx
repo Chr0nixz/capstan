@@ -33,7 +33,7 @@ export function PaneTools({ tab, labels, onRequestFocus }: Pick<Props, "tab" | "
   </>;
 }
 
-type Pending = { ids: PaneId[]; names: string[]; reason: BroadcastConfirmation; resolve: (accepted: boolean) => void };
+type Pending = { ids: PaneId[]; names: string[]; production: boolean[]; reason: BroadcastConfirmation; resolve: (accepted: boolean) => void };
 
 export function PaneWorkspace({ tab, visible, focusRequest, labels, name, productionHosts, restartTheme, onRequestFocus }: Props): ReactElement {
   const leaves = paneLeaves(tab.root);
@@ -53,6 +53,10 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
   const returnRef = useRef<HTMLElement | null>(null);
   // Keep a closed target's number available for an in-flight failure report.
   const paneName = (id: PaneId): string => labels.paneName(name, paneNumbers.current.get(id) ?? 0);
+  const isProduction = (id: PaneId): boolean => {
+    const launch = leaves.find((pane) => pane.paneId === id)?.launch;
+    return launch?.kind === "ssh" && productionHosts.has(launch.host_id);
+  };
   const settle = (accepted: boolean): void => {
     const current = pendingRef.current;
     // A confirmed target set stays armed until the selection changes, so later
@@ -77,7 +81,7 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
   const confirmBroadcast = (ids: readonly PaneId[], reason: BroadcastConfirmation): Promise<boolean> => new Promise((resolve) => {
     pendingRef.current?.resolve(false);
     returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const next = { ids: [...ids], names: ids.map(paneName), reason, resolve };
+    const next = { ids: [...ids], names: ids.map(paneName), production: ids.map(isProduction), reason, resolve };
     pendingRef.current = next;
     setPending(next);
   });
@@ -154,7 +158,9 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
         <Dialog.Title><span className="dialog-mark" aria-hidden="true"><BroadcastIcon size={16} /></span>
           {pending.reason === "arm" ? labels.confirmBroadcastArmTitle(pending.names.length) : labels.confirmBroadcastTitle}</Dialog.Title>
         <Dialog.Description>{pending.reason === "arm" ? labels.confirmBroadcastArmMessage(pending.names.length) : labels.confirmBroadcastMessage(pending.names.length)}</Dialog.Description>
-        <ul className="broadcast-confirm-targets">{pending.names.map((target) => <li key={target}>{target}</li>)}</ul>
+        <ul className="broadcast-confirm-targets">{pending.names.map((target, index) => <li key={target}>
+          {pending.production[index] && <span className="prod-chip">{labels.production}</span>}{target}
+        </li>)}</ul>
         <div className="sftp-dialog-actions">
           <button ref={cancelRef} className="ghost-button" type="button" onClick={() => settle(false)}>{labels.cancelEdit}</button>
           <button className={pending.reason === "arm" ? "primary-action" : "danger-action"} type="button" onClick={() => settle(true)}>{labels.confirmBroadcastSend(pending.names.length)}</button>

@@ -549,7 +549,8 @@ export function App(): ReactElement {
     const tab = current.tabs.find((candidate) => candidate.id === current.activeTab);
     if (!tab) return;
     const broadcast = target === "broadcast";
-    const baseRoute = routeInput(tab.focusedPaneId, tab.broadcastPaneIds, broadcast, input);
+    // With broadcast off its selection is hidden, so it is no destination.
+    const baseRoute = routeInput(tab.focusedPaneId, tab.broadcastEnabled ? tab.broadcastPaneIds : [], broadcast, input);
     const productionTargets = baseRoute.targetPaneIds.flatMap((id) => {
       const launch = paneLeaves(tab.root).find((pane) => pane.paneId === id)?.launch;
       return launch?.kind === "ssh" && productionHosts.has(launch.host_id) ? [hosts.find((host) => host.id === launch.host_id)?.name ?? launch.host_id] : [];
@@ -563,9 +564,12 @@ export function App(): ReactElement {
       requiresConfirmation: broadcast || productionRun,
     };
     if (route.blockedReason) { setError(labels.snippetNoBroadcastTargets); return; }
-    const targetNames = route.targetPaneIds.map((id) => {
-      const index = paneLeaves(tab.root).findIndex((pane) => pane.paneId === id) + 1;
-      return labels.paneName(tabNames.get(tab.id) ?? labels.localShell, index || 0);
+    const targets = route.targetPaneIds.map((id) => {
+      const leaves = paneLeaves(tab.root);
+      const index = leaves.findIndex((pane) => pane.paneId === id) + 1;
+      const launch = leaves[index - 1]?.launch;
+      const name = labels.paneName(tabNames.get(tab.id) ?? labels.localShell, index || 0);
+      return launch?.kind === "ssh" && productionHosts.has(launch.host_id) ? { name, productionLabel: labels.production } : { name };
     });
     // Capture destination session owners before the confirmation yields.
     // Auto-reconnect can replace an endpoint without changing PaneId or launch.
@@ -583,7 +587,8 @@ export function App(): ReactElement {
         target: { host: productionTargets[0], productionLabel: labels.production, detail: input.replace(/[\r\n]+$/u, "") },
       }) : confirm({
         title: labels.confirmSnippetBroadcastTitle(route.targetPaneIds.length),
-        body: `${labels.confirmBroadcastMessage(route.targetPaneIds.length)}\n${targetNames.join(labels.paneListSeparator)}`,
+        body: labels.confirmBroadcastMessage(route.targetPaneIds.length),
+        targets,
         confirm: labels.confirmBroadcastSend(route.targetPaneIds.length),
         cancel: labels.cancelEdit,
         tone: "danger",
@@ -1266,11 +1271,13 @@ export function App(): ReactElement {
       production: launch?.kind === "ssh" && productionHosts.has(launch.host_id),
     };
   };
+  // Broadcast panes are selected, and shown as selected, only while broadcast is on.
+  const broadcastPaneIds = activeEntry?.broadcastEnabled ? activeEntry.broadcastPaneIds : [];
   const snippetTarget: SnippetTarget = {
     current: activeEntry ? paneTarget(activeEntry, activeEntry.focusedPaneId) : null,
     broadcast: {
-      count: activeEntry?.broadcastPaneIds.length ?? 0,
-      production: !!activeEntry && activeEntry.broadcastPaneIds.some((id) => paneTarget(activeEntry, id).production),
+      count: broadcastPaneIds.length,
+      production: !!activeEntry && broadcastPaneIds.some((id) => paneTarget(activeEntry, id).production),
     },
   };
   const activePaneTheme = activeEntry?.paneStates[activeEntry.focusedPaneId]?.themeOverride
@@ -1648,7 +1655,7 @@ export function App(): ReactElement {
           onSaveSnippet={saveSnippet}
           onDeleteSnippet={deleteSnippet}
           onRun={runSnippetInput}
-          broadcastTargetsAvailable={(activeEntry?.broadcastPaneIds.length ?? 0) > 0}
+          broadcastTargetsAvailable={broadcastPaneIds.length > 0}
           target={snippetTarget}
           runRequest={snippetRequest}
           onRequestConsumed={(requestId) => setSnippetRequest((current) => current?.requestId === requestId ? undefined : current)}

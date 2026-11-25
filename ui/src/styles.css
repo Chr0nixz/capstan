@@ -627,6 +627,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .broadcast-status > span, .pane-input-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .broadcast-status > button, .pane-input-error > button { flex: 0 0 auto; }
 .broadcast-confirm-targets { margin: 12px 0 0; padding-left: 20px; max-height: 180px; overflow-y: auto; overflow-wrap: anywhere; }
+.broadcast-confirm-targets .prod-chip { margin-right: 6px; }
 .terminal-tab.is-tab-drop-target { box-shadow: inset 2px 0 var(--amber); }
 
 @media (forced-colors: active) {

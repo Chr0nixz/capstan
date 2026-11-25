@@ -14,6 +14,8 @@ export type ConfirmRequest = {
   theme?: TerminalTheme;
   /** The host the action reaches and the exact text it applies, shown in a mono well. */
   target?: { host: string; productionLabel?: string; detail: string };
+  /** Several destinations, such as broadcast panes; production ones carry the label. */
+  targets?: { name: string; productionLabel?: string }[];
 };
 type Pending = { request: ConfirmRequest; resolve: (accepted: boolean) => void };
 
@@ -49,6 +51,9 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
           {request.target.productionLabel && <span className="prod-chip">{request.target.productionLabel}</span>}
           <span className="confirm-host">{request.target.host}</span><code>{request.target.detail}</code>
         </p>}
+        {request.targets && <ul className="broadcast-confirm-targets">{request.targets.map((target, index) => <li key={index}>
+          {target.productionLabel && <span className="prod-chip">{target.productionLabel}</span>}{target.name}
+        </li>)}</ul>}
         <div className="sftp-dialog-actions">
           <button ref={cancelRef} className="ghost-button" type="button" onClick={() => settle(false)}>{request.cancel}</button>
           <button className={request.tone === "primary" ? "primary-action" : "danger-action"} type="button" onClick={() => settle(true)}>{request.confirm}</button>

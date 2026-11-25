@@ -7,7 +7,7 @@ import { useWorkspace } from "../workspace";
 import { paneLeaves, splitId } from "./tree";
 import type { TerminalSession, TerminalSessionOptions } from "../terminal/session";
 import type { ControllerCallbacks } from "../terminal/controller";
-import type { TerminalLaunch } from "../terminal/contracts";
+import type { HostId, TerminalLaunch } from "../terminal/contracts";
 
 const mocks = vi.hoisted(() => ({
   sessions: [] as { options: TerminalSessionOptions; session: TerminalSession; host: HTMLElement }[],
@@ -35,6 +35,7 @@ vi.mock("../connections/controller", () => ({
 }));
 
 let root: Root, container: HTMLDivElement;
+let productionHosts = new Set<HostId>();
 function Harness() {
   const state = useWorkspace();
   const current = state.tabs.find((tab) => tab.id === state.activeTab)!;
@@ -42,7 +43,7 @@ function Harness() {
   return <>
     <PaneTools tab={current} labels={copy.en} onRequestFocus={requestFocus} />
     {state.tabs.map((tab) => <div key={tab.id} hidden={tab.id !== state.activeTab}>
-      <PaneWorkspace tab={tab} visible={tab.id === state.activeTab} focusRequest={focusRequest} labels={copy.en} name={tab.label ?? "Local"} productionHosts={new Set()}
+      <PaneWorkspace tab={tab} visible={tab.id === state.activeTab} focusRequest={focusRequest} labels={copy.en} name={tab.label ?? "Local"} productionHosts={productionHosts}
         onRequestFocus={requestFocus} />
     </div>)}
   </>;
@@ -71,6 +72,7 @@ beforeEach(async () => {
   await act(async () => root.render(<Harness />));
 });
 afterEach(async () => {
+  productionHosts = new Set();
   await act(async () => root.unmount());
   container.remove(); vi.restoreAllMocks();
 });
@@ -139,6 +141,19 @@ describe("pane workspace integration", () => {
     await act(async () => { [...dialog!.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!.click(); await task; });
     expect(writes()).toEqual([0, 0]);
     expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+  });
+
+  it("marks production panes among the broadcast targets", async () => {
+    productionHosts = new Set(["prod-host" as HostId]);
+    await act(async () => useWorkspace.getState().addSshTerminal("prod-host" as HostId, "prod-api", "graphite"));
+    await split(); await broadcast();
+    let task: Promise<void> | void;
+    await act(async () => { task = mocks.sessions.at(-1)!.options.sendInput?.(encode("date\r")); });
+    const dialog = document.body.querySelector("[role='alertdialog']");
+    const targets = [...(dialog?.querySelectorAll(".broadcast-confirm-targets li") ?? [])];
+    expect(targets.map((target) => target.querySelector(".prod-chip")?.textContent)).toEqual([copy.en.production, copy.en.production]);
+    await act(async () => { [...dialog!.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!.click(); await task; });
+    expect(mocks.controllers.every((controller) => controller.sendInput.mock.calls.length === 0)).toBe(true);
   });
 
   it("asks once per target set, then lets single commands through until the selection changes", async () => {

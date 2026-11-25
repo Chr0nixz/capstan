@@ -1286,7 +1286,7 @@ describe("App snippet delivery boundaries", () => {
     const initial = activeSnippetTab();
     await act(async () => useWorkspace.getState().splitPane(initial.id, initial.focusedPaneId, "horizontal"));
     const tab = activeSnippetTab(), leaves = paneLeaves(tab.root);
-    await act(async () => leaves.forEach((pane) => useWorkspace.getState().toggleBroadcastPane(tab.id, pane.paneId)));
+    await act(async () => { useWorkspace.getState().setBroadcast(tab.id, true); leaves.forEach((pane) => useWorkspace.getState().toggleBroadcastPane(tab.id, pane.paneId)); });
     const good = vi.fn(async () => undefined), oldSession = vi.fn(async () => undefined), replacement = vi.fn(async () => undefined);
     const removeGood = paneInputs.register(leaves[0].paneId, good), removeOld = initiallyConnected ? paneInputs.register(leaves[1].paneId, oldSession) : () => undefined;
     let removeNew = () => undefined as void;
@@ -1337,7 +1337,7 @@ describe("App snippet delivery boundaries", () => {
     const initial = activeSnippetTab();
     await act(async () => useWorkspace.getState().splitPane(initial.id, initial.focusedPaneId, "horizontal"));
     const tab = activeSnippetTab(), leaves = paneLeaves(tab.root);
-    await act(async () => leaves.forEach((pane) => useWorkspace.getState().toggleBroadcastPane(tab.id, pane.paneId)));
+    await act(async () => { useWorkspace.getState().setBroadcast(tab.id, true); leaves.forEach((pane) => useWorkspace.getState().toggleBroadcastPane(tab.id, pane.paneId)); });
     const good = vi.fn(async () => undefined), bad = vi.fn(async () => { throw { code }; });
     const removeGood = paneInputs.register(leaves[0].paneId, good), removeBad = paneInputs.register(leaves[1].paneId, bad);
     try {
@@ -1361,7 +1361,7 @@ describe("App snippet delivery boundaries", () => {
   it("shows total failure and an empty broadcast selection without closing the panel or replaying input", async () => {
     await mountSnippetApp();
     const tab = activeSnippetTab();
-    await act(async () => useWorkspace.getState().toggleBroadcastPane(tab.id, tab.focusedPaneId));
+    await act(async () => { useWorkspace.getState().setBroadcast(tab.id, true); useWorkspace.getState().toggleBroadcastPane(tab.id, tab.focusedPaneId); });
     const write = vi.fn(async () => { throw { code: "session_closed" }; });
     const unregister = paneInputs.register(tab.focusedPaneId, write);
     try {
@@ -1405,6 +1405,48 @@ describe("App snippet delivery boundaries", () => {
       await act(async () => search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
       expect(write).toHaveBeenCalledTimes(1);
       expect(new TextDecoder().decode(write.mock.calls[0][0])).toBe("echo review\r");
+    } finally { unregister(); }
+  });
+
+  it("sends nothing to a broadcast selection that turning broadcast off has hidden", async () => {
+    await mountSnippetApp();
+    const tab = activeSnippetTab();
+    await act(async () => {
+      useWorkspace.getState().setBroadcast(tab.id, true);
+      useWorkspace.getState().toggleBroadcastPane(tab.id, tab.focusedPaneId);
+    });
+    const write = vi.fn(async (_bytes: Uint8Array) => undefined);
+    const unregister = paneInputs.register(tab.focusedPaneId, write);
+    try {
+      await openSnippetBroadcast();
+      expect(container.querySelector(".snippet-destination")?.textContent).toContain(copy.en.snippetBroadcastCount(1));
+      await act(async () => useWorkspace.getState().setBroadcast(tab.id, false));
+      expect(container.querySelector(".snippet-destination")?.textContent).toContain(copy.en.snippetBroadcastCount(0));
+      expect(container.querySelector<HTMLOptionElement>(".snippet-target option[value='broadcast']")?.disabled).toBe(true);
+      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
+      expect(document.body.querySelector("[role='alertdialog']")).toBeNull();
+      expect(write).not.toHaveBeenCalled();
+      expect(container.querySelector(".snippet-manager [role='alert']")?.textContent).toContain(copy.en.snippetNoBroadcastTargets);
+    } finally { unregister(); }
+  });
+
+  it("marks production panes in a snippet broadcast confirmation", async () => {
+    await mountProductionSnippetApp(true);
+    const tab = activeSnippetTab();
+    await act(async () => {
+      useWorkspace.getState().setBroadcast(tab.id, true);
+      useWorkspace.getState().toggleBroadcastPane(tab.id, tab.focusedPaneId);
+    });
+    const write = vi.fn(async (_bytes: Uint8Array) => undefined);
+    const unregister = paneInputs.register(tab.focusedPaneId, write);
+    try {
+      await openSnippetBroadcast();
+      await act(async () => container.querySelector<HTMLButtonElement>(".snippet-run")!.click());
+      const targets = [...document.body.querySelectorAll("[role='alertdialog'] .broadcast-confirm-targets li")];
+      expect(targets).toHaveLength(1);
+      expect(targets[0].querySelector(".prod-chip")?.textContent).toBe(copy.en.production);
+      await answerConfirmation(null);
+      expect(write).not.toHaveBeenCalled();
     } finally { unregister(); }
   });
 
