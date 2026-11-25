@@ -225,10 +225,15 @@ async fn ssh_config_import_checks_keys_and_skips_saved_hosts() {
     );
     assert_eq!(previews[2].notes, vec![Note::IdentityUnavailable]);
     assert_eq!(
-        plan.encrypted_keys(&[0, 1, 3]),
+        manager
+            .ssh_config_passphrase_keys(&plan, &[0, 1, 3])
+            .unwrap(),
         vec![home.key("locked_key")]
     );
-    assert!(plan.encrypted_keys(&[0, 2]).is_empty());
+    assert!(manager
+        .ssh_config_passphrase_keys(&plan, &[0, 2])
+        .unwrap()
+        .is_empty());
 
     let revision = manager.current().unwrap().snapshot().unwrap().revision;
     let wrong = manager
@@ -363,6 +368,58 @@ async fn ssh_config_import_reuses_key_credentials_and_rejects_bad_names() {
 }
 
 #[tokio::test]
+async fn ssh_config_import_asks_no_passphrase_for_saved_keys_or_hosts() {
+    let home = Home::new(
+        "Host kept\n HostName 10.0.2.1\n User a\n IdentityFile ~/.ssh/kept_key\n\
+         Host known\n HostName 10.0.2.2\n User b\n IdentityFile ~/.ssh/other_key\n\
+         Host fresh\n HostName 10.0.2.3\n User c\n IdentityFile ~/.ssh/other_key\n",
+    );
+    home.write("kept_key", &key_text(Some("kept")));
+    home.write("other_key", &key_text(Some("other")));
+    let directory = tempfile::tempdir().unwrap();
+    let manager = unlocked(directory.path()).await;
+    let kept = manager
+        .add_key_file_credential("kept".into(), home.key("kept_key"), Some("kept".into()))
+        .await
+        .unwrap();
+    manager
+        .quick_connect_host("b@10.0.2.2", "Ask at connect".into())
+        .await
+        .unwrap();
+
+    let (plan, previews) = manager.plan_ssh_config_import(home.parse()).unwrap();
+    // The preview still says both keys are encrypted.
+    assert!(previews.iter().all(|preview| preview.encrypted));
+    // `kept_key` is in the Vault and `known` is saved, so only a new host
+    // with a new key asks.
+    assert!(manager
+        .ssh_config_passphrase_keys(&plan, &[0, 1])
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        manager
+            .ssh_config_passphrase_keys(&plan, &[0, 1, 2])
+            .unwrap(),
+        vec![home.key("other_key")]
+    );
+
+    let summary = manager
+        .import_ssh_config_hosts(&plan, &[0, 1], Vec::new(), names())
+        .await
+        .unwrap();
+    assert_eq!(
+        summary,
+        ImportSummary {
+            created: 1,
+            existing: 1
+        }
+    );
+    let hosts = manager.hosts().unwrap();
+    let imported = hosts.iter().find(|host| host.name == "kept").unwrap();
+    assert_eq!(imported.credential_id, kept);
+}
+
+#[tokio::test]
 async fn ssh_config_import_brings_jump_hosts_along_and_matches_by_route() {
     let home = Home::new(
         "Host db\n HostName 10.0.0.5\n User app\n ProxyJump bastion\n\
@@ -387,7 +444,10 @@ async fn ssh_config_import_brings_jump_hosts_along_and_matches_by_route() {
         ]
     );
     // Importing db alone needs the jump host's passphrase too.
-    assert_eq!(plan.encrypted_keys(&[0]), vec![home.key("locked_key")]);
+    assert_eq!(
+        manager.ssh_config_passphrase_keys(&plan, &[0]).unwrap(),
+        vec![home.key("locked_key")]
+    );
 
     let summary = manager
         .import_ssh_config_hosts(

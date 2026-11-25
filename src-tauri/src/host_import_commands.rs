@@ -256,8 +256,11 @@ pub async fn import_ssh_config(
         return Err(CommandError::new("invalid_input"));
     }
     let plan = imports.plan(token)?;
+    let keys = vault
+        .ssh_config_passphrase_keys(&plan, &indices)
+        .map_err(CommandError::from)?;
     let mut passphrases = Vec::new();
-    for path in plan.encrypted_keys(&indices) {
+    for path in keys {
         let name = path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())

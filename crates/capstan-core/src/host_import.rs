@@ -183,21 +183,95 @@ pub struct ImportPlan {
     entries: Vec<(Candidate, bool)>,
 }
 
+/// What importing some entries of a plan adds to the Vault.
+struct Resolution<'a> {
+    /// New hosts as entry index, candidate, host id and jump host, each jump
+    /// host before the hosts reached through it.
+    selected: Vec<(usize, &'a Candidate, Uuid, Option<Uuid>)>,
+    /// Chosen entries that match a saved host or another chosen entry.
+    existing: u32,
+}
+
+/// The saved key file credential for `path`. Compared as paths: Windows
+/// accepts either separator.
+fn saved_key_credential(data: &VaultData, path: &Path) -> Option<Uuid> {
+    data.credentials
+        .iter()
+        .find(|credential| {
+            matches!(&credential.material, CredentialMaterial::KeyFile { path: saved, .. } if Path::new(saved) == path)
+        })
+        .map(|credential| credential.id)
+}
+
 impl ImportPlan {
-    /// Key files that importing `indices` needs a passphrase for, jump hosts
-    /// included, in first-use order.
-    #[must_use]
-    pub fn encrypted_keys(&self, indices: &[u32]) -> Vec<PathBuf> {
+    /// Key files that importing `indices` into `data` needs a passphrase for,
+    /// jump hosts included, in first-use order. Hosts that are already saved
+    /// and keys the Vault already holds need none.
+    fn passphrase_keys(&self, data: &VaultData, indices: &[u32]) -> Result<Vec<PathBuf>> {
         let mut keys = Vec::new();
-        for index in self.with_jumps(indices) {
-            let (candidate, encrypted) = &self.entries[index];
-            if let (Some(path), true) = (&candidate.identity_file, encrypted) {
-                if !keys.contains(path) {
+        for (index, candidate, _, _) in self.resolve(data, indices)?.selected {
+            if let (Some(path), true) = (&candidate.identity_file, self.entries[index].1) {
+                if !keys.contains(path) && saved_key_credential(data, path).is_none() {
                     keys.push(path.clone());
                 }
             }
         }
-        keys
+        Ok(keys)
+    }
+
+    /// Matches the entries at `indices`, and the jump hosts they need, with
+    /// saved hosts and with each other; the rest become new hosts.
+    fn resolve(&self, data: &VaultData, indices: &[u32]) -> Result<Resolution<'_>> {
+        let chosen: HashSet<usize> = indices
+            .iter()
+            .filter_map(|index| usize::try_from(*index).ok())
+            .collect();
+        let mut existing = 0_u32;
+        // Each entry's host: a saved one, or a new one. Jump hosts come
+        // first, so a host's jump is always resolved already.
+        let mut resolved: HashMap<usize, Uuid> = HashMap::new();
+        let mut selected: Vec<(usize, &Candidate, Uuid, Option<Uuid>)> = Vec::new();
+        for index in self.with_jumps(indices) {
+            let candidate = &self.entries[index].0;
+            let jump = match candidate.jump {
+                Some(hop) => Some(*resolved.get(&hop).ok_or(CoreError::InvalidInput)?),
+                None => None,
+            };
+            let duplicate = saved_host(
+                data,
+                &candidate.address,
+                candidate.port,
+                &candidate.username,
+                jump,
+            )
+            .map(|host| host.id)
+            .or_else(|| {
+                selected
+                    .iter()
+                    .find(|(_, other, _, other_jump)| {
+                        other.address == candidate.address
+                            && other.port == candidate.port
+                            && other.username == candidate.username
+                            && *other_jump == jump
+                    })
+                    .map(|(_, _, id, _)| *id)
+            });
+            let id = match duplicate {
+                Some(id) => {
+                    if chosen.contains(&index) {
+                        existing += 1;
+                    }
+                    id
+                }
+                None => {
+                    let id = Uuid::new_v4();
+                    selected.push((index, candidate, id, jump));
+                    id
+                }
+            };
+            resolved.insert(index, id);
+        }
+        Ok(Resolution { selected, existing })
     }
 
     /// The entries at `indices` and every jump host they need, each jump host
@@ -415,6 +489,21 @@ impl VaultManager {
         Ok((plan, previews))
     }
 
+    /// Key files that importing `indices` of `plan` needs a passphrase for,
+    /// jump hosts included, in first-use order. Hosts that are already saved
+    /// and keys the Vault already holds need none.
+    ///
+    /// # Errors
+    ///
+    /// Fails while the Vault is locked, or for a plan whose jump chain is cut.
+    pub fn ssh_config_passphrase_keys(
+        &self,
+        plan: &ImportPlan,
+        indices: &[u32],
+    ) -> Result<Vec<PathBuf>> {
+        plan.passphrase_keys(&self.current()?.snapshot()?, indices)
+    }
+
     /// Saves the hosts at `indices` of `plan`, with one credential per key
     /// file and one shared credential that asks at connect time, in a group
     /// named `names.group`. Nothing is written if any key fails to open.
@@ -446,73 +535,21 @@ impl VaultManager {
         }
         let vault = self.current()?;
         let data = vault.snapshot()?;
-        let chosen: HashSet<usize> = indices
-            .iter()
-            .filter_map(|index| usize::try_from(*index).ok())
-            .collect();
-        let mut existing = 0_u32;
-        // Each entry's host: a saved one, or a new one created below. Jump
-        // hosts come first, so a host's jump is always resolved already.
-        let mut resolved: HashMap<usize, Uuid> = HashMap::new();
-        let mut selected: Vec<(&Candidate, Uuid, Option<Uuid>)> = Vec::new();
-        for index in plan.with_jumps(indices) {
-            let candidate = &plan.entries[index].0;
-            let jump = match candidate.jump {
-                Some(hop) => Some(*resolved.get(&hop).ok_or(CoreError::InvalidInput)?),
-                None => None,
-            };
-            let duplicate = saved_host(
-                &data,
-                &candidate.address,
-                candidate.port,
-                &candidate.username,
-                jump,
-            )
-            .map(|host| host.id)
-            .or_else(|| {
-                selected
-                    .iter()
-                    .find(|(other, _, other_jump)| {
-                        other.address == candidate.address
-                            && other.port == candidate.port
-                            && other.username == candidate.username
-                            && *other_jump == jump
-                    })
-                    .map(|(_, id, _)| *id)
-            });
-            let id = match duplicate {
-                Some(id) => {
-                    if chosen.contains(&index) {
-                        existing += 1;
-                    }
-                    id
-                }
-                None => {
-                    let id = Uuid::new_v4();
-                    selected.push((candidate, id, jump));
-                    id
-                }
-            };
-            resolved.insert(index, id);
-        }
+        let Resolution { selected, existing } = plan.resolve(&data, indices)?;
         let mut credentials = Vec::new();
         let mut key_credentials: HashMap<PathBuf, Uuid> = HashMap::new();
         for path in selected
             .iter()
-            .filter_map(|(candidate, _, _)| candidate.identity_file.as_ref())
+            .filter_map(|(_, candidate, _, _)| candidate.identity_file.as_ref())
         {
             if key_credentials.contains_key(path) {
                 continue;
             }
-            let text = path.to_string_lossy().into_owned();
-            // Compared as paths: Windows accepts either separator.
-            let saved = data.credentials.iter().find(|credential| {
-                matches!(&credential.material, CredentialMaterial::KeyFile { path: saved, .. } if Path::new(saved) == path)
-            });
-            if let Some(credential) = saved {
-                key_credentials.insert(path.clone(), credential.id);
+            if let Some(saved) = saved_key_credential(&data, path) {
+                key_credentials.insert(path.clone(), saved);
                 continue;
             }
+            let text = path.to_string_lossy().into_owned();
             let passphrase = passphrases
                 .iter()
                 .find(|(key, _)| key == path)
@@ -546,7 +583,7 @@ impl VaultManager {
         if interactive.is_none()
             && selected
                 .iter()
-                .any(|(candidate, _, _)| candidate.identity_file.is_none())
+                .any(|(_, candidate, _, _)| candidate.identity_file.is_none())
         {
             let credential = Credential {
                 id: Uuid::new_v4(),
@@ -578,7 +615,7 @@ impl VaultManager {
             Some(id)
         };
         let mut hosts = Vec::new();
-        for (candidate, id, jump) in &selected {
+        for (_, candidate, id, jump) in &selected {
             let credential_id = match &candidate.identity_file {
                 Some(path) => key_credentials.get(path).copied(),
                 None => interactive,

@@ -457,6 +457,23 @@ fn lines_after_an_include_return_to_the_including_block() {
 }
 
 #[test]
+fn a_byte_order_mark_does_not_hide_the_first_line() {
+    let files = MemoryFiles::default()
+        .with(
+            "/home/me/.ssh/config",
+            "\u{feff}Host first\n User one\nInclude more\n",
+        )
+        .with("/home/me/.ssh/more", "\u{feff}Host second\n User two\n");
+    let parsed = parse_with(&files);
+    let hosts: Vec<_> = parsed
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.alias.as_str(), candidate.username.as_str()))
+        .collect();
+    assert_eq!(hosts, vec![("first", "one"), ("second", "two")]);
+}
+
+#[test]
 fn every_identity_file_is_kept_in_order_like_openssh() {
     let files = MemoryFiles::default()
         .with(

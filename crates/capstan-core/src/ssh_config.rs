@@ -374,6 +374,9 @@ pub fn user_environment() -> Option<(PathBuf, Option<String>)> {
 
 impl Reader<'_> {
     fn read(&mut self, text: &str, depth: usize) {
+        // Editors on Windows may save a UTF-8 byte order mark. It is not
+        // whitespace, so it would turn the first keyword into an unknown one.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         for line in text.lines() {
             let Some((keyword, arguments)) = split_line(line) else {
                 continue;
