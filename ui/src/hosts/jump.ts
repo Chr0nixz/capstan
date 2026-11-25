@@ -20,15 +20,27 @@ export function jumpChain<T extends Hop>(hosts: readonly T[], host: Hop): T[] | 
   return chain;
 }
 
+/** How many hops below `id` the deepest host reached through it sits; 0 when none goes through it. */
+function hostsBelow(hosts: readonly Hop[], id: HostId): number {
+  let depth = 0;
+  for (const host of hosts) {
+    const index = jumpChain(hosts, host)?.findIndex((hop) => hop.id === id) ?? -1;
+    depth = Math.max(depth, index + 1);
+  }
+  return depth;
+}
+
 /**
  * Hosts that `editing` (or a new host, when null) can use as its jump host:
  * not itself, not a host that already goes through it, and not one whose own
- * chain would leave no room for this hop.
+ * chain would leave no room for this hop and the hosts already reached
+ * through `editing`.
  */
 export function jumpChoices<T extends Hop>(hosts: readonly T[], editing: HostId | null): T[] {
+  const room = maxJumpHops - (editing ? hostsBelow(hosts, editing) : 0);
   return hosts.filter((host) => {
     if (host.id === editing) return false;
     const chain = jumpChain(hosts, host);
-    return chain !== null && chain.length < maxJumpHops && !chain.some((hop) => hop.id === editing);
+    return chain !== null && chain.length < room && !chain.some((hop) => hop.id === editing);
   });
 }
