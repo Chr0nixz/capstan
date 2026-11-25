@@ -40,6 +40,7 @@ describe("shortcut labels", () => {
     expect(shortcutLabel("Ctrl+Shift+P")).toBe("⌘⇧P");
     expect(shortcutLabel("Ctrl+,")).toBe("⌘,");
     expect(shortcutLabel("Ctrl+Alt+1–8, Ctrl+Alt+9")).toBe("⌘1–8, ⌘9");
+    expect(shortcutLabel("Ctrl+Alt+Shift+T")).toBe("⌘⇧T");
     expect(shortcutLabel("Alt+Shift+=")).toBe("⌥⇧=");
     expect(shortcutLabel("Ctrl+click")).toBe("⌘click");
     expect(shortcutLabel("Ctrl+Tab / Ctrl+Shift+Tab")).toBe("⌃Tab / ⌃⇧Tab");
@@ -62,6 +63,7 @@ describe("workspace shortcuts", () => {
     expect(windows("Tab", { ctrlKey: true })).toBe("next_tab");
     expect(windows("Tab", { ctrlKey: true, shiftKey: true })).toBe("previous_tab");
     expect(windows("3", { ctrlKey: true, altKey: true })).toEqual({ tab: 3 });
+    expect(windows("T", { ctrlKey: true, altKey: true, shiftKey: true })).toBe("reopen_terminal");
   });
 
   it("leaves plain Control chords to the shell on Windows", () => {
@@ -74,6 +76,8 @@ describe("workspace shortcuts", () => {
     const mac = (value: string, modifiers: Parameters<typeof key>[1], code?: string) => workspaceShortcut(key(value, modifiers, code), true);
     expect(mac("t", { metaKey: true })).toBe("new_terminal");
     expect(mac("w", { metaKey: true })).toBe("close_terminal");
+    expect(mac("T", { metaKey: true, shiftKey: true })).toBe("reopen_terminal");
+    expect(mac("T", { metaKey: true, altKey: true, shiftKey: true })).toBeNull();
     expect(mac("3", { metaKey: true })).toEqual({ tab: 3 });
     expect(mac(",", { metaKey: true })).toBe("settings");
     expect(mac("P", { metaKey: true, shiftKey: true })).toBe("command_palette");

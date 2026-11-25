@@ -1,7 +1,11 @@
 import { useEffect, useId, useState, useSyncExternalStore, type ReactElement } from "react";
 import type { createCwdController } from "./cwd";
 import { sftpCopy } from "./copy";
-import { ChevronRightIcon } from "../ui/icons";
+import { ChevronRightIcon, ShellIcon } from "../ui/icons";
+import type { Shell } from "./contracts";
+
+/** How long Follow waits for a first directory hint before offering shell integration. */
+export const CWD_HINT_PATIENCE_MS = 5000;
 
 type CwdController = ReturnType<typeof createCwdController>;
 
@@ -22,9 +26,12 @@ export function FollowToggle({ controller, locale, ended = false }: {
  * Follow is waiting for a hint, the editor is open, or it reports an error;
  * the More menu opens the editor at any time.
  */
-export function CwdControls({ controller, locale, ended = false, aliasesOpen, onAliasesOpenChange }: {
+export function CwdControls({ controller, locale, ended = false, aliasesOpen, onAliasesOpenChange, integrationFiles = [], onSetupIntegration }: {
   controller: CwdController; locale: keyof typeof sftpCopy; ended?: boolean;
   aliasesOpen: boolean; onAliasesOpenChange: (open: boolean) => void;
+  /** Shell startup files in the listed directory that integration can install into. */
+  integrationFiles?: readonly { name: string; shell: Shell }[];
+  onSetupIntegration?: (file: { name: string; shell: Shell }) => void;
 }): ReactElement | null {
   const state = useSyncExternalStore(controller.store.subscribe, controller.store.getState, controller.store.getState);
   const labels = sftpCopy[locale];
@@ -36,11 +43,22 @@ export function CwdControls({ controller, locale, ended = false, aliasesOpen, on
   useEffect(() => { if (state.snapshot) setAliases(state.snapshot.aliases.join(", ")); }, [state.snapshot?.aliases.join(",")]);
   useEffect(() => { if (aliasesOpen) void controller.aliases(null); }, [aliasesOpen, controller]);
   const waiting = state.follow && !state.snapshot?.path && !ended;
+  // Stock shells send no directory hints; after a short wait, say so and offer the fix.
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    setStale(false);
+    if (!waiting) return;
+    const timer = window.setTimeout(() => setStale(true), CWD_HINT_PATIENCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [waiting]);
   const row = waiting || aliasesOpen || state.errorSource === "aliases";
   if (!row && !error) return null;
   return <>
     {row && <div className="sftp-cwd-row">
-      {waiting && <span className="sftp-status" role="status">{labels.waitingCwd}</span>}
+      {waiting && <span className="sftp-status" role="status" title={stale && integrationFiles.length === 0 ? labels.cwdNoHintsManual : undefined}>
+        {stale ? (integrationFiles.length > 0 && onSetupIntegration ? labels.cwdNoHints : `${labels.cwdNoHints} ${labels.cwdNoHintsManual}`) : labels.waitingCwd}</span>}
+      {waiting && stale && onSetupIntegration && integrationFiles.map((file) => <button key={file.name} className="sftp-cwd-setup" type="button"
+        onClick={() => onSetupIntegration(file)}><ShellIcon size={13} />{labels.cwdSetupIntegration(file.name)}</button>)}
       <details className="sftp-cwd-aliases" open={aliasesOpen} onToggle={(event) => {
         if (event.currentTarget.open !== aliasesOpen) onAliasesOpenChange(event.currentTarget.open);
       }}>

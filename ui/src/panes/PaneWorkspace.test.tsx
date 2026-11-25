@@ -137,6 +137,8 @@ describe("pane workspace integration", () => {
     const dialog = document.body.querySelector("[role='alertdialog']");
     expect(dialog?.textContent).toContain("Local · Pane 1");
     expect(dialog?.textContent).toContain("Local · Pane 2");
+    // Headings on one host are told apart by number; dialogs keep the full name.
+    expect([...container.querySelectorAll(".workspace-pane-heading .pane-focus")].map((heading) => heading.textContent).sort()).toEqual(["Pane 1", "Pane 2"]);
     expect(document.activeElement?.textContent).toBe("Cancel");
     await act(async () => { [...dialog!.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!.click(); await task; });
     expect(writes()).toEqual([0, 0]);

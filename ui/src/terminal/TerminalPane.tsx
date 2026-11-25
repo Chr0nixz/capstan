@@ -65,6 +65,11 @@ export type TerminalPaneLabels = {
   cancelEdit: string;
   externalLinkFailed: string;
   sessionEnded: string;
+  connectingTo: string;
+  authenticatingTo: string;
+  connectingVia: (host: string) => string;
+  connectElapsed: (seconds: number) => string;
+  cancelConnect: string;
   sessionFailed: string;
   reconnect: string;
   reconnecting: string;
@@ -101,9 +106,11 @@ type TerminalPaneProps = {
   production?: boolean;
   /** Optional command-palette theme override, applied without restarting the shell. */
   themeOverride?: TerminalTheme;
+  /** Where an SSH pane is connecting, shown until its session starts. */
+  connectTarget?: { address: string; via?: string };
 };
 
-export function TerminalPane({ tabId, paneId, launch, visible, focused = true, labels, focusRequest, label, onRestart, onClose, production = false, confirmBroadcast, onInputResult, themeOverride }: TerminalPaneProps): ReactElement {
+export function TerminalPane({ tabId, paneId, launch, visible, focused = true, labels, focusRequest, label, onRestart, onClose, production = false, confirmBroadcast, onInputResult, themeOverride, connectTarget }: TerminalPaneProps): ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuAnchor = useRef({ x: 0, y: 0 });
@@ -130,7 +137,18 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
     return tab ? paneStatus(tab, paneId ?? tab.focusedPaneId) : null;
   });
   const ended = status === "ended" || status === "failed";
-  const recovering = connection && ["connecting", "authenticating", "reconnecting"].includes(connection.state);
+  // Before the first session starts there is nothing to reconnect: the pane says
+  // where it is connecting instead of staying blank.
+  const connecting = launch.kind === "ssh" && status === "connecting";
+  const recovering = !connecting && connection && ["connecting", "authenticating", "reconnecting"].includes(connection.state);
+  const [connectSeconds, setConnectSeconds] = useState(0);
+  useEffect(() => {
+    if (!connecting) return;
+    const started = Date.now();
+    setConnectSeconds(0);
+    const timer = window.setInterval(() => setConnectSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [connecting, launch]);
   const restart = (): void => {
     if (controllerRef.current?.canReconnect) void controllerRef.current.reconnect().catch(() => {
       sessionRef.current?.writeLocal(new TextEncoder().encode(`\r\n${labels.operationFailed}\r\n`));
@@ -233,6 +251,12 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
     if (searchOpen && event.key === "Escape") {
       event.preventDefault();
       closeSearch();
+      return;
+    }
+    if (connecting && onClose && event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
       return;
     }
     const mac = isMacOS();
@@ -502,6 +526,15 @@ export function TerminalPane({ tabId, paneId, launch, visible, focused = true, l
       </button>
     </div>
     {menuError && <div className="pane-input-error" role="alert"><span>{menuError}</span><button className="icon-button" type="button" aria-label={labels.dismiss} onClick={() => { setMenuError(null); sessionRef.current?.focus(); }}><CloseIcon size={12} /></button></div>}
+    {connecting && visible && <div className="session-ended session-connecting" role="status" data-theme={launch.theme} data-state="connecting">
+      <span className="led" data-state="connecting" aria-hidden="true" />
+      {production && <span className="prod-chip">{labels.production}</span>}
+      <span className="session-ended-text">{connection?.state === "authenticating" ? labels.authenticatingTo : labels.connectingTo}</span>
+      {connectTarget && <code className="session-connect-target" title={connectTarget.address}>{connectTarget.address}</code>}
+      {connectTarget?.via && <span className="session-ended-hint">{labels.connectingVia(connectTarget.via)}</span>}
+      {connectSeconds >= 3 && <span className="session-connect-elapsed" aria-hidden="true">{labels.connectElapsed(connectSeconds)}</span>}
+      {onClose && <button className="ghost-button" type="button" title={labels.cancelConnect + " (Esc)"} onClick={onClose}><CloseIcon size={14} />{labels.cancelConnect}</button>}
+    </div>}
     {(ended || recovering) && visible && onRestart && <div className="session-ended" role="status" data-theme={launch.kind === "ssh" ? launch.theme : "graphite"} data-state={status}>
       <span className="led" data-state={status} aria-hidden="true" />
       {production && <span className="prod-chip">{labels.production}</span>}

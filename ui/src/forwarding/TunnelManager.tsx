@@ -56,7 +56,8 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
   const [error, setError] = useState("");
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadFailed = loadError !== null;
   const [loadAttempt, setLoadAttempt] = useState(0);
   const pending = useRef(new Set<string>());
   const runtimeRequests = useRef(new Map<string, number>());
@@ -68,7 +69,7 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
     alive.current = true;
     let disposed = false;
     setLoading(true);
-    setLoadFailed(false);
+    setLoadError(null);
     const cleanup: Array<() => void> = [];
     const install = async (watch: Promise<() => void>): Promise<void> => {
       const stop = await watch;
@@ -78,7 +79,7 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
       tunnelApi.list().then((next) => { if (!disposed) setConfigs(next); }),
       install(watchTunnels((snapshot) => { if (!disposed) setSnapshots((current) => ({ ...current, [snapshot.id]: snapshot })); })),
       install(watchConnections((snapshot) => { if (!disposed) setConnections((current) => ({ ...current, [snapshot.connectionId]: snapshot })); })),
-    ]).catch(() => { if (!disposed) setLoadFailed(true); }).finally(() => { if (!disposed) setLoading(false); });
+    ]).catch((cause: unknown) => { if (!disposed) setLoadError(tunnelError(cause, labels)); }).finally(() => { if (!disposed) setLoading(false); });
     return () => { disposed = true; alive.current = false; cleanup.forEach((stop) => stop()); };
   }, [loadAttempt]);
   const run = async (operation: () => Promise<void>, key = "config"): Promise<void> => {
@@ -127,7 +128,7 @@ export function TunnelManager({ labels, hosts, revision, confirm, onRefreshVault
       <div className="tunnel-toolbar"><button type="button" disabled={busy || loading || loadFailed || hosts.length === 0} onClick={() => { setError(""); setDraft(freshDraft(hosts[0]?.id ?? "")); }}><PlusIcon size={14} />{labels.tunnelNew}</button></div>
       {error && <p role="alert" className="inline-error">{error}</p>}
       {/* A failed load replaces the empty state: "no tunnels" would be a guess. */}
-      {loadFailed ? <p role="alert" className="inline-error"><AlertIcon size={14} /><span>{labels.tunnelLoadFailed}</span>
+      {loadFailed ? <p role="alert" className="inline-error"><AlertIcon size={14} /><span>{labels.tunnelLoadFailed} {loadError}</span>
         <button type="button" className="ghost-button" disabled={loading} onClick={() => setLoadAttempt((attempt) => attempt + 1)}><RetryIcon size={14} />{labels.tunnelRetryLoad}</button></p>
         : loading ? <p role="status">{labels.tunnelLoading}</p> : configs.length === 0 && <p className="tunnel-help">{hosts.length === 0 ? labels.noHosts : labels.tunnelEmpty}</p>}
       <ul className="tunnel-list" aria-label={labels.tunnels}>{configs.map((config) => {

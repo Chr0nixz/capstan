@@ -6,7 +6,7 @@ import type { CommandAction } from "./contracts";
 import { shortcutLabel } from "../window/platform";
 import {
   BroadcastIcon, CloseIcon, DownloadIcon, FolderIcon, ArrowRightIcon, LockIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShellIcon,
-  SidebarIcon, SnippetIcon, SplitDownIcon, SplitRightIcon, ThemeIcon, TunnelIcon,
+  RetryIcon, SidebarIcon, SnippetIcon, SplitDownIcon, SplitRightIcon, ThemeIcon, TunnelIcon,
 } from "../ui/icons";
 
 type Labels = typeof copy.en | typeof copy["zh-CN"];
@@ -47,6 +47,7 @@ function iconOf(action: CommandAction): ReactElement {
     case "workspace": switch (action.command) {
       case "new_terminal": return <PlusIcon size={14} />;
       case "close_terminal": return <CloseIcon size={14} />;
+      case "reopen_terminal": return <RetryIcon size={14} />;
       case "split_right": return <SplitRightIcon size={14} />;
       case "split_down": return <SplitDownIcon size={14} />;
       case "toggle_broadcast": return <BroadcastIcon size={14} />;

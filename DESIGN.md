@@ -236,7 +236,7 @@ components:
   led:
     backgroundColor: "{colors.faint-legend}"
     rounded: "{rounded.pill}"
-    size: "7px"
+    size: "8px"
   led-connecting:
     backgroundColor: "{colors.signal-amber}"
   led-live:
@@ -318,17 +318,17 @@ components:
 
 **Creative North Star: "Capstan Keycap Colorway"**
 
-Capstan treats its interface like a set of matte mechanical keycaps. The terminal is the alpha key: quiet, legible, flush to the window, and always in front. Utility surfaces sit one tonal step above it, controls are small raised keys with a one-pixel highlight, and a single amber accent key marks whatever is active, selected, or in progress. The material is matte PBT, not gloss: dense, durable, and calm in a dim room.
+Capstan treats its interface like a set of matte mechanical keycaps. The terminal is the alpha key: quiet, legible, flush to the window, and always in front. Utility surfaces sit one tonal step above it, controls are small matte keys that press one pixel, and the large keys carry the keycap relief, and a single amber accent key marks whatever is active, selected, or in progress. The material is matte PBT, not gloss: dense, durable, and calm in a dim room.
 
 The window shell is native Windows (system type, Mica behind a transparent root, Windows caption buttons); the workspace keeps its own character through a strict graphite ladder, warm legends, and a small signal vocabulary. State follows the dark-cockpit principle: a healthy session is quiet, while connecting, failed, and host-key-changed states light up in amber and red. A host can switch its own workspace to the light Paper colorway without changing the chrome around it.
 
-Motion confirms state and steps aside: keys press 1px in 80ms, state changes take 110–260ms on one strong ease-out curve, and loops (breathing lights, the busy bar, the transfer sheen and scan line) run on ease-in-out or linear timing, each with a reduced-motion fallback.
+Motion confirms state and steps aside: keys press 1px in 80ms, state changes take 110–260ms on one strong ease-out curve, and loops (breathing lights, the busy bar, and the transfer line breathing on the queue's top edge) run on ease-in-out or linear timing, each with a reduced-motion fallback.
 
 **Key Characteristics:**
 - Matte graphite layers stepped in small luminance increments, with warm, low-saturation legends.
 - The terminal is flush and borderless; its output is the brightest, densest content on screen.
 - One amber accent key: active tab, primary action, focus ring, toggled tools, running work.
-- Keycap tactility: a one-pixel top highlight, a one-pixel bottom shade, and a one-pixel press.
+- Keycap relief where it shows: host monograms, the vault and transfer keys carry a 3px base, the amber key a 2px base, and every key presses one pixel. Small controls rest flat; a one-pixel hairline did not survive at 100% scale.
 - Signal lights carry connection and transfer state: quiet when healthy, unmistakable when not.
 
 ## Colors
@@ -425,9 +425,10 @@ The server status bar is the last row of the workspace column, under the queues,
 Depth comes from tonal layering first, along the graphite ladder; shadows appear only where a surface truly sits above another. Keycaps get their relief from inset hairlines, and a pressed key loses it. Mica belongs to the native window shell and is never repeated as an in-workspace blur.
 
 ### Shadow Vocabulary
-- **Key Top** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05)`; Paper: `rgb(255 255 255 / 0.8)`): The highlight on every raised key.
-- **Key Bottom** (`box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.28)`; Paper: `rgb(60 50 30 / 0.08)`): The matching shade; large keys (host monogram, transfer direction, locked-vault key) deepen it to 2–3px.
-- **Primary Key** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.18)`): The relief on amber keys.
+- **Key Relief** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.09), inset 0 -3px 0 rgb(0 0 0 / 0.34)`; Paper: `rgb(255 255 255 / 0.9)` and `rgb(60 50 30 / 0.14)`): The relief on the large keys only: host monogram, transfer direction, locked-vault key. A production monogram keeps the 1px Key Top (`inset 0 1px 0 rgb(255 255 255 / 0.05)`) and turns its 3px base Safety Red.
+- **Key Shade Small** (`box-shadow: inset 0 -2px 0 rgb(0 0 0 / 0.3)`; Paper: `rgb(60 50 30 / 0.14)`): The base under `kbd` legends in the shortcut reference.
+- **Primary Key** (`box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -2px 0 rgb(0 0 0 / 0.2)`): The relief on amber keys.
+- Small controls (buttons, toolbar keys, toggles, segments) carry no relief.
 - **Pop** (`box-shadow: 0 18px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.32)`): Dialogs, popovers, and the terminal search bar.
 - **Sheet** (`box-shadow: 18px 0 44px rgb(0 0 0 / 0.38)`): Sheets and the narrow-window sidebar overlay.
 - **LED Cutout** (`box-shadow: 0 0 0 2px <surface>`): A ring in the underlying surface color that separates a signal light from the key it sits on.
@@ -449,7 +450,7 @@ Sizes, fills, and radii for each component are in the frontmatter; this section 
 
 ### Buttons
 Every button is a small keycap: tactile, quiet, and confident.
-- **Keycap:** A Keycap Edge hairline with Key Top and Key Bottom relief. Hover lifts to the hover face, strong edge, and Bright Legend; press drops 1px and loses the relief.
+- **Keycap:** A Keycap Edge hairline on a flat Keycap Face. Hover lifts to the hover face, strong edge, and Bright Legend; press drops 1px.
 - **Primary:** Solid amber with Amber Ink at 600; hover brightens and press darkens without changing size. Sheet-footer and dialog actions are 32px.
 - **Danger:** Red wash-and-line with Safety Red Text and no relief; its label names the action and its object ("Delete file").
 - **Others:** Ghost is used for Cancel and Reject. Icon keys always carry a tooltip and a visually hidden label. Toggle on is Amber Wash with a 1px Amber Line inset ring. Disabled is 50% opacity (32% in dense toolbars) with no relief.
@@ -465,15 +466,16 @@ Every button is a small keycap: tactile, quiet, and confident.
 
 ### Host list (signature)
 - Rows hold a monogram key, the name (Body at 500), and `user@address:port` in Mono Small. Hover or focus raises the row to Keycap Face and reveals an edit key; live hosts carry a 6% green tint. Group labels carry tabular counts, and Favorites come first with an amber star.
-- The monogram key is a 30px keycap with a one-step face gradient, a 2px bottom shade, a two-character Display legend (one glyph for CJK names), and the host's signal light at its corner.
+- The monogram key is a 30px keycap with a one-step face gradient, Key Relief (a 3px base, with the legend lifted 2px off it), a two-character Display legend (one glyph for CJK names), and the host's signal light at its corner.
 - Production hosts get a Safety Red legend, edge, and bottom shade, a "Production" chip after the name, and a red badge before the title-bar context while active.
 
 ### Signal lights
-- 7px circles behind an LED Cutout ring, identical on the tab and the monogram key. Connecting breathes amber to 30% opacity every 1.4s; Live is solid Quiet Green; Failed is solid Safety Red; Ended is a hollow 1.5px Faint Legend ring.
+- 8px circles behind an LED Cutout ring, identical on the tab and the monogram key. Connecting breathes amber to 30% opacity every 1.4s; Live is solid Quiet Green; Failed is solid Safety Red; Ended is a hollow 1.5px Faint Legend ring.
 
 ### Session-ended bar
 - A Panel bar centered 12px above the bottom of an ended terminal (Pop shadow, Safety Red edge on failure) with the tab's light, the production chip, the status, an amber Reconnect key, an "or press Enter" hint, and a ghost Close.
 - It stays on one line: the hint truncates first and disappears in a pane under 520px; only under 360px does the bar wrap.
+- The same slot covers a first connect: the connecting light, "Connecting to" ("Signing in to" while authenticating), the address in Mono, the jump host, elapsed seconds after 3s, and a ghost Cancel that Esc also triggers.
 
 ### Sheets
 - A 460px Panel column that slides 28px in from the sidebar edge (260ms), with the Sheet shadow over a 38% scrim that leaves the sidebar visible: a 34px header, a 16px-padded body, and a pinned footer of 32px actions, submit first.
@@ -499,8 +501,8 @@ Every button is a small keycap: tactile, quiet, and confident.
 - **Busy, footer, ended:** A 2px amber sweep under the controls while busy, a Caption footer for the drop hint and pagination, and a quiet Keycap Face note once the session behind the panel has ended.
 
 ### Transfer and remote-edit queues
-- A collapsible 32px heading with a chevron, a count badge, and a one-line summary ("2 in progress · 38s remaining"). The badge is solid amber while work runs, with a 1px amber scan line on the queue's top edge; when anything needs a decision, badge and summary turn Safety Red wash-and-line and the queue opens.
-- Rows carry a direction keycap colored by state and a 4px progress bar: amber with a sheen while running, Quiet Green Text when complete, Safety Red Text when failed or interrupted. In a conflict, Skip is ghost, Replace is danger, and Save as is primary.
+- A collapsible 32px heading with a chevron, a count badge, and a one-line summary ("2 in progress · 38s remaining"). The badge is solid amber while work runs, with a 1px amber line on the queue's top edge that breathes between 35% and 90% opacity (no sideways motion); when anything needs a decision, badge and summary turn Safety Red wash-and-line and the queue opens.
+- Rows carry a direction keycap colored by state and a 4px progress bar: solid amber while running, Quiet Green Text when complete, Safety Red Text when failed or interrupted. In a conflict, Skip is ghost, Replace is danger, and Save as is primary.
 
 ### Command palette
 - A Panel popover 76px from the top, under the tab strip, with no scrim, so the workspace stays visible. A 44px search row, a scrolling list, and a 30px Chrome hint row of keycaps (↑ ↓, Enter, Esc).
@@ -516,7 +518,7 @@ Every button is a small keycap: tactile, quiet, and confident.
 - Until the first sample it shows one state line ("Checking server status…"), never a row of dashes. A metric at or above 90% turns Safety Red Text and says "high" to screen readers; everything below stays quiet.
 
 ### Messages, chips, and badges
-- Inline errors and notices are 7px wash-and-line strips with a leading icon and a dismiss key, rising 4px into place. Success notices clear themselves after 6 seconds; errors stay until dismissed. Chips are Caption pill outlines in Quiet Divider; count badges are 18px pills on Keycap Face.
+- Inline errors and notices are 7px wash-and-line strips with a leading icon and a dismiss key, rising 4px into place. Success notices clear themselves after 6 seconds; errors stay until dismissed. Outside a sheet they have one home, over the top-left of the terminal. Chips are Caption pill outlines in Quiet Divider; count badges are 18px pills on Keycap Face.
 - The update notice floats over the bottom-right of the workspace as a Panel with the Pop shadow and 7px corners, like every other floating layer.
 
 ### Title bar
@@ -528,11 +530,13 @@ Every button is a small keycap: tactile, quiet, and confident.
 ### Do:
 - **Do** keep terminal output the most legible, continuous surface: flush to the tab strip, on Canvas, with no surrounding card.
 - **Do** land focus on the safe action in every safety or confirmation dialog.
+- **Do** ask before closing a tab that runs a production session or several sessions, and let every closed tab be reopened (Ctrl+Alt+Shift+T, ⌘⇧T on macOS) with new sessions in the same layout.
+- **Do** keep the end of a name visible: tabs, pane headings, host rows, and file names truncate in the middle, and panes on one host are headed by number alone.
 - **Do** give every icon-only control a tooltip and a visually hidden label, and draw icons from the authored 16px, 1.4px-stroke set.
 - **Do** animate only transform and opacity, and give every loop a reduced-motion fallback.
 - **Do** respect forced-colors mode: system-colored borders, Highlight for the active tab and selection, and outlined signal lights.
 - **Do** keep terminal themes independent from the chrome so imported Windows Terminal and iTerm2 themes remain usable.
-- **Do** give the terminal its rows back in small spaces: a collapsed file panel under a 760px workspace, one-line transfer progress, and a closed sidebar under a 720px window.
+- **Do** give the terminal its rows back in small spaces: a collapsed file panel under a 760px workspace or whenever a right-docked panel would leave a pane under 80 columns, one-line transfer progress, and a closed sidebar under a 720px window.
 
 ### Don't:
 - **Don't** use cyberpunk neon, RGB gaming color, glowing borders, or saturated blue as the brand voice.

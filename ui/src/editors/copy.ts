@@ -21,7 +21,7 @@ export const editorCopy: Record<"en" | "zh-CN", EditorCopy> = {
     noReplace: "Atomic replacement is unavailable for this target. Save under a new name or export a local copy.",
     recoveryIncomplete: "Some editor folders could not be recovered. They remain on disk. Resolve the listed copies and scan again; unknown files and other running instances are preserved.", discover: "Scan for retained copies",
     states: { opening: "Opening", waiting_for_stable_save: "Watching saves", ready_to_upload: "Uploading", conflict: "Remote changed", residual: "Copy retained", closed: "Closed" },
-    reconnect: "Connect this SSH host again. The requested retry will use its verified SFTP session and recheck the original remote baseline.",
+    reconnect: "Connect this SSH host again. The upload then retries, first checking that the remote file hasn't changed since you opened it.",
   },
   "zh-CN": {
     retain: "保留文件供下次恢复", recoveryError: "恢复元数据未能通过核验。可以导出本地副本，或保留全部文件供下次启动恢复。元数据重新通过核验前，不会清理远端或删除恢复文件。",
@@ -37,6 +37,6 @@ export const editorCopy: Record<"en" | "zh-CN", EditorCopy> = {
     noReplace: "当前目标无法原子覆盖，请使用新的文件名或导出本地副本。",
     recoveryIncomplete: "部分编辑目录暂时无法恢复，仍保留在磁盘上。处理列表中的副本后可重新扫描；未知文件及其他运行实例的目录不会被删除。", discover: "扫描保留的副本",
     states: { opening: "正在打开", waiting_for_stable_save: "监测保存", ready_to_upload: "正在回传", conflict: "远端已变化", residual: "副本已保留", closed: "已关闭" },
-    reconnect: "请重新连接此 SSH 主机。此次重试会使用已验证的新 SFTP 会话，并重新校验原远端基线。",
+    reconnect: "请重新连接此 SSH 主机。之后会重试上传，并先确认远程文件在你打开后没有被改动。",
   },
 };

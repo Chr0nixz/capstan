@@ -36,10 +36,29 @@ export function tabStatus(tab: TerminalTab): TabStatus {
   return (["live", "connecting", "starting", "failed", "ended"] as const).find((status) => statuses.includes(status)) ?? "ended";
 }
 
+/**
+ * What closing a tab would end that the user may not mean to: a running session
+ * on a production host, or more than one running session at once.
+ */
+export type CloseRisk = { productionPaneIds: PaneId[]; runningPaneIds: PaneId[] };
+export function closeRisk(tab: TerminalTab, productionHosts: ReadonlySet<HostId>): CloseRisk | null {
+  // A connection still being made has nothing running yet; closing it only cancels.
+  const running = paneLeaves(tab.root).filter((pane) => paneStatus(tab, pane.paneId) === "live");
+  const production = running.filter((pane) => pane.launch.kind === "ssh" && productionHosts.has(pane.launch.host_id));
+  return production.length > 0 || running.length > 1
+    ? { productionPaneIds: production.map((pane) => pane.paneId), runningPaneIds: running.map((pane) => pane.paneId) }
+    : null;
+}
+
+/** A closed tab's layout. Reopening it starts new sessions in the same panes. */
+type ClosedTab = { index: number; label?: string; root: PaneNode; themes: (TerminalTheme | undefined)[]; focusedIndex: number };
+const CLOSED_TAB_LIMIT = 10;
+
 type Workspace = {
   tabs: TerminalTab[];
   activeTab: TabId;
   nextId: number;
+  closedTabs: ClosedTab[];
   addTerminal: (options?: LocalTerminalOptions, label?: string) => void;
   addSshTerminal: (hostId: HostId, label: string, theme: TerminalTheme) => void;
   openSshHost: (hostId: HostId, label: string, theme: TerminalTheme, newTab?: boolean) => void;
@@ -55,6 +74,7 @@ type Workspace = {
   setPaneTheme: (tab: TabId, pane: PaneId, theme: TerminalTheme) => void;
   moveTab: (id: TabId, target: TabId) => void;
   closeTerminal: (id: TabId) => void;
+  reopenTerminal: () => void;
   selectTab: (id: TabId) => void;
   updateSession: (tab: TabId, snapshot: TerminalSnapshot, pane?: PaneId, launch?: TerminalLaunch) => void;
   failTab: (tab: TabId, pane?: PaneId, launch?: TerminalLaunch) => void;
@@ -88,15 +108,31 @@ function restarted(tab: TerminalTab, id: PaneId, theme?: TerminalTheme): Termina
   return focus({ ...tab, root: replacePane(tab.root, id, { ...pane, launch }), paneStates }, tab.focusedPaneId);
 }
 
+function remembered(tab: TerminalTab, index: number): ClosedTab {
+  const leaves = paneLeaves(tab.root);
+  return {
+    index, label: tab.label, root: tab.root,
+    themes: leaves.map((pane) => tab.paneStates[pane.paneId]?.themeOverride),
+    focusedIndex: Math.max(0, leaves.findIndex((pane) => pane.paneId === tab.focusedPaneId)),
+  };
+}
+
+function renewed(root: PaneNode): PaneNode {
+  return root.kind === "pane"
+    ? { kind: "pane", paneId: globalThis.crypto.randomUUID() as PaneId, launch: freshLaunch(root.launch) }
+    : { ...root, first: renewed(root.first), second: renewed(root.second) };
+}
+
 function closedTab(state: Workspace, id: TabId): Partial<Workspace> {
   const index = state.tabs.findIndex((tab) => tab.id === id);
   if (index < 0) return state;
   const tabs = state.tabs.filter((tab) => tab.id !== id);
+  const closedTabs = [...state.closedTabs, remembered(state.tabs[index], index)].slice(-CLOSED_TAB_LIMIT);
   if (tabs.length === 0) {
     const added = createTab(state.nextId, { kind: "local", options: {} });
-    return { tabs: [added], activeTab: added.id, nextId: state.nextId + 1 };
+    return { tabs: [added], activeTab: added.id, nextId: state.nextId + 1, closedTabs };
   }
-  return { tabs, activeTab: state.activeTab === id ? tabs[Math.min(index, tabs.length - 1)].id : state.activeTab };
+  return { tabs, activeTab: state.activeTab === id ? tabs[Math.min(index, tabs.length - 1)].id : state.activeTab, closedTabs };
 }
 
 const initial = createTab(1, { kind: "local", options: {} });
@@ -108,7 +144,7 @@ export const useWorkspace = create<Workspace>((set) => {
     return next === current ? state : { tabs: state.tabs.map((tab) => tab.id === id ? next : tab) };
   });
   return {
-    tabs: [initial], activeTab: initial.id, nextId: 2,
+    tabs: [initial], activeTab: initial.id, nextId: 2, closedTabs: [],
     addTerminal: (options = {}, label) => set((state) => {
       const added = createTab(state.nextId, { kind: "local", options: { ...options } }, label);
       return { tabs: [...state.tabs, added], activeTab: added.id, nextId: state.nextId + 1 };
@@ -179,6 +215,21 @@ export const useWorkspace = create<Workspace>((set) => {
       return { tabs };
     }),
     closeTerminal: (id) => set((state) => closedTab(state, id)),
+    reopenTerminal: () => set((state) => {
+      const closed = state.closedTabs.at(-1);
+      if (!closed) return state;
+      const root = renewed(closed.root), leaves = paneLeaves(root);
+      const focused = leaves[Math.min(closed.focusedIndex, leaves.length - 1)];
+      const paneStates: Record<string, PaneState> = {};
+      leaves.forEach((pane, index) => { const theme = closed.themes[index]; if (theme) paneStates[pane.paneId] = { themeOverride: theme }; });
+      const reopened: TerminalTab = {
+        id: ("tab-" + state.nextId) as TabId, label: closed.label, launch: focused.launch, root, focusedPaneId: focused.paneId, paneStates,
+        broadcastEnabled: false, broadcastPaneIds: [], broadcastArmedPaneIds: [],
+      };
+      const tabs = [...state.tabs];
+      tabs.splice(Math.min(closed.index, tabs.length), 0, reopened);
+      return { tabs, activeTab: reopened.id, nextId: state.nextId + 1, closedTabs: state.closedTabs.slice(0, -1) };
+    }),
     selectTab: (id) => set((state) => state.tabs.some((tab) => tab.id === id) ? { activeTab: id } : state),
     updateSession: (id, snapshot, paneId, launch) => changeTab(id, (tab) => {
       const target = paneId ?? tab.focusedPaneId, pane = findPane(tab.root, target), current = tab.paneStates[target];

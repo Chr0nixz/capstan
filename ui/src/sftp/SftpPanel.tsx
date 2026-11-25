@@ -305,11 +305,16 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     setDialogValue(initial);
     setDialog(next);
   };
-  const openIntegration = (): void => {
-    if (!selected || selected.metadata.kind !== "file") return;
-    setIntegrationShell("bash"); setIntegrationAction("install"); setIntegrationPreview(null); setIntegrationEntry(selected.id); setIntegrationError(null);
+  const openIntegration = (entry = selected, shell: Shell = "bash"): void => {
+    if (!entry || entry.metadata.kind !== "file") return;
+    setIntegrationShell(shell); setIntegrationAction("install"); setIntegrationPreview(null); setIntegrationEntry(entry.id); setIntegrationError(null);
     openDialog({ kind: "integration" });
   };
+  // Startup files Follow can offer to set up while it waits, hidden or not.
+  const startupShells: Readonly<Record<string, Shell>> = { ".bashrc": "bash", ".zshrc": "zsh" };
+  const integrationFiles = (state.page?.entries ?? [])
+    .filter((entry) => entry.metadata.kind === "file" && Object.hasOwn(startupShells, entry.name))
+    .map((entry) => ({ name: entry.name, shell: startupShells[entry.name], entry }));
   const openEditor = async (entry = selected): Promise<void> => {
     if (!entry || entry.metadata.kind !== "file" || !state.attached || editorBusy) return;
     setEditorBusy(true); setEditorError(null);
@@ -450,7 +455,7 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
     { label: labels.remove, icon: <TrashIcon size={14} />, run: () => startDelete(), disabled: state.busy || !selected, keys: "Del", danger: true },
     "separator",
     ...(supportsRemoteEditing() ? [{ label: labels.edit, icon: <ExternalEditIcon size={14} />, run: () => void openEditor(), disabled: state.busy || editorBusy || selected?.metadata.kind !== "file" }] : []),
-    { label: labels.shellIntegration, icon: <ShellIcon size={14} />, run: openIntegration, disabled: state.busy || selected?.metadata.kind !== "file" },
+    { label: labels.shellIntegration, icon: <ShellIcon size={14} />, run: () => openIntegration(), disabled: state.busy || selected?.metadata.kind !== "file" },
     "separator",
     { label: copyStatus ? labels.copied : labels.copy, icon: copyStatus ? <CheckIcon size={14} className="check-pop" /> : <CopyIcon size={14} />, run: () => { void copyPath(); }, disabled: !state.page },
     { label: labels.hidden, icon: <EyeIcon size={14} />, run: () => setShowHidden((value) => !value), checked: showHidden },
@@ -579,7 +584,11 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
       </div>
       <FollowToggle controller={cwd} locale={locale} ended={ended} />
     </form>
-    <CwdControls controller={cwd} locale={locale} ended={ended} aliasesOpen={aliasesOpen} onAliasesOpenChange={setAliasesOpen} />
+    <CwdControls controller={cwd} locale={locale} ended={ended} aliasesOpen={aliasesOpen} onAliasesOpenChange={setAliasesOpen}
+      integrationFiles={state.attached ? integrationFiles : []} onSetupIntegration={(file) => {
+        const match = integrationFiles.find((candidate) => candidate.name === file.name);
+        if (match) openIntegration(match.entry, match.shell);
+      }} />
     {editorError && <p className="sftp-error" role="alert">{labels.errors[editorError]}</p>}
     {transferError && <p className="sftp-error" role="alert">{labels.errors[transferError]}</p>}
     {error && <div className="sftp-error" role="alert"><span>{error}</span><button type="button" disabled={state.busy} onClick={() => void controller.start()}>{labels.retry}</button></div>}

@@ -33,7 +33,7 @@ export function ariaShortcut(keys: string): string {
 }
 
 export type WorkspaceShortcut =
-  | "new_terminal" | "close_terminal" | "search_hosts" | "command_palette" | "toggle_sidebar"
+  | "new_terminal" | "close_terminal" | "reopen_terminal" | "search_hosts" | "command_palette" | "toggle_sidebar"
   | "focus_files" | "focus_transfers" | "settings" | "next_tab" | "previous_tab" | { tab: number };
 
 type KeyState = { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean };
@@ -57,6 +57,8 @@ export function workspaceShortcut(event: KeyState, mac = isMacOS()): WorkspaceSh
     if (mac && key === "w") return "close_terminal";
     return mac ? digit : null;
   }
+  // Reopen sits beside New: Cmd+Shift+T on macOS, Ctrl+Alt+Shift+T where Ctrl+Shift+T is New.
+  if (key === "t" && event.shiftKey && event.altKey !== mac) return "reopen_terminal";
   if (event.altKey) return !mac && !event.shiftKey ? digit : null;
   if (mac && event.code === "BracketLeft") return "previous_tab";
   if (mac && event.code === "BracketRight") return "next_tab";

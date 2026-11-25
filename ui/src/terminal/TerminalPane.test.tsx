@@ -228,4 +228,30 @@ describe("terminal view ownership", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("says where a new SSH pane is connecting and cancels it from the row or Esc", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const close = vi.fn();
+    const ssh: TerminalLaunch = { kind: "ssh", host_id: "host-1" as never, attempt_id: "attempt-1", theme: "graphite" };
+    useWorkspace.getState().addTerminal();
+    const tab = useWorkspace.getState().tabs.at(-1)!;
+    useWorkspace.setState({ tabs: [{ ...tab, id: tabId, root: { kind: "pane", paneId: tab.focusedPaneId, launch: ssh }, launch: ssh, paneStates: {} }], activeTab: tabId });
+    await act(async () => { root.render(<TerminalPane tabId={tabId} launch={ssh} labels={copy.en} visible production onRestart={() => undefined} onClose={close}
+      connectTarget={{ address: "ops@api-east.internal", via: "bastion" }} />); });
+    const row = container.querySelector(".session-connecting");
+    expect(row?.getAttribute("role")).toBe("status");
+    expect(row?.textContent).toContain("Connecting to");
+    expect(row?.querySelector(".session-connect-target")?.textContent).toBe("ops@api-east.internal");
+    expect(row?.textContent).toContain("via bastion");
+    expect(row?.querySelector(".prod-chip")).not.toBeNull();
+    expect(container.querySelector(".session-ended:not(.session-connecting)")).toBeNull();
+    await act(async () => container.querySelector(".terminal-host")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(close).toHaveBeenCalledTimes(1);
+    await act(async () => [...row!.querySelectorAll("button")].find((button) => button.textContent === "Cancel")?.click());
+    expect(close).toHaveBeenCalledTimes(2);
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

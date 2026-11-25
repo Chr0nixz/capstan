@@ -958,7 +958,7 @@ describe("App host workflows", () => {
     expect(localStorage.getItem("capstan.sidebar-hidden")).toBe("0");
   });
 
-  it("keeps errors visible while the host list is hidden", async () => {
+  it("keeps errors in one place over the terminal whether the host list is shown or hidden", async () => {
     await act(async () => { container.querySelector<HTMLButtonElement>(".sidebar-toggle")?.click(); });
     invoke.mockImplementation(async (command: string, args?: unknown) => {
       if (command === "lock_vault") throw new Error("lock failed");
@@ -973,8 +973,8 @@ describe("App host workflows", () => {
     expect(container.querySelector(".sidebar .inline-error")).toBeNull();
     expect(container.querySelector(".workspace-messages .inline-error[role='alert']")).not.toBeNull();
     await act(async () => { container.querySelector<HTMLButtonElement>(".sidebar-toggle")?.click(); });
-    expect(container.querySelector(".workspace-messages")).toBeNull();
-    expect(container.querySelector(".sidebar .inline-error[role='alert']")).not.toBeNull();
+    expect(container.querySelector(".sidebar .inline-error")).toBeNull();
+    expect(container.querySelector(".workspace-messages .inline-error[role='alert']")).not.toBeNull();
   });
 
   it("places the production switch in the connection section", async () => {

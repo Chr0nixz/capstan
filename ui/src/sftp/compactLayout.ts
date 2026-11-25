@@ -1,4 +1,29 @@
 import type { PanelLayout } from "./panelPreferences";
+import type { PaneNode } from "../panes/contracts";
+
+/** Columns most full-screen tools (htop, man, systemctl status) assume. */
+export const MIN_TERMINAL_COLUMNS = 80;
+/** xterm's left and right padding around the grid, from `.terminal-host`. */
+const TERMINAL_PADDING = 20;
+/** Monospace advance as a share of the font size; Cascadia Mono and Menlo are both near 0.6. */
+const CELL_WIDTH_RATIO = 0.6;
+
+/** Share of the terminal area's width that its narrowest pane gets. */
+export function narrowestPaneShare(root: PaneNode): number {
+  if (root.kind === "pane") return 1;
+  const first = narrowestPaneShare(root.first), second = narrowestPaneShare(root.second);
+  return root.direction === "horizontal" ? Math.min(root.ratio * first, (1 - root.ratio) * second) : Math.min(first, second);
+}
+
+/**
+ * Whether a right-docked panel would leave the narrowest pane under
+ * MIN_TERMINAL_COLUMNS. The panel then folds, like in a narrow window.
+ */
+export function crowdsTerminal(workspaceWidth: number, layout: PanelLayout, root: PaneNode, fontSize: number): boolean {
+  if (workspaceWidth <= 0 || layout.dock !== "right") return false;
+  const terminalWidth = workspaceWidth * (1 - layout.size / 100) * narrowestPaneShare(root);
+  return (terminalWidth - TERMINAL_PADDING) / (fontSize * CELL_WIDTH_RATIO) < MIN_TERMINAL_COLUMNS;
+}
 
 /**
  * Below the compact breakpoint the remote-files panel starts collapsed so the

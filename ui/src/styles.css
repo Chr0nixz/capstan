@@ -45,6 +45,9 @@
   --scrim: rgb(8 9 11 / 0.62);
   --key-top: inset 0 1px 0 rgb(255 255 255 / 0.05);
   --key-bottom: inset 0 -1px 0 rgb(0 0 0 / 0.28);
+  /* Keycap relief lives on the keys big enough to show it: monograms, the vault and transfer keys. */
+  --key-relief: inset 0 1px 0 rgb(255 255 255 / 0.09), inset 0 -3px 0 rgb(0 0 0 / 0.34);
+  --key-shade-small: inset 0 -2px 0 rgb(0 0 0 / 0.3);
   --shadow-pop: 0 18px 48px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.32);
   --shadow-sheet: 18px 0 44px rgb(0 0 0 / 0.38);
 
@@ -109,6 +112,8 @@
   --scrim: rgb(30 28 24 / 0.32);
   --key-top: inset 0 1px 0 rgb(255 255 255 / 0.8);
   --key-bottom: inset 0 -1px 0 rgb(60 50 30 / 0.08);
+  --key-relief: inset 0 1px 0 rgb(255 255 255 / 0.9), inset 0 -3px 0 rgb(60 50 30 / 0.14);
+  --key-shade-small: inset 0 -2px 0 rgb(60 50 30 / 0.14);
   --shadow-pop: 0 18px 48px rgb(40 32 20 / 0.18), 0 2px 8px rgb(40 32 20 / 0.1);
   color-scheme: light;
   color: var(--legend);
@@ -143,7 +148,7 @@ button {
   border-radius: var(--radius);
   color: var(--legend);
   background: var(--face);
-  box-shadow: var(--key-top), var(--key-bottom);
+  box-shadow: none;
   font: inherit;
   font-size: 12px;
   line-height: 1.2;
@@ -162,7 +167,7 @@ button[aria-pressed="true"] { border-color: var(--amber-line); color: var(--ambe
   border-color: transparent;
   color: var(--amber-ink);
   background: var(--amber-fill);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.18);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -2px 0 rgb(0 0 0 / 0.2);
   font-weight: 600;
 }
 .primary-action:hover:not(:disabled),
@@ -396,6 +401,12 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .terminal-tab-list[data-overflow-start] { mask-image: linear-gradient(to right, transparent, #000 24px); }
 .terminal-tab-list[data-overflow-end] { mask-image: linear-gradient(to left, transparent, #000 24px); }
 .terminal-tab-list[data-overflow-start][data-overflow-end] { mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent); }
+/* The all-tabs key only appears while some tabs are scrolled out of view. */
+.tab-overflow { flex: 0 0 auto; width: 26px; min-width: 26px; height: 26px; min-height: 26px; margin-left: 2px; }
+.terminal-tab-list:not([data-overflow-start]):not([data-overflow-end]) + .tab-overflow { display: none; }
+.tab-overflow-menu button { gap: 8px; }
+.tab-overflow-menu .led[data-dark] { visibility: hidden; }
+.tab-overflow-menu button[aria-current="page"] .sftp-menu-label { color: var(--legend-strong); font-weight: 600; }
 .terminal-tab {
   position: relative;
   display: flex;
@@ -456,7 +467,11 @@ input[type="range"] { accent-color: var(--amber-fill); }
 }
 .terminal-tab [role="tab"]:hover:not(:disabled), .terminal-tab [role="tab"]:active:not(:disabled) { color: inherit; background: transparent; transform: none; }
 .terminal-tab [role="tab"]:focus-visible { outline-offset: -3px; }
-.tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-label { min-width: 0; }
+/* Names keep their distinguishing end: the head gives way first (see MiddleTruncate). */
+.middle-truncate { display: inline-flex; min-width: 0; max-width: 100%; }
+.middle-truncate-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.middle-truncate-tail { flex: 0 0 auto; white-space: pre; }
 .tab-kind { position: relative; display: grid; place-items: center; width: 16px; height: 16px; color: var(--legend-faint); }
 .terminal-tab.active .tab-kind { color: var(--legend-muted); }
 .tab-kind .led { position: absolute; right: -2px; bottom: -1px; box-shadow: 0 0 0 2px var(--chrome); }
@@ -496,7 +511,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
    stays quiet while every control still reads as a key when it is reached. */
 .tab-actions .icon-button:hover:not(:disabled), .tab-actions .new-terminal:hover:not(:disabled),
 .tab-actions .icon-button:focus-visible, .tab-actions .new-terminal:focus-visible {
-  border-color: var(--edge); background: var(--face-hover); box-shadow: var(--key-top), var(--key-bottom);
+  border-color: var(--edge); background: var(--face-hover);
 }
 .tab-actions .icon-button:active:not(:disabled), .tab-actions .new-terminal:active:not(:disabled) { box-shadow: none; }
 .new-terminal { width: 28px; min-width: 28px; height: 26px; min-height: 26px; padding: 0; border-color: transparent; background: transparent; box-shadow: none; color: var(--legend-muted); }
@@ -614,6 +629,8 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .pane-focus > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-pane[data-focused] .pane-focus { color: var(--legend-strong); }
 .workspace-pane-heading > .icon-button { width: 24px; min-width: 24px; min-height: 24px; height: 24px; }
+/* In a narrow pane the broadcast chip keeps its icon; the pane number and the production chip stay. */
+@container pane (max-width: 360px) { .broadcast-chip-label { display: none; } .broadcast-chip { padding: 0 4px; } }
 .pane-resize-handle { position: relative; flex: 0 0 5px; background: var(--canvas); }
 .pane-resize-handle::after { content: ""; position: absolute; inset: 0 1px; background: var(--divider); }
 .pane-resize-handle[data-panel-group-direction="vertical"]::after { inset: 1px 0; }
@@ -702,6 +719,9 @@ input[type="range"] { accent-color: var(--amber-fill); }
 /* The hint is the first thing to give way when the pane is narrow. */
 .session-ended > .session-ended-hint { flex: 0 1 auto; min-width: 0; margin-right: 4px; overflow: hidden; color: var(--legend-faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .session-ended button { min-height: 28px; white-space: nowrap; }
+/* First connect: where the pane is going, while the canvas is still empty. */
+.session-connect-target { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--legend); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.session-connect-elapsed { color: var(--legend-faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 @container pane (max-width: 520px) { .session-ended-hint { display: none; } }
 @container pane (max-width: 360px) { .session-ended { flex-wrap: wrap; } }
 
@@ -710,8 +730,8 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .led {
   display: inline-block;
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--legend-faint);
   transition: background-color var(--slow), box-shadow var(--slow);
@@ -805,8 +825,9 @@ input[type="range"] { accent-color: var(--amber-fill); }
   border: 1px solid var(--edge);
   border-radius: 6px;
   color: var(--legend-strong);
+  padding-bottom: 2px;
   background: linear-gradient(to bottom, var(--face-hover), var(--face));
-  box-shadow: var(--key-top), inset 0 -2px 0 rgb(0 0 0 / 0.25);
+  box-shadow: var(--key-relief);
   font-family: var(--font-display);
   font-size: 12px;
   font-weight: 600;
@@ -817,7 +838,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .host-row:hover .host-key .led, .host-row:focus-within .host-key .led { box-shadow: 0 0 0 2px var(--face); }
 .host-text { display: grid; flex: 1; min-width: 0; gap: 2px; }
 .host-row-name { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 13px; font-weight: 500; }
-.host-row-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-row-name > .middle-truncate { flex: 0 1 auto; }
 .host-row-address { overflow: hidden; color: var(--legend-muted); font-family: var(--font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .host-row-group { font-family: var(--font-ui); }
 .prod-chip {
@@ -831,7 +852,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   font-weight: 600;
   line-height: 16px;
 }
-.host-row[data-prod] .host-key { border-color: var(--red-line); color: var(--red-text); box-shadow: var(--key-top), inset 0 -2px 0 var(--red); }
+.host-row[data-prod] .host-key { border-color: var(--red-line); color: var(--red-text); box-shadow: var(--key-top), inset 0 -3px 0 var(--red); }
 .host-row[data-prod]:hover .host-key { border-color: var(--red); }
 .host-edit {
   position: absolute;
@@ -884,7 +905,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   border-radius: 9px;
   color: var(--legend);
   background: linear-gradient(to bottom, var(--face-hover), var(--face));
-  box-shadow: var(--key-top), inset 0 -3px 0 rgb(0 0 0 / 0.28);
+  box-shadow: var(--key-relief);
 }
 .vault-locked h2 { font-size: 15px; }
 .vault-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1111,7 +1132,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
   box-shadow: none;
 }
 .segmented button:hover:not(:disabled) { border-color: transparent; background: var(--face-hover); }
-.segmented button[aria-selected="true"] { border-color: var(--edge); color: var(--legend-strong); background: var(--face); box-shadow: var(--key-top), inset 0 -2px 0 var(--amber); }
+.segmented button[aria-selected="true"] { border-color: var(--edge); color: var(--legend-strong); background: var(--face); box-shadow: inset 0 -2px 0 var(--amber); }
 /* One row: tabs share the width, and scroll rather than wrap when a locale runs long. */
 .settings-tabs { overflow-x: auto; scrollbar-width: none; }
 .settings-tabs::-webkit-scrollbar { display: none; }
@@ -1138,7 +1159,7 @@ input[type="range"] { accent-color: var(--amber-fill); }
 .shortcut-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 4px 0; border-bottom: 1px solid var(--divider-soft); }
 .shortcut-list dt { min-width: 0; color: var(--legend); font-size: 12.5px; }
 .shortcut-list dd { flex: 0 0 auto; margin: 0; }
-kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); border-radius: var(--radius); color: var(--legend); background: var(--face); box-shadow: var(--key-top), var(--key-bottom); font-family: var(--font-mono); font-size: 11px; line-height: 18px; white-space: nowrap; }
+kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); border-radius: var(--radius); color: var(--legend); background: var(--face); box-shadow: var(--key-shade-small); font-family: var(--font-mono); font-size: 11px; line-height: 18px; white-space: nowrap; }
 
 .settings-section { display: grid; gap: 14px; animation: fade-in var(--base) var(--ease-out); }
 .settings-section > h3 { font-size: 15px; }
@@ -1246,6 +1267,10 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .trust-manager .item-main { flex-basis: 100%; }
 .trust-manager .item-list > li > button { margin-left: auto; }
 .trust-manager .fingerprint-line { color: var(--legend); }
+/* The entry a changed-key alert pointed at: first in the list, marked as a safety state. */
+.trust-manager .item-list > li[data-review] { border-color: var(--red-line); background: var(--red-wash); }
+.fingerprint-presented { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.fingerprint-caption { color: var(--legend-muted); font-family: var(--font-ui); font-size: 11.5px; }
 
 /* ---------- Dialogs ---------- */
 
@@ -1490,11 +1515,12 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .sftp-cwd-row { flex-wrap: wrap; padding-top: 0; padding-bottom: 6px; }
 .follow-toggle { min-height: 24px; padding: 0 9px 0 7px; border-radius: 999px; font-size: 11.5px; }
 .follow-toggle .follow-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--legend-faint); transition: background-color var(--base); }
-.follow-toggle[aria-pressed="true"] { border-color: var(--edge); color: var(--legend); background: var(--face); box-shadow: var(--key-top), var(--key-bottom); }
+.follow-toggle[aria-pressed="true"] { border-color: var(--edge); color: var(--legend); background: var(--face); }
 .follow-toggle[aria-pressed="true"] .follow-dot { background: var(--green); }
 .follow-toggle[data-waiting] .follow-dot { background: var(--amber); animation: led-breathe 1.6s ease-in-out infinite; }
 .follow-toggle[aria-pressed="true"][data-ended] .follow-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--legend-faint); }
 .sftp-cwd-row .sftp-status { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sftp-cwd-setup { flex: 0 0 auto; min-height: 24px; padding: 0 8px; font-size: 11.5px; }
 .sftp-cwd-aliases { margin-left: auto; font-size: 11.5px; }
 .sftp-cwd-aliases[open] { flex-basis: 100%; margin-left: 0; }
 .sftp-cwd-aliases summary { display: inline-flex; align-items: center; gap: 4px; min-height: 22px; color: var(--legend-faint); cursor: default; list-style: none; }
@@ -1654,10 +1680,10 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--amber), transparent);
-  background-size: 40% 100%;
-  background-repeat: no-repeat;
-  animation: scan 2.4s linear infinite;
+  /* Running work breathes in place: no sideways motion in the corner of a dim room. */
+  background: linear-gradient(90deg, transparent, var(--amber) 30%, var(--amber) 70%, transparent);
+  opacity: 0.35;
+  animation: scan 2.4s var(--ease-in-out) infinite alternate;
 }
 .transfer-queue-heading {
   justify-content: flex-start;
@@ -1720,8 +1746,9 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
   border: 1px solid var(--edge);
   border-radius: 6px;
   color: var(--legend-muted);
+  padding-bottom: 2px;
   background: var(--face);
-  box-shadow: var(--key-top), inset 0 -2px 0 rgb(0 0 0 / 0.22);
+  box-shadow: var(--key-relief);
 }
 .transfer-row[data-state="running"] .transfer-direction { color: var(--amber); }
 .transfer-row[data-state="completed"] .transfer-direction { color: var(--green); }
@@ -1754,9 +1781,6 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 .transfer-row[data-state="resuming"] progress::-webkit-progress-value,
 .transfer-row[data-state="verifying"] progress::-webkit-progress-value {
   background-color: var(--amber);
-  background-image: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.35) 50%, transparent 70%);
-  background-size: 200% 100%;
-  animation: sheen 1.6s linear infinite;
 }
 .transfer-row-progress progress::-moz-progress-bar { background: var(--amber); }
 .transfer-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1795,15 +1819,13 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
 @keyframes dialog-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } }
 @keyframes led-breathe { 50% { opacity: 0.3; } }
 @keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
-@keyframes sheen { from { background-position: 150% 0; } to { background-position: -50% 0; } }
-@keyframes scan { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@keyframes scan { to { opacity: 0.9; } }
 @keyframes check-pop { from { transform: scale(0.5); opacity: 0; } }
 .check-pop { animation: check-pop var(--base) var(--ease-out); color: var(--green); }
 
 @media (prefers-reduced-motion: reduce) {
   :root { --press: 0px; }
   .led[data-state="connecting"], .transfer-queue[data-active="true"]::before, .follow-toggle[data-waiting] .follow-dot { animation: none; }
-  .transfer-row progress::-webkit-progress-value { animation: none !important; background-image: none !important; }
   .sftp-busy::after { left: 32%; }
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
@@ -1818,7 +1840,7 @@ kbd { display: inline-block; padding: 1px 6px; border: 1px solid var(--edge); bo
     --amber-hover: Highlight; --amber-pressed: Highlight; --amber-strong: Highlight;
     --red: CanvasText; --red-text: CanvasText; --red-line: CanvasText; --red-wash: Canvas; --red-wash-strong: Canvas;
     --green: CanvasText; --green-text: CanvasText; --green-wash: Canvas; --green-line: CanvasText;
-    --key-top: none; --key-bottom: none;
+    --key-top: none; --key-bottom: none; --key-relief: none; --key-shade-small: none;
   }
   button, :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select) { border: 1px solid ButtonText; }
   .led { forced-color-adjust: auto; background: CanvasText; border: 1px solid CanvasText; }

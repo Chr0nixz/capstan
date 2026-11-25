@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type ReactElement } from "react";
 import { copy, detectLocale } from "./i18n";
 import { snippetMutationError } from "./snippets/errors";
-import { paneStatus, tabStatus, useWorkspace, type TabStatus, type TerminalTab } from "./workspace";
+import { closeRisk, paneStatus, tabStatus, useWorkspace, type TabStatus, type TerminalTab } from "./workspace";
 import { PaneTools, PaneWorkspace } from "./panes/PaneWorkspace";
 import { TabToolsMenu } from "./panes/TabToolsMenu";
 import { useTabStrip } from "./window/tabStrip";
@@ -19,11 +19,13 @@ import { panelPreferences } from "./sftp/panelPreferences";
 import type { SftpSessionId } from "./sftp/contracts";
 import { AlertIcon, CheckIcon, ChevronRightIcon, CloseIcon, CommandIcon, CopyIcon, DownloadIcon, FolderIcon, KeyIcon, LockIcon, PencilIcon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon, ShieldIcon, SidebarIcon, SnippetIcon, StarIcon, TerminalIcon, TunnelIcon, UnlockIcon, UploadIcon } from "./ui/icons";
 import { useConfirm } from "./ui/ConfirmDialog";
+import { MiddleTruncate } from "./ui/MiddleTruncate";
+import { TabOverflowMenu } from "./window/TabOverflowMenu";
 import { useMediaQuery } from "./ui/useMediaQuery";
 import { hostAddressLabel, hostMonogram, isProductionHost, parseQuickConnect, parseQuickHost, productionSource } from "./hosts/identity";
 import { SshConfigImportDialog, type ImportSummary } from "./hosts/SshConfigImport";
 import { fingerprintChunks, hostKeyFile } from "./hosts/fingerprint";
-import { effectiveLayout, resolveLayoutChange } from "./sftp/compactLayout";
+import { crowdsTerminal, effectiveLayout, resolveLayoutChange } from "./sftp/compactLayout";
 import { filesFocusTarget } from "./sftp/focus";
 import { SnippetManager, type SnippetRunRequest, type SnippetTarget } from "./snippets/SnippetManager";
 import { TunnelManager } from "./forwarding/TunnelManager";
@@ -106,6 +108,8 @@ export function App(): ReactElement {
   const addSshTerminal = useWorkspace((state) => state.addSshTerminal);
   const openSshHost = useWorkspace((state) => state.openSshHost);
   const closeTerminal = useWorkspace((state) => state.closeTerminal);
+  const reopenTerminal = useWorkspace((state) => state.reopenTerminal);
+  const canReopenTerminal = useWorkspace((state) => state.closedTabs.length > 0);
   const moveTab = useWorkspace((state) => state.moveTab);
   const setActiveTab = useWorkspace((state) => state.selectTab);
   const narrow = useMediaQuery("(max-width: 720px)");
@@ -123,8 +127,12 @@ export function App(): ReactElement {
   }, []);
   // Measure the workspace, not the window: a Snap half with the host list open is narrow too.
   const compact = shellWidth > 0 ? shellWidth < COMPACT_WORKSPACE : compactWindow;
+  const terminalFontSize = useDesktopPreferences((state) => state.preferences.terminalFontSize);
   const [confirm, confirmElement] = useConfirm();
   const [focusRequest, setFocusRequest] = useState(0);
+  // Set when a changed-key alert sends the user to Host keys: that entry is
+  // shown first, with the key the server presented beside the trusted one.
+  const [keyReview, setKeyReview] = useState<{ target: string; port: number; presented: string } | null>(null);
   const draggedTabRef = useRef<TabId | null>(null);
   const [dropTab, setDropTab] = useState<TabId | null>(null);
   const panelState = useStore(panelPreferences.store);
@@ -444,7 +452,8 @@ export function App(): ReactElement {
       const index = tabs.findIndex((tab) => tab.id === activeTab);
       let handled = true, focusTerminal = true;
       if (shortcut === "new_terminal") addTerminal();
-      else if (shortcut === "close_terminal") closeTerminal(activeTab);
+      else if (shortcut === "close_terminal") { void requestCloseTab(activeTab); focusTerminal = false; }
+      else if (shortcut === "reopen_terminal") { if (canReopenTerminal) reopenTerminal(); else handled = false; }
       else if (shortcut === "search_hosts" && vault.unlocked) { focusHostSearch(); focusTerminal = false; }
       else if (shortcut === "command_palette") { setCommandPaletteOpen(true); focusTerminal = false; }
       else if (shortcut === "toggle_sidebar") { toggleSidebar(); focusTerminal = false; }
@@ -483,6 +492,7 @@ export function App(): ReactElement {
   };
   const closeSheet = (): void => {
     setSheet(null);
+    setKeyReview(null);
     const target = sheetReturnRef.current;
     sheetReturnRef.current = null;
     if (target?.isConnected) requestAnimationFrame(() => target.focus());
@@ -1255,6 +1265,10 @@ export function App(): ReactElement {
     }
   }
   const productionHosts = new Set(hosts.filter((host) => isProductionHost(host, groupsById)).map((host) => host.id));
+  const connectTargets = new Map(hosts.map((host) => {
+    const via = host.jump_host_id ? hosts.find((candidate) => candidate.id === host.jump_host_id)?.name : undefined;
+    return [host.id, { address: hostAddressLabel(host), ...(via ? { via } : {}) }];
+  }));
   const hostSections: { label: string; favorites: boolean; hosts: HostView[] }[] = [];
   for (const host of visibleHosts) {
     const label = host.favorite ? labels.favoriteHosts : groupNames.get(host.group_id ?? "") ?? labels.noGroup;
@@ -1276,6 +1290,35 @@ export function App(): ReactElement {
       name: leaves.length > 1 ? labels.paneName(name, leaves.findIndex((pane) => pane.paneId === id) + 1) : name,
       production: launch?.kind === "ssh" && productionHosts.has(launch.host_id),
     };
+  };
+  // Closing ends sessions for good, so a tab running on production, or running
+  // more than one session, asks first. Every closed tab can be reopened.
+  const requestCloseTab = async (id: TabId): Promise<void> => {
+    const tab = useWorkspace.getState().tabs.find((candidate) => candidate.id === id);
+    if (!tab) return;
+    const risk = closeRisk(tab, productionHosts);
+    if (risk) {
+      const name = tabNames.get(tab.id) ?? labels.localShell;
+      const productionLaunch = paneLeaves(tab.root).find((pane) => pane.paneId === risk.productionPaneIds[0])?.launch;
+      const productionHost = productionLaunch?.kind === "ssh" ? hosts.find((host) => host.id === productionLaunch.host_id) : undefined;
+      const accepted = await confirm({
+        title: labels.closeTabTitle(name),
+        body: risk.runningPaneIds.length > 1 ? labels.closeTabSessionsBody(risk.runningPaneIds.length) : labels.closeTabProductionBody(productionHost?.name ?? name),
+        confirm: labels.closeTabConfirm(name),
+        cancel: labels.keepTabOpen,
+        tone: "danger",
+        ...(risk.runningPaneIds.length > 1
+          ? { targets: risk.runningPaneIds.map((paneId) => paneTarget(tab, paneId)).map((target) => ({ name: target.name, ...(target.production ? { productionLabel: labels.production } : {}) })) }
+          : productionHost ? { target: { host: productionHost.name, productionLabel: labels.production, detail: hostAddressLabel(productionHost) } } : {}),
+      });
+      if (!accepted) {
+        // A palette or shortcut has no control to return to; the terminal takes focus back.
+        requestAnimationFrame(() => { if (!document.activeElement || document.activeElement === document.body) setFocusRequest((request) => request + 1); });
+        return;
+      }
+    }
+    closeTerminal(id);
+    setFocusRequest((request) => request + 1);
   };
   // Broadcast panes are selected, and shown as selected, only while broadcast is on.
   const broadcastPaneIds = activeEntry?.broadcastEnabled ? activeEntry.broadcastPaneIds : [];
@@ -1354,10 +1397,11 @@ export function App(): ReactElement {
     setSettingsTab(next);
     requestAnimationFrame(() => document.getElementById(`settings-tab-${next}`)?.focus());
   };
-  type WorkspaceLabel = "newTerminalAction" | "closeTerminalAction" | "splitRightAction" | "splitDownAction"
+  type WorkspaceLabel = "newTerminalAction" | "closeTerminalAction" | "reopenTerminalAction" | "splitRightAction" | "splitDownAction"
     | "toggleBroadcastAction" | "toggleSidebarAction" | "focusFilesAction" | "focusTransfersAction" | "lockVaultAction";
   const workspaceActions: Array<[WorkspaceCommand, WorkspaceLabel, string | null]> = [
     ["new_terminal", "newTerminalAction", "Ctrl+Shift+T"],
+    ...(canReopenTerminal ? [["reopen_terminal", "reopenTerminalAction", "Ctrl+Alt+Shift+T"]] as Array<[WorkspaceCommand, WorkspaceLabel, string | null]> : []),
     ...(activeEntry ? [
       ["close_terminal", "closeTerminalAction", "Ctrl+Shift+W"],
       ["split_right", "splitRightAction", "Alt+Shift+="],
@@ -1438,7 +1482,8 @@ export function App(): ReactElement {
     const tab = workspace.tabs.find((candidate) => candidate.id === workspace.activeTab);
     let focusTerminal = true;
     if (command === "new_terminal") addTerminal();
-    else if (command === "close_terminal") { if (tab) closeTerminal(tab.id); }
+    else if (command === "close_terminal") { if (tab) void requestCloseTab(tab.id); focusTerminal = false; }
+    else if (command === "reopen_terminal") reopenTerminal();
     else if (command === "split_right" || command === "split_down") { if (tab) workspace.splitPane(tab.id, tab.focusedPaneId, command === "split_right" ? "horizontal" : "vertical"); }
     else if (command === "toggle_broadcast") { if (tab) workspace.setBroadcast(tab.id, !tab.broadcastEnabled); }
     else if (command === "toggle_sidebar") toggleSidebar();
@@ -1505,7 +1550,7 @@ export function App(): ReactElement {
       requestAnimationFrame(() => document.getElementById(id + "-tab")?.focus());
       return;
     }
-    if (event.key === "Delete") { event.preventDefault(); closeTerminal(tabs[index].id); return; }
+    if (event.key === "Delete") { event.preventDefault(); void requestCloseTab(tabs[index].id); return; }
     const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
     if (!step && event.key !== "Home" && event.key !== "End") return;
     event.preventDefault();
@@ -1591,7 +1636,7 @@ export function App(): ReactElement {
                           onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); openHost(host, true); } }}>
                           <span className="host-key" aria-hidden="true">{hostMonogram(host.name)}{signal && <span className="led" data-state={signal} />}</span>
                           <span className="host-text">
-                            <span className="host-row-name"><span>{host.name}</span>{production && <span className="prod-chip" aria-hidden="true">{labels.production}</span>}</span>
+                            <span className="host-row-name"><MiddleTruncate text={host.name} />{production && <span className="prod-chip" aria-hidden="true">{labels.production}</span>}</span>
                             <span className="host-row-address">{host.username}@{host.address}{host.port === 22 ? "" : `:${host.port}`}{section.favorites && host.group_id && !production ? <span className="host-row-group"> · {groupNames.get(host.group_id) ?? labels.noGroup}</span> : null}</span>
                           </span>
                           {(production || signal) && <span className="sr-only">{[production ? labels.production : "", signal ? labels.tabStatus[signal] : ""].filter(Boolean).join(", ")}</span>}
@@ -1632,7 +1677,6 @@ export function App(): ReactElement {
               </section>}
             </section>
           )}
-          {!sheet && sidebarVisible && messages}
           {vault.unlocked && <footer className="sidebar-footer">
             <span className="vault-state" title={labels.autoLockStatus(preferences.auto_lock_minutes)}>
               <UnlockIcon size={14} />
@@ -1720,7 +1764,8 @@ export function App(): ReactElement {
                 <details className="credential-create" open={credentials.length === 0}>
                   <summary><ChevronRightIcon size={14} />{labels.newCredential}</summary>
                   <div className="credential-create-body">
-                    <input aria-label={labels.credentialName} placeholder={labels.credentialName} value={credentialName} onChange={(event) => setCredentialName(event.currentTarget.value)} maxLength={256} />
+                    <input aria-label={labels.credentialName} placeholder={labels.credentialName} value={credentialName} onChange={(event) => setCredentialName(event.currentTarget.value)} maxLength={256} aria-describedby="credential-name-first" />
+                    {!credentialName.trim() && <p id="credential-name-first" className="quiet-copy">{labels.credentialNameFirst}</p>}
                     <div className="credential-create-row">
                       <button type="button" disabled={!credentialName.trim()} onClick={() => { void createCredential(); }}>{labels.createCredential}</button>
                       <button type="button" disabled={!credentialName.trim()} onClick={() => { void importPrivateKey(); }}>{labels.importPrivateKey}</button>
@@ -1856,15 +1901,20 @@ export function App(): ReactElement {
               <h3>{labels.trustedHostKeys}</h3>
               <p className="quiet-copy">{labels.trustedHostKeyPolicy}</p>
               {trustedHostKeys.length === 0 ? <p className="quiet-copy">{labels.noTrustedHostKeys}</p> : <ul className="item-list">
-                {trustedHostKeys.map((trusted) => {
+                {[...trustedHostKeys].sort((left, right) => Number(keyReview?.target === right.target && keyReview.port === right.port)
+                  - Number(keyReview?.target === left.target && keyReview.port === left.port)).map((trusted) => {
                   const names = trustedHostNames(trusted.target, trusted.port);
                   const production = hosts.some((host) => host.address === trusted.target && host.port === trusted.port && productionHosts.has(host.id));
-                  return <li key={`${trusted.target}:${trusted.port}`}>
+                  const review = keyReview?.target === trusted.target && keyReview.port === trusted.port ? keyReview : null;
+                  return <li key={`${trusted.target}:${trusted.port}`} data-review={review ? "true" : undefined}
+                    ref={review ? (element) => { element?.scrollIntoView({ block: "nearest" }); } : undefined}>
                     <div className="item-main">
                       <strong>{names.length ? names.join(", ") : `${trusted.target}:${trusted.port}`}{production && <span className="prod-chip">{labels.production}</span>}</strong>
                       {names.length > 0 && <span className="mono">{trusted.target}:{trusted.port}</span>}
                       <span className="mono">{trusted.algorithm}</span>
-                      <span className="mono fingerprint-line">{trusted.fingerprint}</span>
+                      <span className="mono fingerprint-line">{fingerprint(trusted.fingerprint, review?.presented ?? null)}</span>
+                      {review && review.presented !== trusted.fingerprint && <span className="mono fingerprint-line fingerprint-presented">
+                        <span className="fingerprint-caption">{labels.hostKeyPresented}</span>{fingerprint(review.presented, trusted.fingerprint)}</span>}
                       <span>{labels.firstTrustedAt(new Date(trusted.first_trusted_at * 1000).toLocaleString(locale))}</span>
                     </div>
                     <button className="danger-action" type="button" aria-label={`${labels.forgetTrustedHostKey}: ${trusted.target}:${trusted.port}`}
@@ -1971,13 +2021,17 @@ export function App(): ReactElement {
                       tabIndex={selected ? 0 : -1} aria-label={description ? `${tabName}, ${description}` : undefined}
                       onClick={withFocus(() => setActiveTab(tab.id))} onKeyDown={(event) => terminalTabKeyDown(event, tab.id)}>
                       <span className="tab-kind" aria-hidden="true">{ssh ? <ServerIcon size={14} /> : <TerminalIcon size={14} />}{signal && <span className="led" data-state={signal} />}</span>
-                      <span className="tab-label">{tabName}</span>
+                      <MiddleTruncate className="tab-label" text={tabName} />
                     </button>
-                    <button className="terminal-tab-close" type="button" tabIndex={-1} title={labels.shortcut(labels.closeTerminal, "Ctrl+Shift+W")} aria-label={labels.closeTerminal + ": " + tabName} aria-keyshortcuts={`Delete ${ariaShortcut("Ctrl+Shift+W")}`} onClick={withFocus(() => closeTerminal(tab.id))}><CloseIcon size={14} /></button>
+                    <button className="terminal-tab-close" type="button" tabIndex={-1} title={labels.shortcut(labels.closeTerminal, "Ctrl+Shift+W")} aria-label={labels.closeTerminal + ": " + tabName} aria-keyshortcuts={`Delete ${ariaShortcut("Ctrl+Shift+W")}`} onClick={() => { void requestCloseTab(tab.id); }}><CloseIcon size={14} /></button>
                   </div>
                 );
               })}
             </div>
+            <TabOverflowMenu label={labels.allTabs} productionLabel={labels.production} onSelect={(id) => { setActiveTab(id as TabId); setFocusRequest((value) => value + 1); }}
+              tabs={tabs.map((tab) => ({ id: tab.id, name: tabNames.get(tab.id) ?? labels.localShell, selected: tab.id === activeTab,
+                signal: tab.launch.kind === "ssh" || tabStatus(tab) !== "live" ? tabStatus(tab) : null,
+                production: tab.launch.kind === "ssh" && productionHosts.has(tab.launch.host_id) }))} />
             <div className="tab-actions">
               {activeEntry && <div className="tab-tool-group" data-fold role="group" aria-label={labels.workspaceAction}><PaneTools tab={activeEntry} labels={labels} onRequestFocus={() => setFocusRequest((value) => value + 1)} /></div>}
               {vault.unlocked && <div className="tab-tool-group" data-fold role="group" aria-label={labels.toolsGroup}>
@@ -1995,7 +2049,8 @@ export function App(): ReactElement {
               </div>
             </div>
           </nav>
-          {!sheet && !sidebarVisible && messages && <div className="workspace-messages">{messages}</div>}
+          {/* Outside a sheet, notices have one home: over the top of the terminal, where the action happened. */}
+          {!sheet && messages && <div className="workspace-messages">{messages}</div>}
           <section ref={shellRef} className="terminal-shell" aria-label={labels.terminalArea}>
             {/* Keep panel owners in creation order: React StrictMode can replay
                 effects when keyed DOM siblings move during tab reordering. */}
@@ -2007,21 +2062,23 @@ export function App(): ReactElement {
               const sftpHostLabel = sshHost?.name ?? tab.label ?? "";
               const sftpTheme = tab.paneStates[tab.focusedPaneId]?.themeOverride ?? (launch.kind === "ssh" ? launch.theme : "graphite");
               const savedLayout = panelState.tabs[tab.id] ?? panelState.layout;
-              const sftpLayout = effectiveLayout(savedLayout, compact, compactExpanded.has(tab.id));
+              // The panel also folds when it would squeeze a pane under 80 columns, e.g. after a split.
+              const tabCompact = compact || crowdsTerminal(shellWidth, savedLayout, tab.root, terminalFontSize);
+              const sftpLayout = effectiveLayout(savedLayout, tabCompact, compactExpanded.has(tab.id));
               const tabName = tabNames.get(tab.id) ?? labels.localShell;
               const production = !!sshHostId && productionHosts.has(sshHostId);
               const status = paneStatus(tab, tab.focusedPaneId);
               return (
               <div id={tab.id + "-panel"} className={`terminal-pane${launch.kind === "ssh" && paneSession ? ` terminal-pane-sftp-${sftpLayout.dock}${sftpLayout.collapsed ? " is-collapsed" : ""}` : ""}`} style={launch.kind === "ssh" && paneSession ? { "--sftp-size": `${sftpLayout.size}%` } as CSSProperties : undefined} role="tabpanel" aria-labelledby={tab.id + "-tab"} key={tab.id} hidden={tab.id !== activeTab}>
                 <div className="terminal-pane-terminal">
-                  <PaneWorkspace tab={tab} visible={windowVisible && tab.id === activeTab} focusRequest={focusRequest} labels={labels} name={tabName} productionHosts={productionHosts}
+                  <PaneWorkspace tab={tab} visible={windowVisible && tab.id === activeTab} focusRequest={focusRequest} labels={labels} name={tabName} productionHosts={productionHosts} connectTargets={connectTargets}
                     restartTheme={sshHost ? terminalThemeId(sshHost.theme) : undefined} onRequestFocus={() => setFocusRequest((value) => value + 1)} />
                 </div>
                 {launch.kind === "ssh" && paneSession && <SftpPanel key={paneSession.id} terminal={paneSession.id} locale={locale} hostLabel={sftpHostLabel} theme={sftpTheme} visible={tab.id === activeTab}
                   production={production} ended={status === "ended" || status === "failed"} onLeave={() => setFocusRequest((value) => value + 1)}
                   layout={sftpLayout} preferencesError={panelState.error} onRetryPreferences={() => void panelPreferences.retry()}
                   onLayoutChange={(layout) => {
-                    const change = resolveLayoutChange(savedLayout, compact, compactExpanded.has(tab.id), layout);
+                    const change = resolveLayoutChange(savedLayout, tabCompact, compactExpanded.has(tab.id), layout);
                     if (change.persist) panelPreferences.set(tab.id, change.persist);
                     setCompactExpanded((current) => {
                       if (current.has(tab.id) === change.expanded) return current;
@@ -2040,8 +2097,9 @@ export function App(): ReactElement {
               );
             })}
           </section>
-          <RemoteEditors locale={locale} theme={activePaneTheme} hosts={Object.fromEntries(hosts.map((host) => [host.id, host.name]))} sessions={Object.values(sftpSessions)} onRetrySessionRequested={focusTransferHost} />
-          <TransferQueue locale={locale} theme={activePaneTheme} hosts={Object.fromEntries(hosts.map((host) => [host.id, host.name]))} production={productionHosts} sessions={Object.values(sftpSessions)} onRetrySessionRequested={focusTransferHost} />
+          {/* Both strips are window chrome: they keep the graphite colorway when a host switches its pane to Paper. */}
+          <RemoteEditors locale={locale} theme="graphite" hosts={Object.fromEntries(hosts.map((host) => [host.id, host.name]))} sessions={Object.values(sftpSessions)} onRetrySessionRequested={focusTransferHost} />
+          <TransferQueue locale={locale} hosts={Object.fromEntries(hosts.map((host) => [host.id, host.name]))} production={productionHosts} sessions={Object.values(sftpSessions)} onRetrySessionRequested={focusTransferHost} />
           {activeLaunch?.kind === "ssh" && activeEntry && <ServerStatusBar key={statusTerminal ?? activeLaunch.attempt_id} host={activeHost?.name ?? activeEntry.label ?? labels.serverStatus.sshHost}
             snapshot={serverStatus} signal={paneStatus(activeEntry, activeEntry.focusedPaneId)} ended={["failed", "ended"].includes(paneStatus(activeEntry, activeEntry.focusedPaneId))}
             production={productionHosts.has(activeLaunch.host_id) ? labels.production : undefined} labels={labels.serverStatus} />}
@@ -2074,7 +2132,10 @@ export function App(): ReactElement {
             {challenge.keyChanged
               ? <>
                 <button type="button" onClick={() => dropChallenge(challenge.challengeId)}>{labels.dismissHostKeyChange}</button>
-                <button className="ghost-button" type="button" onClick={() => { dropChallenge(challenge.challengeId); setSettingsTab("keys"); openSheet("settings"); }}>{labels.openHostKeys}</button>
+                <button className="ghost-button" type="button" onClick={() => {
+                  setKeyReview({ target: challenge.target, port: challenge.port, presented: challenge.fingerprint });
+                  dropChallenge(challenge.challengeId); setSettingsTab("keys"); openSheet("settings");
+                }}>{labels.openHostKeys}</button>
               </>
               : <>
                 <button className="ghost-button" type="button" onClick={() => { void respondToChallenge(false); }}>{labels.rejectHostKey}</button>

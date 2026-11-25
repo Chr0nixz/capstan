@@ -6,7 +6,7 @@ export type PanelLayout = { dock: "right" | "bottom"; size: number; collapsed: b
 type Snapshot = { layout: PanelLayout; session: string; sequence: ExactU64 };
 type Transport = { load(): Promise<Snapshot>; save(snapshot: Snapshot): Promise<void> };
 type State = { layout: PanelLayout; tabs: Record<string, PanelLayout>; loading: boolean; saving: boolean; error: "load" | "save" | null };
-const defaultLayout: PanelLayout = { dock: "right", size: 36, collapsed: false };
+const defaultLayout: PanelLayout = { dock: "right", size: 30, collapsed: false };
 
 export function decodePanelLayout(value: unknown): PanelLayout {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("settings_invalid");

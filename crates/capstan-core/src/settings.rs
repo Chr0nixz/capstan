@@ -31,7 +31,7 @@ impl Default for PanelLayout {
     fn default() -> Self {
         Self {
             dock: PanelDock::Right,
-            size: 36,
+            size: 30,
             collapsed: false,
         }
     }

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { tabStatus, useWorkspace } from "./workspace";
+import { closeRisk, tabStatus, useWorkspace } from "./workspace";
 import type { HostId, TerminalSessionId, TerminalSnapshot } from "./terminal/contracts";
 import type { PaneId } from "./panes/contracts";
 import { findPane, paneLeaves, splitId } from "./panes/tree";
@@ -189,5 +189,83 @@ describe("pane workspace state", () => {
     expect(useWorkspace.getState().tabs).toEqual([second, selected]);
     expect(useWorkspace.getState().activeTab).toBe(second.id);
     expect(useWorkspace.getState().tabs[1]).toBe(selected);
+  });
+});
+
+describe("closing and reopening tabs", () => {
+  const current = () => {
+    const state = useWorkspace.getState();
+    return state.tabs.find((tab) => tab.id === state.activeTab)!;
+  };
+  const production = new Set(["host-prod" as HostId]);
+  beforeEach(() => {
+    const state = useWorkspace.getState();
+    for (const tab of state.tabs) state.closeTerminal(tab.id);
+    while (useWorkspace.getState().closedTabs.length > 0) useWorkspace.setState((state) => ({ closedTabs: state.closedTabs.slice(0, -1) }));
+  });
+
+  it("asks before ending a production session or several running sessions", () => {
+    useWorkspace.getState().addSshTerminal("host-prod" as HostId, "prod-api", "graphite");
+    const prod = current();
+    expect(closeRisk(prod, production)).toBeNull();
+    useWorkspace.getState().updateSession(prod.id, snapshot("running"));
+    expect(closeRisk(current(), production)).toEqual({ productionPaneIds: [prod.focusedPaneId], runningPaneIds: [prod.focusedPaneId] });
+    useWorkspace.getState().updateSession(prod.id, snapshot("exited"));
+    expect(closeRisk(current(), production)).toBeNull();
+
+    useWorkspace.getState().addSshTerminal("host-1" as HostId, "build-01", "graphite");
+    const build = current();
+    useWorkspace.getState().updateSession(build.id, snapshot("running"));
+    expect(closeRisk(current(), production)).toBeNull();
+    useWorkspace.getState().splitPane(build.id, build.focusedPaneId, "horizontal");
+    expect(closeRisk(current(), production)).toBeNull();
+    useWorkspace.getState().updateSession(build.id, snapshot("running"), current().focusedPaneId);
+    const split = current();
+    expect(closeRisk(split, production)?.runningPaneIds).toEqual(paneLeaves(split.root).map((pane) => pane.paneId));
+  });
+
+  it("does not ask for a single local shell", () => {
+    const local = current();
+    useWorkspace.getState().updateSession(local.id, snapshot("running"));
+    expect(closeRisk(current(), production)).toBeNull();
+  });
+
+  it("reopens the last closed tab in place with new sessions and the same layout", () => {
+    useWorkspace.getState().addSshTerminal("host-1" as HostId, "build-01", "graphite");
+    const tab = current();
+    useWorkspace.getState().splitPane(tab.id, tab.focusedPaneId, "vertical");
+    useWorkspace.getState().setPaneTheme(tab.id, current().focusedPaneId, "light");
+    useWorkspace.getState().addTerminal();
+    const before = useWorkspace.getState().tabs.find((item) => item.id === tab.id)!;
+    useWorkspace.getState().closeTerminal(tab.id);
+    expect(useWorkspace.getState().tabs.some((item) => item.id === tab.id)).toBe(false);
+
+    useWorkspace.getState().reopenTerminal();
+    const state = useWorkspace.getState(), reopened = current();
+    expect(state.tabs.indexOf(reopened)).toBe(1);
+    expect(state.closedTabs.at(-1)?.label).not.toBe("build-01");
+    expect(reopened.label).toBe("build-01");
+    const leaves = paneLeaves(reopened.root), previous = paneLeaves(before.root);
+    expect(reopened.root.kind === "split" && reopened.root.direction).toBe("vertical");
+    expect(leaves).toHaveLength(2);
+    expect(tabStatus(reopened)).toBe("connecting");
+    leaves.forEach((pane, index) => {
+      expect(pane.paneId).not.toBe(previous[index].paneId);
+      expect(pane.launch.kind === "ssh" && previous[index].launch.kind === "ssh" && pane.launch.attempt_id !== previous[index].launch.attempt_id).toBe(true);
+    });
+    expect(reopened.focusedPaneId).toBe(leaves[1].paneId);
+    expect(reopened.paneStates[leaves[1].paneId]?.themeOverride).toBe("light");
+  });
+
+  it("keeps only the most recent closed tabs and ignores reopen with none left", () => {
+    for (let index = 0; index < 12; index += 1) {
+      useWorkspace.getState().addTerminal();
+      useWorkspace.getState().closeTerminal(current().id);
+    }
+    expect(useWorkspace.getState().closedTabs).toHaveLength(10);
+    while (useWorkspace.getState().closedTabs.length > 0) useWorkspace.getState().reopenTerminal();
+    const state = useWorkspace.getState();
+    useWorkspace.getState().reopenTerminal();
+    expect(useWorkspace.getState()).toBe(state);
   });
 });

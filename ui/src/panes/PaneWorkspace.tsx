@@ -5,6 +5,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { copy } from "../i18n";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { paneStatus, useWorkspace, type TerminalTab } from "../workspace";
+import { MiddleTruncate } from "../ui/MiddleTruncate";
 import { BroadcastIcon, CloseIcon, SplitDownIcon, SplitRightIcon } from "../ui/icons";
 import type { HostId, TerminalTheme } from "../terminal/contracts";
 import type { BroadcastConfirmation, PaneId, PaneNode } from "./contracts";
@@ -15,6 +16,7 @@ type Labels = typeof copy.en | typeof copy["zh-CN"];
 type Props = {
   tab: TerminalTab; visible: boolean; focusRequest: number; labels: Labels; name: string;
   productionHosts: ReadonlySet<HostId>; restartTheme?: TerminalTheme;
+  connectTargets?: ReadonlyMap<HostId, { address: string; via?: string }>;
   onRequestFocus: () => void;
 };
 
@@ -35,7 +37,7 @@ export function PaneTools({ tab, labels, onRequestFocus }: Pick<Props, "tab" | "
 
 type Pending = { ids: PaneId[]; names: string[]; production: boolean[]; reason: BroadcastConfirmation; resolve: (accepted: boolean) => void };
 
-export function PaneWorkspace({ tab, visible, focusRequest, labels, name, productionHosts, restartTheme, onRequestFocus }: Props): ReactElement {
+export function PaneWorkspace({ tab, visible, focusRequest, labels, name, productionHosts, restartTheme, connectTargets, onRequestFocus }: Props): ReactElement {
   const leaves = paneLeaves(tab.root);
   const mounts = useRef(new Map<PaneId, HTMLDivElement>());
   const paneNumbers = useRef(new Map<PaneId, number>());
@@ -53,6 +55,9 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
   const returnRef = useRef<HTMLElement | null>(null);
   // Keep a closed target's number available for an in-flight failure report.
   const paneName = (id: PaneId): string => labels.paneName(name, paneNumbers.current.get(id) ?? 0);
+  // Panes on one host are told apart by number alone; the tab already names the host.
+  const sameHost = new Set(leaves.map((pane) => pane.launch.kind === "ssh" ? pane.launch.host_id : "local")).size === 1;
+  const headingName = (id: PaneId): string => sameHost && leaves.length > 1 ? labels.paneNumber(paneNumbers.current.get(id) ?? 0) : paneName(id);
   const isProduction = (id: PaneId): boolean => {
     const launch = leaves.find((pane) => pane.paneId === id)?.launch;
     return launch?.kind === "ssh" && productionHosts.has(launch.host_id);
@@ -138,15 +143,16 @@ export function PaneWorkspace({ tab, visible, focusRequest, labels, name, produc
           {tab.broadcastEnabled && <input type="checkbox" aria-label={labels.selectBroadcastPane(label)} title={labels.selectBroadcastPane(label)} checked={tab.broadcastPaneIds.includes(pane.paneId)}
             onChange={() => useWorkspace.getState().toggleBroadcastPane(tab.id, pane.paneId)} />}
           <button className="pane-focus" type="button" title={label} onClick={() => { focus(); onRequestFocus(); }}>
-            <span className="led" data-state={paneStatus(tab, pane.paneId)} aria-hidden="true" /><span>{label}</span>
+            <span className="led" data-state={paneStatus(tab, pane.paneId)} aria-hidden="true" /><MiddleTruncate text={headingName(pane.paneId)} />
           </button>
-          {selected && <span className="broadcast-chip"><BroadcastIcon size={12} />{labels.broadcastChip}</span>}
+          {selected && <span className="broadcast-chip" title={labels.broadcastChip}><BroadcastIcon size={12} /><span className="broadcast-chip-label">{labels.broadcastChip}</span></span>}
           {production && <span className="prod-chip">{labels.production}</span>}
           <button className="icon-button" type="button" title={labels.closePane} aria-label={labels.closePane + ": " + label} onClick={close}><CloseIcon size={12} /></button>
         </div>}
         <div className="workspace-pane-terminal"><TerminalPane tabId={tab.id} paneId={pane.paneId} launch={pane.launch} visible={visible} focused={focused} themeOverride={theme}
           labels={labels} focusRequest={focusRequest} label={pane.launch.kind === "ssh" ? labels.sshTerminal(label) : label} production={production}
           confirmBroadcast={confirmBroadcast} onInputResult={reportDelivery}
+          connectTarget={pane.launch.kind === "ssh" ? connectTargets?.get(pane.launch.host_id) : undefined}
           onRestart={() => { useWorkspace.getState().restartPane(tab.id, pane.paneId, restartTheme); onRequestFocus(); }} onClose={close} /></div>
       </section>, mountFor(pane.paneId), pane.paneId);
     })}

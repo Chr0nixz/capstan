@@ -6,7 +6,7 @@ import { isTerminalTheme } from "../themes/contracts";
 type ActionMetadata = { labelKey: string; keywordKeys: string[] };
 /** Workspace operations the palette can trigger; each maps to an existing shortcut or toolbar key. */
 export const workspaceCommands = [
-  "new_terminal", "close_terminal", "split_right", "split_down", "toggle_broadcast", "toggle_sidebar", "focus_files", "focus_transfers", "lock_vault",
+  "new_terminal", "close_terminal", "reopen_terminal", "split_right", "split_down", "toggle_broadcast", "toggle_sidebar", "focus_files", "focus_transfers", "lock_vault",
 ] as const;
 export type WorkspaceCommand = (typeof workspaceCommands)[number];
 export type CommandAction =
