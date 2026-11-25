@@ -547,6 +547,32 @@ describe("App host workflows", () => {
     });
   });
 
+  it("queues a second host key question instead of replacing the one on screen", async () => {
+    const question = (challengeId: string, target: string) => ({ payload: {
+      challengeId, attemptId: `attempt-${challengeId}`, hostId: "host-1", hostRevision: 0,
+      target, port: 22, algorithm: "ssh-ed25519", publicKey: "public-key", fingerprint: `SHA256:${challengeId}-key`,
+      knownAlgorithm: null, knownFingerprint: null, keyChanged: false,
+    } });
+    await act(async () => {
+      trustChallengeListener?.(question("first", "jump.example.test"));
+      trustChallengeListener?.(question("second", "db.example.test"));
+    });
+    const dialog = container.querySelector<HTMLDialogElement>("dialog.trust-dialog")!;
+    expect(dialog.textContent).toContain("SHA256:first-key");
+    const answer = async (label: string): Promise<void> => act(async () => {
+      [...dialog.querySelectorAll<HTMLButtonElement>(".dialog-actions button")].find((button) => button.textContent === label)!.click();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+    await answer(copy.en.trustOnceAndSave);
+    expect(invoke).toHaveBeenCalledWith("answer_host_trust", { challengeId: "first", accepted: true });
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain("SHA256:second-key");
+    expect(document.activeElement?.textContent).toBe(copy.en.rejectHostKey);
+    await answer(copy.en.rejectHostKey);
+    expect(invoke).toHaveBeenCalledWith("answer_host_trust", { challengeId: "second", accepted: false });
+    expect(dialog.open).toBe(false);
+  });
+
   it("shows old and new fingerprints for a changed host key without offering trust acceptance", async () => {
     expect(trustChallengeListener).not.toBeNull();
     await act(async () => {

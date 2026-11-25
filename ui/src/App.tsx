@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type ReactElement } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type KeyboardEvent, type ReactElement } from "react";
 import { copy, detectLocale } from "./i18n";
 import { snippetMutationError } from "./snippets/errors";
 import { paneStatus, tabStatus, useWorkspace, type TabStatus, type TerminalTab } from "./workspace";
@@ -139,7 +139,11 @@ export function App(): ReactElement {
   const [credentials, setCredentials] = useState<CredentialView[]>([]);
   const [groups, setGroups] = useState<GroupView[]>([]);
   const [trustedHostKeys, setTrustedHostKeys] = useState<TrustedHostKeyView[]>([]);
-  const [challenge, setChallenge] = useState<TrustChallenge | null>(null);
+  // Host key questions wait their turn: two connections can meet new keys at
+  // once, and a newer question must not replace one still on screen.
+  const [challenges, setChallenges] = useState<TrustChallenge[]>([]);
+  const challenge = challenges[0] ?? null;
+  const dropChallenge = (id: string): void => setChallenges((current) => current.filter((item) => item.challengeId !== id));
   const [backupPreview, setBackupPreview] = useState<{ token: string; preview: BackupPreview } | null>(null);
   const [recoveryCandidates, setRecoveryCandidates] = useState<VaultRecoveryCandidate[]>([]);
   const [restoringRecovery, setRestoringRecovery] = useState<string | null>(null);
@@ -330,7 +334,8 @@ export function App(): ReactElement {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listenTauriEvent<TrustChallenge>("ssh-trust-challenge", (request) => setChallenge(request))
+    void listenTauriEvent<TrustChallenge>("ssh-trust-challenge", (request) => setChallenges((current) =>
+      current.some((item) => item.challengeId === request.challengeId) ? current : [...current, request]))
       .then((stop) => { if (disposed) stop(); else unlisten = stop; })
       .catch(() => undefined);
     return () => { disposed = true; unlisten?.(); };
@@ -338,12 +343,13 @@ export function App(): ReactElement {
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
-    if (challenge && !dialog.open) {
-      dialog.showModal();
-      // Start on the non-accepting action: Reject for a new key, Dismiss for a changed one.
-      dialog.querySelector<HTMLButtonElement>(".dialog-actions button")?.focus();
+    if (!challenge) {
+      if (dialog.open) dialog.close();
+      return;
     }
-    if (!challenge && dialog.open) dialog.close();
+    if (!dialog.open) dialog.showModal();
+    // Start each question on the non-accepting action: Reject for a new key, Dismiss for a changed one.
+    dialog.querySelector<HTMLButtonElement>(".dialog-actions button")?.focus();
   }, [challenge]);
   useEffect(() => {
     const dialog = backupDialogRef.current;
@@ -1173,14 +1179,14 @@ export function App(): ReactElement {
   };
   const respondToChallenge = async (accepted: boolean): Promise<void> => {
     if (!challenge) return;
-    if (challenge.keyChanged) { setChallenge(null); return; }
+    if (challenge.keyChanged) { dropChallenge(challenge.challengeId); return; }
     try {
       await invokeTauri("answer_host_trust", { challengeId: challenge.challengeId, accepted });
-      setChallenge(null);
-    } catch (cause) { setChallenge(null); showError(cause); }
+      dropChallenge(challenge.challengeId);
+    } catch (cause) { dropChallenge(challenge.challengeId); showError(cause); }
   };
   const lockVault = async (): Promise<void> => {
-    try { await invokeTauri("lock_vault"); setChallenge(null); await refreshVault(); }
+    try { await invokeTauri("lock_vault"); setChallenges([]); await refreshVault(); }
     catch (cause) { showError(cause); }
   };
   const saveVaultSettings = async (): Promise<void> => {
@@ -2042,7 +2048,7 @@ export function App(): ReactElement {
         </section>
       </div>
       <dialog ref={dialogRef} className="trust-dialog" data-alert={challenge?.keyChanged ? "true" : undefined} aria-labelledby="trust-title" onCancel={(event) => { event.preventDefault(); void respondToChallenge(false); }}>
-        {challenge && <>
+        {challenge && <Fragment key={challenge.challengeId}>
           <h2 id="trust-title"><span className="dialog-mark" aria-hidden="true">{challenge.keyChanged ? <AlertIcon size={18} /> : <ShieldIcon size={18} />}</span>{challenge.keyChanged ? labels.hostKeyChangedTitle : labels.hostKeyTitle}{challengeProduction && <span className="prod-chip">{labels.production}</span>}</h2>
           <p>{challenge.keyChanged
             ? labels.hostKeyChangedSummary(challengeHost?.name ?? challenge.target, challenge.target, challenge.port)
@@ -2067,15 +2073,15 @@ export function App(): ReactElement {
           <div className="dialog-actions">
             {challenge.keyChanged
               ? <>
-                <button type="button" onClick={() => setChallenge(null)}>{labels.dismissHostKeyChange}</button>
-                <button className="ghost-button" type="button" onClick={() => { setChallenge(null); setSettingsTab("keys"); openSheet("settings"); }}>{labels.openHostKeys}</button>
+                <button type="button" onClick={() => dropChallenge(challenge.challengeId)}>{labels.dismissHostKeyChange}</button>
+                <button className="ghost-button" type="button" onClick={() => { dropChallenge(challenge.challengeId); setSettingsTab("keys"); openSheet("settings"); }}>{labels.openHostKeys}</button>
               </>
               : <>
                 <button className="ghost-button" type="button" onClick={() => { void respondToChallenge(false); }}>{labels.rejectHostKey}</button>
                 <button type="button" className="primary-action" onClick={() => { void respondToChallenge(true); }}>{labels.trustOnceAndSave}</button>
               </>}
           </div>
-        </>}
+        </Fragment>}
       </dialog>
       <dialog ref={backupDialogRef} className="trust-dialog" aria-labelledby="backup-title" onCancel={(event) => { event.preventDefault(); cancelBackupPreview(); }}>
         {backupPreview && <>

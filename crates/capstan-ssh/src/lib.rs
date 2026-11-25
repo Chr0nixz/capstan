@@ -316,7 +316,17 @@ pub trait TrustRepository: Send + Sync + 'static {
     async fn authenticating(&self, _attempt: &AttemptBinding) {}
 }
 
+/// One question on screen about one key. Attempts that meet the same new key
+/// at the same time, such as two targets behind one new jump host, wait for
+/// this one answer: the window shows one confirmation at a time.
 struct PendingTrust {
+    target: String,
+    port: u16,
+    key: HostPublicKey,
+    waiters: Vec<TrustWaiter>,
+}
+struct TrustWaiter {
+    id: Uuid,
     attempt_id: Uuid,
     response: oneshot::Sender<bool>,
 }
@@ -324,6 +334,9 @@ pub struct TrustBroker {
     events: mpsc::Sender<TrustChallenge>,
     pending: Mutex<HashMap<Uuid, PendingTrust>>,
     prompters: Mutex<HashMap<Uuid, Arc<dyn AuthPrompter>>>,
+    /// Accepted keys are saved one at a time, so attempts that shared an
+    /// answer find the key the first one saved instead of saving it again.
+    remembering: tokio::sync::Mutex<()>,
 }
 
 /// Lets one attempt ask the user for authentication input; see
@@ -350,6 +363,7 @@ impl TrustBroker {
                 events,
                 pending: Mutex::new(HashMap::new()),
                 prompters: Mutex::new(HashMap::new()),
+                remembering: tokio::sync::Mutex::new(()),
             }),
             receiver,
         )
@@ -361,11 +375,11 @@ impl TrustBroker {
             .map_err(|_| SshError::Protocol)?
             .remove(&challenge_id)
             .ok_or(SshError::Canceled)?;
-        let _ = pending.attempt_id;
-        pending
-            .response
-            .send(accepted)
-            .map_err(|_| SshError::Canceled)
+        let mut delivered = false;
+        for waiter in pending.waiters {
+            delivered |= waiter.response.send(accepted).is_ok();
+        }
+        delivered.then_some(()).ok_or(SshError::Canceled)
     }
     /// Lets `attempt_id` put server prompts to `prompter` until the permit
     /// drops. Attempts without a permit, such as automatic reconnects, fail
@@ -388,13 +402,25 @@ impl TrustBroker {
     }
     pub fn cancel_attempt(&self, attempt_id: Uuid) {
         if let Ok(mut pending) = self.pending.lock() {
-            let ids: Vec<_> = pending
-                .iter()
-                .filter_map(|(id, value)| (value.attempt_id == attempt_id).then_some(*id))
-                .collect();
-            for id in ids {
-                if let Some(value) = pending.remove(&id) {
-                    let _ = value.response.send(false);
+            for challenge in pending.values_mut() {
+                let (canceled, kept) = std::mem::take(&mut challenge.waiters)
+                    .into_iter()
+                    .partition::<Vec<_>, _>(|waiter| waiter.attempt_id == attempt_id);
+                challenge.waiters = kept;
+                for waiter in canceled {
+                    let _ = waiter.response.send(false);
+                }
+            }
+            pending.retain(|_, challenge| !challenge.waiters.is_empty());
+        }
+    }
+    /// Stop waiting on a challenge; the last waiter to leave removes it.
+    fn leave(&self, challenge_id: Uuid, waiter_id: Uuid) {
+        if let Ok(mut pending) = self.pending.lock() {
+            if let Some(challenge) = pending.get_mut(&challenge_id) {
+                challenge.waiters.retain(|waiter| waiter.id != waiter_id);
+                if challenge.waiters.is_empty() {
+                    pending.remove(&challenge_id);
                 }
             }
         }
@@ -416,35 +442,63 @@ impl TrustBroker {
             self.emit_changed_key(attempt, &known, &key).await;
             return Err(SshError::HostKeyChanged);
         }
-        let challenge_id = Uuid::new_v4();
+        let waiter_id = Uuid::new_v4();
         let (response, answer) = oneshot::channel();
-        self.pending.lock().map_err(|_| SshError::Protocol)?.insert(
-            challenge_id,
-            PendingTrust {
-                attempt_id: attempt.attempt_id,
-                response,
-            },
-        );
-        let challenge = TrustChallenge {
-            challenge_id,
+        let waiter = TrustWaiter {
+            id: waiter_id,
             attempt_id: attempt.attempt_id,
-            host_id: attempt.host_id,
-            host_revision: attempt.host_revision,
-            target: attempt.target.clone(),
-            port: attempt.port,
-            algorithm: key.algorithm.clone(),
-            public_key: key.public_key.clone(),
-            fingerprint: key.fingerprint.clone(),
-            known_algorithm: None,
-            known_fingerprint: None,
-            key_changed: false,
+            response,
         };
-        if self.events.send(challenge).await.is_err() {
-            self.pending
-                .lock()
-                .map_err(|_| SshError::Protocol)?
-                .remove(&challenge_id);
-            return Err(SshError::Canceled);
+        let (challenge_id, asked) = {
+            let mut pending = self.pending.lock().map_err(|_| SshError::Protocol)?;
+            let same = pending.iter_mut().find(|(_, challenge)| {
+                challenge.target == attempt.target
+                    && challenge.port == attempt.port
+                    && challenge.key == key
+            });
+            match same {
+                Some((id, challenge)) => {
+                    challenge.waiters.push(waiter);
+                    (*id, true)
+                }
+                None => {
+                    let id = Uuid::new_v4();
+                    pending.insert(
+                        id,
+                        PendingTrust {
+                            target: attempt.target.clone(),
+                            port: attempt.port,
+                            key: key.clone(),
+                            waiters: vec![waiter],
+                        },
+                    );
+                    (id, false)
+                }
+            }
+        };
+        if !asked {
+            let challenge = TrustChallenge {
+                challenge_id,
+                attempt_id: attempt.attempt_id,
+                host_id: attempt.host_id,
+                host_revision: attempt.host_revision,
+                target: attempt.target.clone(),
+                port: attempt.port,
+                algorithm: key.algorithm.clone(),
+                public_key: key.public_key.clone(),
+                fingerprint: key.fingerprint.clone(),
+                known_algorithm: None,
+                known_fingerprint: None,
+                key_changed: false,
+            };
+            if self.events.send(challenge).await.is_err() {
+                // Nobody can answer; anyone who joined meanwhile is canceled too.
+                self.pending
+                    .lock()
+                    .map_err(|_| SshError::Protocol)?
+                    .remove(&challenge_id);
+                return Err(SshError::Canceled);
+            }
         }
         let answer = tokio::select! {
             biased;
@@ -455,13 +509,11 @@ impl TrustBroker {
                 Err(_) => Err(SshError::Timeout),
             },
         };
-        self.pending
-            .lock()
-            .map_err(|_| SshError::Protocol)?
-            .remove(&challenge_id);
+        self.leave(challenge_id, waiter_id);
         if !answer? {
             return Err(SshError::TrustRejected);
         }
+        let _remembering = self.remembering.lock().await;
         if !repository.is_current(attempt).await {
             return Err(SshError::Canceled);
         }
@@ -1568,6 +1620,7 @@ mod tests {
         epoch: AtomicU64,
         host_id: Uuid,
         host_revision: u64,
+        remembered: AtomicUsize,
     }
     #[async_trait]
     impl TrustRepository for MemoryTrust {
@@ -1584,6 +1637,7 @@ mod tests {
                 return Err(SshError::Canceled);
             }
             *self.key.lock().map_err(|_| SshError::Protocol)? = Some(key.clone());
+            self.remembered.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }
@@ -1882,6 +1936,7 @@ mod tests {
             epoch: AtomicU64::new(5),
             host_id,
             host_revision: 3,
+            remembered: AtomicUsize::new(0),
         })
     }
     fn server_public_key(key: &PrivateKey) -> HostPublicKey {
@@ -2096,6 +2151,116 @@ mod tests {
         );
         assert!(repository.key.lock().unwrap().is_none());
         assert_eq!(auth_count.load(Ordering::SeqCst), 0);
+    }
+
+    fn new_key() -> HostPublicKey {
+        HostPublicKey {
+            algorithm: "ssh-ed25519".into(),
+            public_key: "ssh-ed25519 AAAA-new".into(),
+            fingerprint: "SHA256:new".into(),
+        }
+    }
+
+    /// Another attempt at the same host, as a second target behind the same
+    /// new jump host makes.
+    fn another(binding: &AttemptBinding) -> AttemptBinding {
+        AttemptBinding {
+            attempt_id: Uuid::new_v4(),
+            ..binding.clone()
+        }
+    }
+
+    fn verify_in_background(
+        broker: &Arc<TrustBroker>,
+        repository: &Arc<MemoryTrust>,
+        binding: &AttemptBinding,
+        cancel: CancellationToken,
+    ) -> tokio::task::JoinHandle<Result<()>> {
+        let (broker, repository, binding) = (broker.clone(), repository.clone(), binding.clone());
+        tokio::spawn(async move {
+            broker
+                .verify(repository.as_ref(), &binding, new_key(), &cancel)
+                .await
+        })
+    }
+
+    async fn waiters(broker: &TrustBroker, challenge_id: Uuid, count: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while broker
+                .pending
+                .lock()
+                .unwrap()
+                .get(&challenge_id)
+                .map_or(0, |challenge| challenge.waiters.len())
+                != count
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn attempts_meeting_the_same_new_key_share_one_confirmation() {
+        let host_id = Uuid::new_v4();
+        let repository = repository(host_id, None);
+        let (broker, mut events) = TrustBroker::new();
+        let binding = attempt("127.0.0.1:22".parse().unwrap(), host_id, 3, 5);
+        let first = verify_in_background(&broker, &repository, &binding, token());
+        let challenge = events.recv().await.unwrap();
+        let second = verify_in_background(&broker, &repository, &another(&binding), token());
+        waiters(&broker, challenge.challenge_id, 2).await;
+        // The window shows one confirmation at a time; a second one for the
+        // same key would hide the first until it timed out.
+        assert!(events.try_recv().is_err());
+        // Another port is another host: it gets its own question.
+        let other = verify_in_background(
+            &broker,
+            &repository,
+            &AttemptBinding {
+                port: 2222,
+                ..another(&binding)
+            },
+            token(),
+        );
+        let other_challenge = events.recv().await.unwrap();
+        assert_ne!(other_challenge.challenge_id, challenge.challenge_id);
+        broker.respond(challenge.challenge_id, true).unwrap();
+        assert_eq!(first.await.unwrap(), Ok(()));
+        assert_eq!(second.await.unwrap(), Ok(()));
+        // Saved once; the second attempt found it saved.
+        assert_eq!(repository.remembered.load(Ordering::SeqCst), 1);
+        broker.respond(other_challenge.challenge_id, false).unwrap();
+        assert_eq!(other.await.unwrap(), Err(SshError::TrustRejected));
+        assert!(broker.pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_shared_confirmation_outlives_the_attempt_that_raised_it() {
+        let host_id = Uuid::new_v4();
+        let repository = repository(host_id, None);
+        let (broker, mut events) = TrustBroker::new();
+        let binding = attempt("127.0.0.1:22".parse().unwrap(), host_id, 3, 5);
+        let cancel = token();
+        let first = verify_in_background(&broker, &repository, &binding, cancel.clone());
+        let challenge = events.recv().await.unwrap();
+        let second_binding = another(&binding);
+        let second = verify_in_background(&broker, &repository, &second_binding, token());
+        let third = verify_in_background(&broker, &repository, &another(&binding), token());
+        waiters(&broker, challenge.challenge_id, 3).await;
+        // The attempt whose question is on screen goes away; the others still
+        // wait for the answer.
+        cancel.cancel();
+        assert_eq!(first.await.unwrap(), Err(SshError::Canceled));
+        waiters(&broker, challenge.challenge_id, 2).await;
+        broker.cancel_attempt(second_binding.attempt_id);
+        assert_eq!(second.await.unwrap(), Err(SshError::TrustRejected));
+        waiters(&broker, challenge.challenge_id, 1).await;
+        broker.respond(challenge.challenge_id, true).unwrap();
+        assert_eq!(third.await.unwrap(), Ok(()));
+        assert_eq!(repository.key.lock().unwrap().as_ref(), Some(&new_key()));
+        assert!(broker.pending.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
