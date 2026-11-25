@@ -103,6 +103,13 @@ function Fixture() {
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);
 const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+// Forget drops only the recovery record and leaves the partial untouched, so
+// every interrupted record offers it. Everything else acts on the partial.
+function recoveryActions(recovery: Element | null) {
+  const forgetLabel = locale === "zh-CN" ? "忘记" : "Forget";
+  const buttons = [...(recovery?.querySelectorAll<HTMLButtonElement>(".transfer-row-actions button") ?? [])];
+  return { partial: buttons.filter((button) => button.textContent !== forgetLabel), forget: buttons.filter((button) => button.textContent === forgetLabel) };
+}
 async function check() {
   await document.fonts.ready;
   for (let attempt = 0; attempt < 60 && !document.querySelector(".transfer-row"); attempt++) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -166,16 +173,18 @@ async function check() {
   if (query.has("cleanup-recovery")) {
     const recovery = document.querySelector(".transfer-recovery");
     if (!recovery?.textContent?.includes(locale === "zh-CN" ? "需要清理，无法续传" : "Cleanup required; cannot resume")) errors.push("Cleanup-only recovery state missing");
-    const actions = [...(recovery?.querySelectorAll<HTMLButtonElement>(".transfer-row-actions button") ?? [])];
-    if (actions.length !== 1 || actions[0].textContent !== (locale === "zh-CN" ? "删除残留" : "Remove partial")) errors.push("Cleanup-only recovery offers an incorrect action");
-    actions[0]?.scrollIntoView({ block: "nearest" });
-    const bounds = actions[0]?.getBoundingClientRect();
+    const { partial, forget } = recoveryActions(recovery);
+    if (partial.length !== 1 || partial[0].textContent !== (locale === "zh-CN" ? "删除残留" : "Remove partial")) errors.push("Cleanup-only recovery offers an incorrect action");
+    if (forget.length !== 1) errors.push("Cleanup-only recovery record cannot be forgotten");
+    partial[0]?.scrollIntoView({ block: "nearest" });
+    const bounds = partial[0]?.getBoundingClientRect();
     if (!bounds || bounds.left < 0 || bounds.right > innerWidth || bounds.bottom > innerHeight) errors.push("Cleanup action cannot be reached within the viewport");
   }
   if (query.has("upload-recovery")) {
     const recovery = document.querySelector(".transfer-recovery");
-    const actions = [...(recovery?.querySelectorAll<HTMLButtonElement>(".transfer-row-actions button") ?? [])];
-    if (actions.length !== 1 || actions[0].textContent !== (locale === "zh-CN" ? "继续上传" : "Resume upload")) errors.push("Resumable upload must offer only source-verified continuation");
+    const { partial, forget } = recoveryActions(recovery);
+    if (partial.length !== 1 || partial[0].textContent !== (locale === "zh-CN" ? "继续上传" : "Resume upload")) errors.push("Resumable upload must offer only source-verified continuation");
+    if (forget.length !== 1) errors.push("Resumable upload record cannot be forgotten");
     const explanation = recovery?.querySelector(".transfer-row-progress p:last-child");
     if (!explanation?.textContent?.includes(locale === "zh-CN" ? "无法核验残留归属" : "Ownership cannot be verified")) errors.push("Upload cleanup ownership explanation missing");
     explanation?.scrollIntoView({ block: "nearest" });
@@ -186,7 +195,9 @@ async function check() {
   if (query.has("manual-recovery")) {
     const recovery = document.querySelector(".transfer-recovery");
     if (!recovery?.textContent?.includes(locale === "zh-CN" ? "需人工检查" : "Manual inspection required")) errors.push("Manual recovery state missing");
-    if (recovery?.querySelector(".transfer-row-actions button")) errors.push("Unverifiable recovery must not offer mutation actions");
+    const { partial, forget } = recoveryActions(recovery);
+    if (partial.length) errors.push("Unverifiable recovery must not offer mutation actions");
+    if (forget.length !== 1) errors.push("Unverifiable recovery record cannot be forgotten");
     const explanation = recovery?.querySelector(".transfer-row-progress p:last-child");
     explanation?.scrollIntoView({ block: "nearest" }); await settle();
     const bounds = explanation?.getBoundingClientRect();
