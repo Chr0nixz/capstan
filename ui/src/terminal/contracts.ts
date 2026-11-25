@@ -47,7 +47,7 @@ export type HostView = {
   jump_host_id: HostId | null;
 };
 export type CredentialView = { id: CredentialId; name: string; revision: number; kind: string };
-export type SshConfigNote = "local_user" | "default_identity" | "identity_unavailable" | "proxy_unsupported";
+export type SshConfigNote = "local_user" | "default_identity" | "identity_unavailable" | "proxy_unsupported" | "several_identities";
 export type SshConfigHost = {
   index: number; alias: string; address: string; port: number; username: string;
   identityFile: string | null; encrypted: boolean; notes: SshConfigNote[]; saved: boolean;

@@ -5,7 +5,10 @@
 //! patterns match the name, including `Host *` and lines before the first
 //! `Host`. `Match` blocks cannot be evaluated without connecting, so their
 //! settings are ignored. `Include` is followed with globbing in the file name
-//! only, a bounded depth and a bounded number of files.
+//! only, a bounded depth and a bounded number of files; lines after it belong
+//! to the block it sits in again. `IdentityFile` is the exception to "first
+//! wins": OpenSSH tries every listed key, and the first one that exists is
+//! imported.
 //!
 //! A single-hop `ProxyJump` becomes a link to the jump host's candidate: the
 //! jump name is resolved through the same configuration, as OpenSSH does, and
@@ -81,6 +84,9 @@ pub enum Note {
     /// `ProxyCommand`, a multi-hop or unusable `ProxyJump`, or a jump host
     /// with one of those; Capstan cannot follow it and connects directly.
     ProxyUnsupported,
+    /// Several `IdentityFile` keys exist. OpenSSH tries them in turn; a
+    /// Capstan host keeps one, the first that can be read.
+    SeveralIdentities,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,6 +97,9 @@ pub struct Candidate {
     pub username: String,
     /// Absolute key path, or `None` to answer prompts at connect time.
     pub identity_file: Option<PathBuf>,
+    /// Further existing key files the configuration lists, in order. Import
+    /// falls back to them when `identity_file` cannot be read.
+    pub other_identities: Vec<PathBuf>,
     pub notes: Vec<Note>,
     /// Index of the candidate this host is reached through.
     pub jump: Option<usize>,
@@ -375,7 +384,19 @@ impl Reader<'_> {
                     options: Vec::new(),
                 }),
                 "match" => self.blocks.push(Block::default()),
-                "include" => self.include(&arguments, depth),
+                "include" => {
+                    let blocks = self.blocks.len();
+                    let current = self.blocks.last().map(|block| block.patterns.clone());
+                    self.include(&arguments, depth);
+                    // OpenSSH returns to the including block afterwards; the
+                    // next lines must not land in the included file's last block.
+                    if let (true, Some(patterns)) = (self.blocks.len() != blocks, current) {
+                        self.blocks.push(Block {
+                            patterns,
+                            options: Vec::new(),
+                        });
+                    }
+                }
                 _ => {
                     let keyword = match keyword.as_str() {
                         "hostname" => Keyword::HostName,
@@ -451,6 +472,8 @@ fn resolve(
     alias: &str,
 ) -> Option<(Candidate, Option<String>)> {
     let mut values: Vec<(Keyword, &str)> = Vec::new();
+    // Every IdentityFile counts, in order; OpenSSH tries each one.
+    let mut identities: Vec<&str> = Vec::new();
     for block in blocks {
         let Some(patterns) = &block.patterns else {
             continue;
@@ -459,7 +482,11 @@ fn resolve(
             continue;
         }
         for (keyword, value) in &block.options {
-            if !values
+            if *keyword == Keyword::IdentityFile {
+                if !identities.contains(&value.as_str()) {
+                    identities.push(value);
+                }
+            } else if !values
                 .iter()
                 .any(|(known, _)| known.slot() == keyword.slot())
             {
@@ -505,9 +532,22 @@ fn resolve(
             }
         });
     let home = environment.home;
-    let identity_file = match value(Keyword::IdentityFile) {
-        Some(file) if file.eq_ignore_ascii_case("none") => None,
-        Some(file) => {
+    let (identity_file, other_identities) = if identities.is_empty() {
+        let file = DEFAULT_IDENTITIES
+            .iter()
+            .map(|name| home.join(".ssh").join(name))
+            .find(|file| environment.files.is_file(file));
+        if file.is_some() {
+            notes.push(Note::DefaultIdentity);
+        }
+        (file, Vec::new())
+    } else {
+        let listed: Vec<&str> = identities
+            .into_iter()
+            .filter(|file| !file.eq_ignore_ascii_case("none"))
+            .collect();
+        let mut found: Vec<PathBuf> = Vec::new();
+        for file in &listed {
             let file = expand_tokens(file, &address, Some(&username), Some(home))
                 .map(|file| expand_home(&file, home))
                 .map(|file| {
@@ -518,21 +558,18 @@ fn resolve(
                     }
                 })
                 .filter(|file| environment.files.is_file(file));
-            if file.is_none() {
-                notes.push(Note::IdentityUnavailable);
+            if let Some(file) = file.filter(|file| !found.contains(file)) {
+                found.push(file);
             }
-            file
         }
-        None => {
-            let file = DEFAULT_IDENTITIES
-                .iter()
-                .map(|name| home.join(".ssh").join(name))
-                .find(|file| environment.files.is_file(file));
-            if file.is_some() {
-                notes.push(Note::DefaultIdentity);
-            }
-            file
+        if found.is_empty() && !listed.is_empty() {
+            notes.push(Note::IdentityUnavailable);
         }
+        if found.len() > 1 {
+            notes.push(Note::SeveralIdentities);
+        }
+        let mut found = found.into_iter();
+        (found.next(), found.collect())
     };
     Some((
         Candidate {
@@ -541,6 +578,7 @@ fn resolve(
             port,
             username,
             identity_file,
+            other_identities,
             notes,
             jump: None,
         },

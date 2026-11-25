@@ -366,11 +366,18 @@ impl VaultManager {
                 .filter(|jump| *jump < count && *jump != index);
             let encrypted = match &candidate.identity_file {
                 Some(path) => {
-                    let state = *keys
-                        .entry(path.clone())
-                        .or_insert_with(|| inspect_key(path));
+                    // The first listed key that can be read; OpenSSH would
+                    // try the others in turn too.
+                    let usable = std::iter::once(path)
+                        .chain(&candidate.other_identities)
+                        .find_map(|path| {
+                            keys.entry(path.clone())
+                                .or_insert_with(|| inspect_key(path))
+                                .map(|encrypted| (path.clone(), encrypted))
+                        });
+                    let state = usable.as_ref().map(|(_, encrypted)| *encrypted);
+                    candidate.identity_file = usable.map(|(path, _)| path);
                     if state.is_none() {
-                        candidate.identity_file = None;
                         candidate
                             .notes
                             .retain(|note| *note != Note::DefaultIdentity);

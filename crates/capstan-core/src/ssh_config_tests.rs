@@ -418,6 +418,99 @@ fn includes_are_globbed_bounded_and_inherit_the_current_block() {
 }
 
 #[test]
+fn lines_after_an_include_return_to_the_including_block() {
+    let files = MemoryFiles::default()
+        .with(
+            "/home/me/.ssh/config",
+            "Include common\n\
+             Port 2200\n\
+             Host app\n\
+             \x20 Include work\n\
+             \x20 User alice\n\
+             Host plain\n",
+        )
+        .with("/home/me/.ssh/common", "Host shared\n User sam\n")
+        .with("/home/me/.ssh/work", "Host build\n User builder\n");
+    let parsed = parse_with(&files);
+    let hosts: Vec<_> = parsed
+        .candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.alias.as_str(),
+                candidate.username.as_str(),
+                candidate.port,
+            )
+        })
+        .collect();
+    // `User alice` belongs to `app`, not to `build`, and the global `Port`
+    // after the first Include applies to every host, not just `shared`.
+    assert_eq!(
+        hosts,
+        vec![
+            ("shared", "sam", 2200),
+            ("app", "alice", 2200),
+            ("build", "builder", 2200),
+            ("plain", "me", 2200),
+        ]
+    );
+}
+
+#[test]
+fn every_identity_file_is_kept_in_order_like_openssh() {
+    let files = MemoryFiles::default()
+        .with(
+            "/home/me/.ssh/config",
+            "Host *\n\
+             \x20 IdentityFile ~/.ssh/hardware_key\n\
+             Host several\n\
+             \x20 User me\n\
+             \x20 IdentityFile ~/.ssh/work\n\
+             \x20 IdentityFile ~/.ssh/home\n\
+             \x20 IdentityFile ~/.ssh/work\n\
+             Host one\n\
+             \x20 User me\n\
+             \x20 IdentityFile ~/.ssh/home\n\
+             Host nothing\n\
+             \x20 User me\n",
+        )
+        .with("/home/me/.ssh/work", "key")
+        .with("/home/me/.ssh/home", "key");
+    let parsed = parse_with(&files);
+    let identities: Vec<_> = parsed
+        .candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.alias.as_str(),
+                candidate.identity_file.clone(),
+                candidate.other_identities.clone(),
+                candidate.notes.clone(),
+            )
+        })
+        .collect();
+    // The missing key from `Host *` no longer hides the ones that exist.
+    assert_eq!(
+        identities,
+        vec![
+            (
+                "several",
+                Some(PathBuf::from("/home/me/.ssh/work")),
+                vec![PathBuf::from("/home/me/.ssh/home")],
+                vec![Note::SeveralIdentities]
+            ),
+            (
+                "one",
+                Some(PathBuf::from("/home/me/.ssh/home")),
+                vec![],
+                vec![]
+            ),
+            ("nothing", None, vec![], vec![Note::IdentityUnavailable]),
+        ]
+    );
+}
+
+#[test]
 fn lines_split_like_openssh() {
     assert_eq!(
         split_line("  HostName=example.test"),

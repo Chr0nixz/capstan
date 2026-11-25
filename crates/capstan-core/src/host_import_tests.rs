@@ -165,6 +165,24 @@ fn names() -> ImportNames {
 }
 
 #[tokio::test]
+async fn ssh_config_import_falls_back_to_the_next_listed_key() {
+    let home = Home::new(
+        "Host fallback\n HostName 10.0.0.9\n User f\n\
+         \x20IdentityFile ~/.ssh/broken_key\n IdentityFile ~/.ssh/good_key\n",
+    );
+    home.write("broken_key", "not a key");
+    home.write("good_key", &key_text(None));
+    let directory = tempfile::tempdir().unwrap();
+    let manager = unlocked(directory.path()).await;
+    let (_, previews) = manager.plan_ssh_config_import(home.parse()).unwrap();
+    assert_eq!(
+        previews[0].identity_file.as_deref(),
+        Some(home.key("good_key").to_string_lossy().as_ref())
+    );
+    assert_eq!(previews[0].notes, vec![Note::SeveralIdentities]);
+}
+
+#[tokio::test]
 async fn ssh_config_import_checks_keys_and_skips_saved_hosts() {
     let home = Home::new(
         "Host plain\n HostName 10.0.0.1\n User a\n IdentityFile ~/.ssh/plain_key\n\
