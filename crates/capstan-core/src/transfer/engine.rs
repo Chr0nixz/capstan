@@ -1397,13 +1397,27 @@ pub(super) async fn run(
             Err(_) if task.cancel.is_cancelled() => "canceled",
             Err(error) => error.code(),
         };
-        capstan_diagnostics::event("transfer")
-            .code("direction", status.direction.code())
-            .code("outcome", outcome)
-            .number("bytes", status.processed.0)
-            .millis("duration_ms", started.elapsed())
-            .flag("cleanup_required", cleanup_required)
-            .record();
+        let event = match &task.batch {
+            // A folder's files go into one event for the whole folder.
+            Some(member) if !member.reported.swap(true, Ordering::SeqCst) => member.batch.finished(
+                status.direction.code(),
+                status.state,
+                outcome,
+                status.processed.0,
+                cleanup_required,
+            ),
+            _ => Some(
+                capstan_diagnostics::event("transfer")
+                    .code("direction", status.direction.code())
+                    .code("outcome", outcome)
+                    .number("bytes", status.processed.0)
+                    .millis("duration_ms", started.elapsed())
+                    .flag("cleanup_required", cleanup_required),
+            ),
+        };
+        if let Some(event) = event {
+            event.record();
+        }
     }
     // Cancellation is visible promptly. The worker and data assignment remain
     // reserved until all owned protocol cleanup finishes; exit joins the pool.

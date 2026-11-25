@@ -22,8 +22,96 @@ pub(super) enum BatchChoice {
 pub(super) struct Batch {
     pub summary: BatchSummary,
     pub policy: watch::Sender<Option<BatchChoice>>,
+    report: Mutex<Report>,
+}
+
+/// What a folder's files did, written as one diagnostics event. One event per
+/// file would push connection and pacing records out of the bounded log.
+struct Report {
+    started: Instant,
+    direction: &'static str,
+    finished: u32,
+    completed: u32,
+    failed: u32,
+    failure: Option<&'static str>,
+    bytes: u64,
+    cleanup_required: bool,
+    written: bool,
+}
+impl Report {
+    fn event(&mut self, files: u32) -> capstan_diagnostics::Event {
+        self.written = true;
+        let outcome = if self.completed == files {
+            "completed"
+        } else {
+            self.failure.unwrap_or("canceled")
+        };
+        capstan_diagnostics::event("folder_transfer")
+            .code("direction", self.direction)
+            .code("outcome", outcome)
+            .number("files", files.into())
+            .number("completed", self.completed.into())
+            .number("failed", self.failed.into())
+            .number("bytes", self.bytes)
+            .millis("duration_ms", self.started.elapsed())
+            .flag("cleanup_required", self.cleanup_required)
+    }
+}
+impl Drop for Batch {
+    fn drop(&mut self) {
+        // A file removed before it ran never finishes; report those that did.
+        let files = self.summary.files;
+        if let Ok(report) = self.report.get_mut() {
+            if report.finished > 0 && !report.written {
+                report.event(files).record();
+            }
+        }
+    }
 }
 impl Batch {
+    fn new(summary: BatchSummary) -> Self {
+        Self {
+            summary,
+            policy: watch::channel(None).0,
+            report: Mutex::new(Report {
+                started: Instant::now(),
+                direction: "",
+                finished: 0,
+                completed: 0,
+                failed: 0,
+                failure: None,
+                bytes: 0,
+                cleanup_required: false,
+                written: false,
+            }),
+        }
+    }
+    /// Count one file's result; returns the folder's event when its last
+    /// file finishes. `outcome` is the file's error code when it failed.
+    pub fn finished(
+        &self,
+        direction: &'static str,
+        state: TransferState,
+        outcome: &'static str,
+        bytes: u64,
+        cleanup_required: bool,
+    ) -> Option<capstan_diagnostics::Event> {
+        let mut report = self.report.lock().ok()?;
+        report.direction = direction;
+        report.finished = report.finished.saturating_add(1);
+        match state {
+            TransferState::Completed => report.completed += 1,
+            TransferState::Canceled => {}
+            _ => {
+                report.failed += 1;
+                report.failure.get_or_insert(outcome);
+            }
+        }
+        report.bytes = report.bytes.saturating_add(bytes);
+        report.cleanup_required |= cleanup_required;
+        (report.finished >= self.summary.files && !report.written)
+            .then(|| report.event(self.summary.files))
+    }
     pub fn choose(&self, choice: BatchChoice) -> Result<(), SftpError> {
         self.policy
             .send_if_modified(|current| {
@@ -42,6 +130,9 @@ pub(super) struct Member {
     pub batch: Arc<Batch>,
     pub expected: Option<TargetVersion>,
     pub active: AtomicBool,
+    /// Set once the file's first run is counted in the folder's report; a
+    /// later retry is reported on its own.
+    pub reported: AtomicBool,
 }
 
 type FolderItem = (TransferContext, Local);
@@ -94,15 +185,12 @@ async fn prepare_inner(
         versions
             .extend(super::preflight::join_snapshots(group.iter().map(preflight_version)).await?);
     }
-    let batch = Arc::new(Batch {
-        summary: BatchSummary {
-            id: Uuid::new_v4(),
-            name: root,
-            files: items.len() as u32,
-            conflicts: versions.iter().filter(|version| version.is_some()).count() as u32,
-        },
-        policy: watch::channel(None).0,
-    });
+    let batch = Arc::new(Batch::new(BatchSummary {
+        id: Uuid::new_v4(),
+        name: root,
+        files: items.len() as u32,
+        conflicts: versions.iter().filter(|version| version.is_some()).count() as u32,
+    }));
     Ok(items
         .into_iter()
         .zip(versions)
@@ -114,6 +202,7 @@ async fn prepare_inner(
                     batch: batch.clone(),
                     expected,
                     active: AtomicBool::new(true),
+                    reported: AtomicBool::new(false),
                 }),
             )
         })
@@ -280,5 +369,60 @@ impl TransferService {
             self.spawn_task(task, context, local);
         }
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    fn folder(files: u32) -> Batch {
+        Batch::new(BatchSummary {
+            id: Uuid::new_v4(),
+            name: "photos".into(),
+            files,
+            conflicts: 0,
+        })
+    }
+
+    #[test]
+    fn a_folder_writes_one_event_when_its_last_file_finishes() {
+        let batch = folder(3);
+        let finish = |state, outcome| batch.finished("upload", state, outcome, 10, false);
+        assert!(finish(TransferState::Completed, "completed").is_none());
+        assert!(finish(TransferState::Failed, "permission_denied").is_none());
+        let event = finish(TransferState::Canceled, "operation_canceled").unwrap();
+        let line = format!("{event:?}");
+        assert!(line.contains("\"folder_transfer\""), "{line}");
+        assert!(
+            line.contains("(\"outcome\", Code(\"permission_denied\"))"),
+            "{line}"
+        );
+        assert!(line.contains("(\"files\", Number(3))"), "{line}");
+        assert!(line.contains("(\"completed\", Number(1))"), "{line}");
+        assert!(line.contains("(\"failed\", Number(1))"), "{line}");
+        assert!(line.contains("(\"bytes\", Number(30))"), "{line}");
+        // Written once, even if a count comes in late.
+        assert!(finish(TransferState::Completed, "completed").is_none());
+    }
+
+    #[test]
+    fn a_folder_that_finished_every_file_reports_completed() {
+        let batch = folder(2);
+        assert!(batch
+            .finished("download", TransferState::Completed, "completed", 1, false)
+            .is_none());
+        let event = batch
+            .finished("download", TransferState::Completed, "completed", 1, true)
+            .unwrap();
+        let line = format!("{event:?}");
+        assert!(
+            line.contains("(\"outcome\", Code(\"completed\"))"),
+            "{line}"
+        );
+        assert!(
+            line.contains("(\"cleanup_required\", Flag(true))"),
+            "{line}"
+        );
     }
 }
