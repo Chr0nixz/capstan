@@ -1,4 +1,4 @@
-import { createTauriChannel, invokeTauri } from "../terminal/bridge";
+import { createTauriChannel, invokeTauri, writeTerminalInput } from "../terminal/bridge";
 import { createTerminalController } from "../terminal/controller";
 import { createTerminalSession } from "../terminal/session";
 import type { TerminalTransport } from "../terminal/transport";
@@ -42,7 +42,7 @@ function openTerminal(host: HTMLElement, scenario: Scenario, holdAck: boolean, r
       id = started.id;
       return started;
     },
-    input: (session, bytes) => invokeTauri("write_terminal_input", { id: session, input: new TextDecoder().decode(bytes) }),
+    input: (session, bytes) => writeTerminalInput(session, bytes),
     async ack(session, bytes) {
       if (held) await ackGate;
       await invokeTauri("ack_terminal_output", { id: session, bytes });

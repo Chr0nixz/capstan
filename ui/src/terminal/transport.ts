@@ -1,4 +1,4 @@
-import { createTauriChannel, invokeTauri } from "./bridge";
+import { createTauriChannel, invokeTauri, writeTerminalInput } from "./bridge";
 import type { StartedTerminal, TerminalLaunch, TerminalSessionId, TerminalSnapshot } from "./contracts";
 import { detectLocale } from "../i18n";
 
@@ -29,7 +29,7 @@ export function createTauriTransport(): TerminalTransport {
       }
       return invokeTauri("start_local_terminal", { options: launch.options, onOutput: output, onStatus: status });
     },
-    input: (id, bytes) => invokeTauri("write_terminal_input", { id, input: new TextDecoder().decode(bytes) }),
+    input: (id, bytes) => writeTerminalInput(id, bytes),
     ack: (id, bytes) => invokeTauri("ack_terminal_output", { id, bytes }),
     resize: (id, columns, rows) => invokeTauri("resize_terminal", { id, columns, rows }),
     stop: (id) => invokeTauri("stop_terminal", { id }),

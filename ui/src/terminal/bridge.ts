@@ -6,7 +6,8 @@ type TauriGlobal = {
   event?: { listen: <T>(name: string, callback: (event: { payload: T }) => void) => Promise<() => void> };
   core: {
     Channel: new <T>() => TauriChannel<T>;
-    invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+    // A method, so test doubles may accept only the argument shapes they use.
+    invoke<T>(command: string, args?: Record<string, unknown> | Uint8Array, options?: { headers?: Record<string, string> }): Promise<T>;
   };
 };
 
@@ -38,6 +39,20 @@ export function invokeTauri<K extends keyof Commands>(
     return Promise.reject(new Error("Tauri runtime unavailable"));
   }
   return tauri.core.invoke<Commands[K]["result"]>(command, args[0]);
+}
+
+/** Sends `bytes` as the raw request body; `headers` carry the other arguments. */
+export function invokeTauriBytes(command: "write_terminal_input", bytes: Uint8Array, headers: Record<string, string>): Promise<void> {
+  const tauri = window.__TAURI__;
+  if (!tauri) {
+    return Promise.reject(new Error("Tauri runtime unavailable"));
+  }
+  return tauri.core.invoke<void>(command, bytes, { headers });
+}
+
+/** Terminal input goes as bytes: a legacy mouse report is not UTF-8. */
+export function writeTerminalInput(id: string, bytes: Uint8Array): Promise<void> {
+  return invokeTauriBytes("write_terminal_input", bytes, { "capstan-terminal": id });
 }
 
 export function createTauriChannel<T>(): TauriChannel<T> | undefined {

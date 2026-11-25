@@ -1779,23 +1779,42 @@ pub mod tauri_channel {
         });
     }
 
+    /// The session a raw `write_terminal_input` body is for.
+    pub const TERMINAL_INPUT_HEADER: &str = "capstan-terminal";
+
+    /// Terminal input arrives as raw bytes, not text: a legacy mouse report
+    /// past column 95 is not UTF-8, and a string would replace its bytes.
+    fn terminal_input(
+        body: &tauri::ipc::InvokeBody,
+        headers: &tauri::http::HeaderMap,
+    ) -> std::result::Result<(TerminalSessionId, Vec<u8>), CommandError> {
+        let input = match body {
+            tauri::ipc::InvokeBody::Raw(input) => input.clone(),
+            // Tauri's postMessage fallback sends the same bytes as a number array.
+            tauri::ipc::InvokeBody::Json(value) => serde_json::from_value(value.clone())
+                .map_err(|_| CommandError::new("invalid_input"))?,
+        };
+        let id = headers
+            .get(TERMINAL_INPUT_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| CommandError::new("invalid_input"))?;
+        Ok((TerminalSessionId(id.to_owned()), input))
+    }
+
     #[tauri::command]
     pub async fn write_terminal_input(
         window: tauri::WebviewWindow,
         manager: State<'_, Arc<TerminalService>>,
-        id: TerminalSessionId,
-        input: String,
+        request: tauri::ipc::Request<'_>,
     ) -> std::result::Result<(), CommandError> {
         if window.label() != "main" {
             return Err(CommandError::new("window_source"));
         }
+        let (id, input) = terminal_input(request.body(), request.headers())?;
         #[cfg(feature = "m0-benchmarks")]
         crate::benchmark::trace_input(&id, "begin");
-        let result = manager
-            .get(&id)?
-            .write(input.into_bytes())
-            .await
-            .map_err(Into::into);
+        let result = manager.get(&id)?.write(input).await.map_err(Into::into);
         #[cfg(feature = "m0-benchmarks")]
         crate::benchmark::trace_input(&id, if result.is_ok() { "ok" } else { "error" });
         result
@@ -2546,6 +2565,37 @@ pub mod tauri_channel {
     mod tests {
         use super::*;
         use capstan_terminal::{BackendControl, BackendParts, FrameSink};
+
+        #[test]
+        fn terminal_input_keeps_bytes_that_are_not_utf8() {
+            let mut headers = tauri::http::HeaderMap::new();
+            headers.insert(
+                TERMINAL_INPUT_HEADER,
+                tauri::http::HeaderValue::from_static("session-1"),
+            );
+            // An X10 mouse press at column 200: ESC [ M, button, x + 32, y + 32.
+            let report = vec![0x1b, b'[', b'M', 32, 232, 33];
+            let (id, input) =
+                terminal_input(&tauri::ipc::InvokeBody::Raw(report.clone()), &headers).unwrap();
+            assert_eq!(id, TerminalSessionId("session-1".into()));
+            assert_eq!(input, report);
+            let fallback = tauri::ipc::InvokeBody::Json(serde_json::json!(report));
+            assert_eq!(terminal_input(&fallback, &headers).unwrap().1, report);
+            let text = tauri::ipc::InvokeBody::Json(serde_json::json!({ "input": "x" }));
+            assert_eq!(
+                terminal_input(&text, &headers).unwrap_err().code,
+                "invalid_input"
+            );
+            assert_eq!(
+                terminal_input(
+                    &tauri::ipc::InvokeBody::Raw(report),
+                    &tauri::http::HeaderMap::new()
+                )
+                .unwrap_err()
+                .code,
+                "invalid_input"
+            );
+        }
 
         #[test]
         fn a_new_secret_must_be_typed_the_same_way_twice() {

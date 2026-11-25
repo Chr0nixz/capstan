@@ -261,7 +261,6 @@ export type Commands = {
   delete_host: { args: { id: HostId; expectedRevision: number }; result: number };
   save_group: { args: { group: GroupView; expectedRevision: number }; result: number };
   delete_group: { args: { id: GroupId; expectedRevision: number }; result: number };
-  write_terminal_input: { args: { id: TerminalSessionId; input: string }; result: void };
   ack_terminal_output: { args: { id: TerminalSessionId; bytes: number }; result: void };
   resize_terminal: { args: { id: TerminalSessionId; columns: number; rows: number }; result: void };
   stop_terminal: { args: { id: TerminalSessionId }; result: void };
