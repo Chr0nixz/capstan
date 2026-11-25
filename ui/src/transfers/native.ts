@@ -52,11 +52,14 @@ export function insideNativeDrop(value: unknown, rect: Pick<DOMRect, "left" | "r
   return Object.keys(data).length === 3 && typeof data.token === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(data.token) && typeof data.x === "number" && Number.isFinite(data.x)
     && typeof data.y === "number" && Number.isFinite(data.y) && data.x >= rect.left && data.x < rect.right && data.y >= rect.top && data.y < rect.bottom;
 }
-export async function enqueueDrop(terminal: TerminalSessionId, session: SftpSessionId, parent: string, token: string): Promise<TreePlan[]> {
+/** Folder plans to review, and how many dropped links or special files were left out. */
+export type NativeDropResult = { plans: TreePlan[]; skipped: number };
+const dropCount = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 256;
+export async function enqueueDrop(terminal: TerminalSessionId, session: SftpSessionId, parent: string, token: string): Promise<NativeDropResult> {
   const result = await invokeTauri("enqueue_native_drop", { terminal, session, parent, token });
   notifyTransfersChanged();
   if (!result || typeof result !== "object") return invalid();
   const data = result as Record<string, unknown>;
-  if (Object.keys(data).length !== 2 || !Array.isArray(data.plans) || data.plans.length > 8 || typeof data.queued !== "number" || !Number.isInteger(data.queued) || data.queued < 0 || data.queued > 256) return invalid();
-  return data.plans.map((value) => decodeTreePlan(value) ?? invalid());
+  if (Object.keys(data).length !== 3 || !Array.isArray(data.plans) || data.plans.length > 8 || !dropCount(data.queued) || !dropCount(data.skipped)) return invalid();
+  return { plans: data.plans.map((value) => decodeTreePlan(value) ?? invalid()), skipped: data.skipped };
 }

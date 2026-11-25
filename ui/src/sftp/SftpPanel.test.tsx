@@ -190,7 +190,7 @@ describe("SFTP panel", () => {
     });
     await act(async () => button("Upload folder")?.click());
     expect(mocks.invoke).toHaveBeenCalledWith("resolve_transfer_tree_plan", expect.objectContaining({ token: plan.token, decisions: [] }));
-    expect(container.textContent).toContain("Skipped 3 links or special files in the folder. Links are never followed.");
+    expect(container.textContent).toContain("Skipped 3 links or special files. Links are never followed.");
     mocks.invoke.mockImplementation(async (command: string, args?: unknown) =>
       command === "select_transfer_folder_plan" ? { ...plan, token: "00000000-0000-4000-8000-000000000083", skipped: 0 } : previous?.(command, args));
     await act(async () => button("Upload folder")?.click());

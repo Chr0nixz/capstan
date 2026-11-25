@@ -207,10 +207,10 @@ export function SftpPanel({ terminal, locale, hostLabel, theme, layout, visible 
       const generation = transferGeneration.current;
       setTransferBusy(true); setTransferError(null); setSkippedLinks(0);
       const session = current.attached.sessionId;
-      void enqueueDrop(terminal, session, current.page.path, payload.token).then((plans) => {
+      void enqueueDrop(terminal, session, current.page.path, payload.token).then(({ plans, skipped }) => {
         if (generation === transferGeneration.current) {
           setTreePlans((current) => [...current, ...plans.map((plan) => ({ plan, session }))]);
-          setSkippedLinks(plans.reduce((total, plan) => total + plan.skipped, 0));
+          setSkippedLinks(plans.reduce((total, plan) => total + plan.skipped, skipped));
         }
         else for (const plan of plans) void releaseTree(plan).catch(() => undefined);
       }).catch((cause: unknown) => {

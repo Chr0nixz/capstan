@@ -301,6 +301,46 @@ async fn native_receipts_are_owner_bound_single_use_and_upload_files_and_empty_d
     fixture.close().await;
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn dropped_links_are_skipped_without_failing_the_drop() {
+    let (fixture, session, transfers) = fixture().await;
+    let local = tempfile::tempdir().unwrap();
+    let file = local.path().join("kept.txt");
+    std::fs::write(&file, b"kept bytes").unwrap();
+    let folder = local.path().join("folder");
+    std::fs::create_dir(&folder).unwrap();
+    // A link may share a name with a dropped file; it is left out first.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let file_link = elsewhere.path().join("kept.txt");
+    std::os::unix::fs::symlink(&file, &file_link).unwrap();
+    let folder_link = local.path().join("folder-link");
+    std::os::unix::fs::symlink(&folder, &folder_link).unwrap();
+    transfers
+        .arm_native_drop(&upload_context(&fixture, session, "selection"))
+        .unwrap();
+    let token = transfers
+        .capture_native_drop("main", vec![file, file_link, folder_link])
+        .unwrap();
+    let parent = RemotePath::parse("/files").unwrap();
+    let result = transfers
+        .enqueue_native_drop(&fixture.service, "main", "one", session, parent, token)
+        .await
+        .unwrap();
+    assert_eq!(result.queued, 1);
+    assert!(result.plans.is_empty());
+    assert_eq!(result.skipped, 2);
+    for task in transfers.snapshot("main").unwrap() {
+        assert_eq!(
+            finished(&transfers, task.id).await.state,
+            TransferState::Completed
+        );
+    }
+    let remote = &fixture.observations.transfer;
+    assert_eq!(remote.bytes("/files/kept.txt"), b"kept bytes");
+    fixture.close().await;
+}
+
 // Dragging staged downloads out to the shell is Windows-only (OLE).
 #[cfg(windows)]
 #[tokio::test]

@@ -26,9 +26,13 @@ describe("native drop/export metadata", () => {
     for (const value of [{ token: fixture.token, x: 100, y: 21 }, { token: fixture.token, x: NaN, y: 21 }, { token: fixture.token, x: 11, y: 21, paths: ["C:\\private"] }, { token: "-".repeat(36), x: 11, y: 21 }]) expect(insideNativeDrop(value, rect)).toBe(false);
   });
   it("keeps folder decisions on the drop path and exposes only staged export tokens", async () => {
-    mocks.invoke.mockResolvedValueOnce({ queued: 1, plans: [fixture] });
-    expect(await enqueueDrop(terminal, session, "/drop", fixture.token)).toEqual([fixture]);
+    mocks.invoke.mockResolvedValueOnce({ queued: 1, plans: [fixture], skipped: 2 });
+    expect(await enqueueDrop(terminal, session, "/drop", fixture.token)).toEqual({ plans: [fixture], skipped: 2 });
     expect(mocks.invoke).toHaveBeenLastCalledWith("enqueue_native_drop", { terminal, session, parent: "/drop", token: fixture.token });
+    for (const malformed of [{ queued: 1, plans: [fixture] }, { queued: 1, plans: [fixture], skipped: -1 }, { queued: 1, plans: [fixture], skipped: 1.5 }]) {
+      mocks.invoke.mockResolvedValueOnce(malformed);
+      await expect(enqueueDrop(terminal, session, "/drop", fixture.token)).rejects.toEqual({ code: "remote_io" });
+    }
     mocks.invoke.mockResolvedValueOnce({ export: exported, plan: fixture });
     expect(await prepareExport(terminal, session, entry)).toEqual({ export: exported, plan: fixture });
     mocks.invoke.mockResolvedValueOnce([exported]);

@@ -151,6 +151,8 @@ impl Registry {
 pub struct NativeDropResult {
     pub queued: u32,
     pub plans: Vec<TreePlanSummary>,
+    /// Dropped links and special files that were left out.
+    pub skipped: u32,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -322,11 +324,19 @@ impl TransferService {
             registry.drops.remove(&token);
             paths
         };
-        let selected = local::blocking(move || {
+        let (dropped_files, dropped_folders, skipped) = local::blocking(move || {
             let mut files = Vec::new();
             let mut folders = Vec::new();
             let mut names = HashSet::new();
+            let mut skipped = 0_u32;
             for path in paths {
+                let metadata = std::fs::symlink_metadata(&path).map_err(local::local_error)?;
+                // Like links inside a dropped folder, a dropped link is left
+                // out instead of failing the whole drop.
+                if crate::native_fs::is_skipped_entry(&metadata) {
+                    skipped = skipped.saturating_add(1);
+                    continue;
+                }
                 let name = path
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -336,10 +346,7 @@ impl TransferService {
                 if !names.insert(name.clone()) {
                     return Err(SftpError::TargetConflict);
                 }
-                if std::fs::symlink_metadata(&path)
-                    .map_err(local::local_error)?
-                    .is_dir()
-                {
+                if metadata.is_dir() {
                     folders.push(path);
                 } else {
                     files.push((name, Source::open(&path).map_err(local::local_error)?));
@@ -348,7 +355,7 @@ impl TransferService {
             if folders.len() > 8 {
                 return Err(SftpError::ResourceLimit);
             }
-            Ok((files, folders))
+            Ok((files, folders, skipped))
         })
         .await?;
         if initial.binding != sftp.export_binding(window, terminal, session)? {
@@ -357,7 +364,7 @@ impl TransferService {
         let mut plans = Vec::new();
         let mut queued = 0;
         let result = async {
-            for folder in selected.1 {
+            for folder in dropped_folders {
                 plans.push(
                     self.prepare_upload_tree(
                         sftp,
@@ -370,7 +377,7 @@ impl TransferService {
                     .await?,
                 );
             }
-            for (name, file) in selected.0 {
+            for (name, file) in dropped_files {
                 let context = sftp.transfer_context(
                     window,
                     terminal,
@@ -396,7 +403,11 @@ impl TransferService {
             }
             return Err(error);
         }
-        Ok(NativeDropResult { queued, plans })
+        Ok(NativeDropResult {
+            queued,
+            plans,
+            skipped,
+        })
     }
 
     pub fn configure_export_directory(&self, directory: PathBuf) -> Result<(), SftpError> {

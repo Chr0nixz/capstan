@@ -23,6 +23,21 @@ pub struct FolderContents {
     pub skipped: u32,
 }
 
+/// Whether a selected or dropped entry is a link, junction, other reparse
+/// point or special file. Uploads leave these out, as inside folders, instead
+/// of following them. `metadata` must come from `symlink_metadata`.
+pub(crate) fn is_skipped_entry(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    !(metadata.is_dir() || metadata.is_file())
+}
+
 #[cfg(windows)]
 pub fn scan_folder(path: &Path) -> io::Result<FolderContents> {
     let directories = enumerate_folder_directories(path)?;
